@@ -11,6 +11,9 @@ internal static class PreflightRunner
         Console.WriteLine("Running honua-devops preflight...");
         Console.WriteLine($"Honua API base: {backendConfiguration.HonuaApiBaseUri}");
         Console.WriteLine($"OTEL base: {backendConfiguration.OTelBaseUri}");
+        Console.WriteLine($"Honua readiness path: /{backendConfiguration.HonuaReadinessPath}");
+        Console.WriteLine($"Honua manifest apply path: /{backendConfiguration.HonuaManifestApplyPath}");
+        Console.WriteLine("Honua auth header: X-API-Key");
         Console.WriteLine($"GitOps mode: {runtime.GitOpsTool}");
         Console.WriteLine($"Terraform repo/ref: {runtime.TerraformRepository}@{runtime.TerraformRef}");
         Console.WriteLine($"Terraform local path: {runtime.TerraformLocalPath}");

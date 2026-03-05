@@ -64,24 +64,44 @@ Primary operational backends:
 
 Optional auth:
 
-- `HONUA_DEVOPS_HONUA_API_KEY`
-- `HONUA_DEVOPS_OTEL_API_KEY`
+- `HONUA_DEVOPS_HONUA_API_KEY` (sent as `X-API-Key` for Honua admin/metrics contracts)
+- `HONUA_DEVOPS_OTEL_API_KEY` (sent as `Authorization: Bearer ...` for OTEL queries)
 
 Health probes:
 
-- `HONUA_DEVOPS_HONUA_HEALTH_PATH` (default `/health`)
+- `HONUA_DEVOPS_HONUA_READINESS_PATH` (default `/healthz/ready`)
 - `HONUA_DEVOPS_OTEL_HEALTH_PATH` (default `/`)
 
-Path overrides (if your deployments use different routes):
+OTEL path overrides:
 
 - `HONUA_DEVOPS_OTEL_LOGS_PATH`
 - `HONUA_DEVOPS_OTEL_METRICS_PATH`
+
+Honua endpoint contract overrides (defaults map to implemented `honua-server` routes):
+
+- `HONUA_DEVOPS_HONUA_ADMIN_ERRORS_PATH` (`/api/v1/admin/observability/errors`)
+- `HONUA_DEVOPS_HONUA_ADMIN_TELEMETRY_PATH` (`/api/v1/admin/observability/telemetry`)
+- `HONUA_DEVOPS_HONUA_METRICS_HEALTH_PATH` (`/api/v1/metrics/health`)
+- `HONUA_DEVOPS_HONUA_METRICS_PERFORMANCE_PATH` (`/api/v1/metrics/performance`)
+- `HONUA_DEVOPS_HONUA_METRICS_DATABASE_PATH` (`/api/v1/metrics/database`)
+- `HONUA_DEVOPS_HONUA_METRICS_CACHE_PATH` (`/api/v1/metrics/cache`)
+- `HONUA_DEVOPS_HONUA_METRICS_MEMORY_PATH` (`/api/v1/metrics/memory`)
+- `HONUA_DEVOPS_HONUA_QUERY_CACHE_STATS_PATH` (`/api/v1/admin/performance/database/query-cache/statistics`)
+- `HONUA_DEVOPS_HONUA_ADMIN_VERSION_PATH` (`/api/v1/admin/version`)
+- `HONUA_DEVOPS_HONUA_ADMIN_CAPABILITIES_PATH` (`/api/v1/admin/capabilities`)
+- `HONUA_DEVOPS_HONUA_MANIFEST_EXPORT_PATH` (`/api/v1/admin/manifest`)
+- `HONUA_DEVOPS_HONUA_MANIFEST_APPLY_PATH` (`/api/v1/admin/manifest/apply`)
+
+Legacy aliases still accepted for compatibility:
+
+- `HONUA_DEVOPS_HONUA_HEALTH_PATH`
 - `HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH`
 - `HONUA_DEVOPS_HONUA_TUNE_PATH`
 - `HONUA_DEVOPS_HONUA_UPGRADE_PATH`
 - `HONUA_DEVOPS_HONUA_DEPLOY_PATH`
 - `HONUA_DEVOPS_HONUA_REQUIREMENTS_PATH`
 - `HONUA_DEVOPS_HONUA_TOPOLOGY_PATH`
+
 - `HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS`
 
 ## Run
