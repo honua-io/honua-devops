@@ -138,6 +138,11 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         string[] deploymentTargets,
         CancellationToken cancellationToken)
     {
+        bool dryRun = !string.Equals(
+            Environment.GetEnvironmentVariable("HONUA_DEVOPS_EXECUTION_MODE"),
+            "execute",
+            StringComparison.OrdinalIgnoreCase);
+
         return await RequestGitOpsDeployAsync(
             service,
             environments,
@@ -148,7 +153,7 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             terraformRepository,
             terraformRef,
             deploymentTargets,
-            dryRun: true,
+            dryRun,
             cancellationToken);
     }
 
