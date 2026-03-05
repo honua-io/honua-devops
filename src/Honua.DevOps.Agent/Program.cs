@@ -16,7 +16,9 @@ try
 {
     CliOptions options = CliOptions.Parse(args);
     OperationRuntime runtime = OperationRuntime.Load();
-    IList<AITool> tools = CapabilityToolset.Create(runtime);
+    BackendConfiguration backendConfiguration = BackendConfiguration.Load();
+    using BackendGateway backendGateway = new(backendConfiguration);
+    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway);
     ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
     AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
 
@@ -28,6 +30,7 @@ try
 
     Console.WriteLine(
         $"honua-devops is ready ({options.Provider.ToString().ToLowerInvariant()} provider, mode={runtime.ExecutionMode.ToString().ToLowerInvariant()}, gitops={runtime.GitOpsTool}).");
+    Console.WriteLine($"honua-api={backendConfiguration.HonuaApiBaseUri} otel={backendConfiguration.OTelBaseUri}");
     Console.WriteLine("Type a request, or `exit` to quit.");
 
     while (!cancellationTokenSource.IsCancellationRequested)

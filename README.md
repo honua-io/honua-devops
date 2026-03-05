@@ -20,12 +20,12 @@ Mission: raise the technical and delivery bar high enough to disrupt the GIS pro
 
 ## Built-In Capabilities
 
-- Log analysis and root-cause guidance
-- Metrics analysis and performance tuning plans
-- Troubleshooting and optimization workflows
-- Server upgrade planning with rollback gates
-- GitOps-driven multi-environment deployment planning
-- Customer requirements analysis with deployment recommendations
+- Log analysis and root-cause guidance (via OTEL endpoints)
+- Metrics analysis and performance tuning plans (via OTEL + Honua API)
+- Troubleshooting and optimization workflows (via Honua API)
+- Server upgrade planning with rollback gates (via Honua API)
+- GitOps-driven multi-environment deployment planning (Honua-native GitOps; see `honua-server` #351/#363)
+- Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 
 ## Provider Configuration
@@ -48,8 +48,35 @@ Reference defaults live in `.env.example`.
 ## Runtime Controls
 
 - `HONUA_DEVOPS_EXECUTION_MODE` (`plan` default, or `execute`)
-- `HONUA_DEVOPS_GITOPS_TOOL` (`flux` default, supports `argocd` too)
+- `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
 - `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`)
+- `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-terraform`)
+- `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `main`)
+- `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
+
+## Backend Integration
+
+Primary operational backends:
+
+- Honua API (`HONUA_DEVOPS_HONUA_API_BASE_URL`)
+- OTEL endpoints (`HONUA_DEVOPS_OTEL_BASE_URL`)
+
+Optional auth:
+
+- `HONUA_DEVOPS_HONUA_API_KEY`
+- `HONUA_DEVOPS_OTEL_API_KEY`
+
+Path overrides (if your deployments use different routes):
+
+- `HONUA_DEVOPS_OTEL_LOGS_PATH`
+- `HONUA_DEVOPS_OTEL_METRICS_PATH`
+- `HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH`
+- `HONUA_DEVOPS_HONUA_TUNE_PATH`
+- `HONUA_DEVOPS_HONUA_UPGRADE_PATH`
+- `HONUA_DEVOPS_HONUA_DEPLOY_PATH`
+- `HONUA_DEVOPS_HONUA_REQUIREMENTS_PATH`
+- `HONUA_DEVOPS_HONUA_TOPOLOGY_PATH`
+- `HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS`
 
 ## Run
 
@@ -79,5 +106,5 @@ dotnet run --project src/Honua.DevOps.Agent -- --provider codex --prompt "Analyz
 
 ## Current Status
 
-- Baseline scaffolding is in place with interactive chat mode and provider selection.
-- Next slices should add concrete MCP tools and cloud execution connectors for safe action-taking workflows.
+- Provider-pluggable agent scaffold is in place with live Honua API and OTEL endpoint wiring.
+- Honua-native GitOps and customer-requirement analysis workflows are wired as callable tools.
