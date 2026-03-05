@@ -6,6 +6,7 @@ internal sealed record OperationRuntime(
     string[] AllowedEnvironments,
     string TerraformRepository,
     string TerraformRef,
+    string TerraformLocalPath,
     string[] TerraformDeploymentTargets)
 {
     private const string ExecutionModeVariable = "HONUA_DEVOPS_EXECUTION_MODE";
@@ -14,6 +15,7 @@ internal sealed record OperationRuntime(
     private const string TerraformRepositoryVariable = "HONUA_DEVOPS_TERRAFORM_REPO";
     private const string TerraformRefVariable = "HONUA_DEVOPS_TERRAFORM_REF";
     private const string TerraformTargetsVariable = "HONUA_DEVOPS_TERRAFORM_TARGETS";
+    private const string TerraformLocalPathVariable = "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH";
 
     internal static OperationRuntime Load()
     {
@@ -41,10 +43,21 @@ internal sealed record OperationRuntime(
             terraformRef = "main";
         }
 
-        string[] terraformTargets = ParseTerraformTargets(
-            Environment.GetEnvironmentVariable(TerraformTargetsVariable));
+        string terraformLocalPath = ResolveTerraformLocalPath(
+            Environment.GetEnvironmentVariable(TerraformLocalPathVariable));
 
-        return new OperationRuntime(mode, gitOpsTool, environments, terraformRepository, terraformRef, terraformTargets);
+        string[] terraformTargets = ParseTerraformTargets(
+            Environment.GetEnvironmentVariable(TerraformTargetsVariable),
+            terraformLocalPath);
+
+        return new OperationRuntime(
+            mode,
+            gitOpsTool,
+            environments,
+            terraformRepository,
+            terraformRef,
+            terraformLocalPath,
+            terraformTargets);
     }
 
     private static ExecutionMode ParseExecutionMode(string? value)
@@ -81,20 +94,83 @@ internal sealed record OperationRuntime(
             .ToArray();
     }
 
-    private static string[] ParseTerraformTargets(string? value)
+    private static string ResolveTerraformLocalPath(string? configuredPath)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (!string.IsNullOrWhiteSpace(configuredPath))
         {
-            return ["azure-functions", "lambda", "eks", "aks", "ecs", "aca"];
+            return configuredPath.Trim();
         }
 
-        string[] parsed = value
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        string siblingPath = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "..", "honua-terraform"));
+        return siblingPath;
+    }
 
-        return parsed.Length == 0
+    private static string[] ParseTerraformTargets(string? value, string terraformLocalPath)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            string[] parsed = value
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            return parsed.Length == 0
+                ? ["azure-functions", "lambda", "eks", "aks", "ecs", "aca"]
+                : parsed;
+        }
+
+        string[] discovered = DiscoverTerraformTargets(terraformLocalPath);
+        return discovered.Length == 0
             ? ["azure-functions", "lambda", "eks", "aks", "ecs", "aca"]
-            : parsed;
+            : discovered;
+    }
+
+    private static string[] DiscoverTerraformTargets(string terraformLocalPath)
+    {
+        string modulesPath = Path.Combine(terraformLocalPath, "infrastructure", "terraform", "modules");
+        if (!Directory.Exists(modulesPath))
+        {
+            return [];
+        }
+
+        HashSet<string> moduleNames = Directory
+            .EnumerateDirectories(modulesPath)
+            .Select(Path.GetFileName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        List<string> discovered = [];
+        if (moduleNames.Contains("azure-functions"))
+        {
+            discovered.Add("azure-functions");
+        }
+
+        if (moduleNames.Contains("aws-serverless") || moduleNames.Contains("lambda"))
+        {
+            discovered.Add("lambda");
+        }
+
+        if (moduleNames.Contains("aws-eks") || moduleNames.Contains("eks"))
+        {
+            discovered.Add("eks");
+        }
+
+        if (moduleNames.Contains("azure-aks") || moduleNames.Contains("aks"))
+        {
+            discovered.Add("aks");
+        }
+
+        if (moduleNames.Contains("aws-ecs") || moduleNames.Contains("ecs"))
+        {
+            discovered.Add("ecs");
+        }
+
+        if (moduleNames.Contains("azure-aca") || moduleNames.Contains("aca"))
+        {
+            discovered.Add("aca");
+        }
+
+        return discovered.ToArray();
     }
 }

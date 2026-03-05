@@ -53,6 +53,7 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-terraform`)
 - `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `main`)
 - `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
+- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-terraform`)
 
 ## Backend Integration
 
@@ -65,6 +66,11 @@ Optional auth:
 
 - `HONUA_DEVOPS_HONUA_API_KEY`
 - `HONUA_DEVOPS_OTEL_API_KEY`
+
+Health probes:
+
+- `HONUA_DEVOPS_HONUA_HEALTH_PATH` (default `/health`)
+- `HONUA_DEVOPS_OTEL_HEALTH_PATH` (default `/`)
 
 Path overrides (if your deployments use different routes):
 
@@ -84,6 +90,12 @@ Path overrides (if your deployments use different routes):
 dotnet restore
 dotnet build
 dotnet run --project src/Honua.DevOps.Agent -- --provider codex
+```
+
+Preflight checks (backend connectivity + terraform target discovery):
+
+```bash
+dotnet run --project src/Honua.DevOps.Agent -- --preflight
 ```
 
 Single-shot prompt:
@@ -108,3 +120,4 @@ dotnet run --project src/Honua.DevOps.Agent -- --provider codex --prompt "Analyz
 
 - Provider-pluggable agent scaffold is in place with live Honua API and OTEL endpoint wiring.
 - Honua-native GitOps and customer-requirement analysis workflows are wired as callable tools.
+- Preflight mode validates backend reachability and Terraform target discovery before live runs.

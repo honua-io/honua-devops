@@ -5,6 +5,8 @@ internal sealed record BackendConfiguration(
     Uri OTelBaseUri,
     string? HonuaApiKey,
     string? OTelApiKey,
+    string HonuaHealthPath,
+    string OTelHealthPath,
     string OTelLogsPath,
     string OTelMetricsPath,
     string HonuaTroubleshootPath,
@@ -20,6 +22,9 @@ internal sealed record BackendConfiguration(
 
     private const string HonuaApiKeyVariable = "HONUA_DEVOPS_HONUA_API_KEY";
     private const string OTelApiKeyVariable = "HONUA_DEVOPS_OTEL_API_KEY";
+
+    private const string HonuaHealthPathVariable = "HONUA_DEVOPS_HONUA_HEALTH_PATH";
+    private const string OTelHealthPathVariable = "HONUA_DEVOPS_OTEL_HEALTH_PATH";
 
     private const string OTelLogsPathVariable = "HONUA_DEVOPS_OTEL_LOGS_PATH";
     private const string OTelMetricsPathVariable = "HONUA_DEVOPS_OTEL_METRICS_PATH";
@@ -48,6 +53,9 @@ internal sealed record BackendConfiguration(
         string? honuaApiKey = Normalize(Environment.GetEnvironmentVariable(HonuaApiKeyVariable));
         string? otelApiKey = Normalize(Environment.GetEnvironmentVariable(OTelApiKeyVariable));
 
+        string honuaHealthPath = Normalize(Environment.GetEnvironmentVariable(HonuaHealthPathVariable), "/health");
+        string otelHealthPath = Normalize(Environment.GetEnvironmentVariable(OTelHealthPathVariable), "/");
+
         string otelLogsPath = Normalize(Environment.GetEnvironmentVariable(OTelLogsPathVariable), "/v1/logs/search");
         string otelMetricsPath = Normalize(Environment.GetEnvironmentVariable(OTelMetricsPathVariable), "/v1/metrics/search");
 
@@ -65,6 +73,8 @@ internal sealed record BackendConfiguration(
             OTelBaseUri: otelBaseUri,
             HonuaApiKey: honuaApiKey,
             OTelApiKey: otelApiKey,
+            HonuaHealthPath: honuaHealthPath,
+            OTelHealthPath: otelHealthPath,
             OTelLogsPath: otelLogsPath,
             OTelMetricsPath: otelMetricsPath,
             HonuaTroubleshootPath: honuaTroubleshootPath,

@@ -198,6 +198,24 @@ internal sealed class BackendGateway(BackendConfiguration configuration) : IDisp
             cancellationToken);
     }
 
+    internal Task<BackendCallResult> ProbeHonuaAsync(CancellationToken cancellationToken)
+    {
+        return ProbeAsync(
+            configuration.HonuaApiBaseUri,
+            configuration.HonuaHealthPath,
+            configuration.HonuaApiKey,
+            cancellationToken);
+    }
+
+    internal Task<BackendCallResult> ProbeOtelAsync(CancellationToken cancellationToken)
+    {
+        return ProbeAsync(
+            configuration.OTelBaseUri,
+            configuration.OTelHealthPath,
+            configuration.OTelApiKey,
+            cancellationToken);
+    }
+
     private Task<BackendCallResult> PostToHonuaAsync(string relativePath, object payload, CancellationToken cancellationToken)
     {
         return SendAsync(
@@ -245,6 +263,44 @@ internal sealed class BackendGateway(BackendConfiguration configuration) : IDisp
             string preview = SummarizeBody(body);
 
             return new BackendCallResult(isSuccess, endpoint.ToString(), detail, preview);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return new BackendCallResult(
+                IsSuccess: false,
+                Endpoint: endpoint.ToString(),
+                Detail: $"request-failed: {exception.GetType().Name}",
+                PayloadPreview: exception.Message);
+        }
+    }
+
+    private async Task<BackendCallResult> ProbeAsync(
+        Uri baseUri,
+        string relativePath,
+        string? apiKey,
+        CancellationToken cancellationToken)
+    {
+        Uri endpoint = BuildEndpoint(baseUri, relativePath);
+        using HttpRequestMessage request = new(HttpMethod.Get, endpoint);
+
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        }
+
+        try
+        {
+            using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+            return new BackendCallResult(
+                IsSuccess: response.IsSuccessStatusCode,
+                Endpoint: endpoint.ToString(),
+                Detail: $"{(int)response.StatusCode} {response.ReasonPhrase}",
+                PayloadPreview: SummarizeBody(body));
         }
         catch (OperationCanceledException)
         {

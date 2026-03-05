@@ -2,16 +2,18 @@ using Honua.DevOps.Agent.Providers;
 
 namespace Honua.DevOps.Agent.Configuration;
 
-internal sealed record CliOptions(ProviderKind Provider, string? Prompt)
+internal sealed record CliOptions(ProviderKind Provider, string? Prompt, bool Preflight)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
+    private const string PreflightFlag = "--preflight";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
 
     internal static CliOptions Parse(string[] args)
     {
         string? providerValue = null;
         string? prompt = null;
+        bool preflight = false;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -38,7 +40,14 @@ internal sealed record CliOptions(ProviderKind Provider, string? Prompt)
                 continue;
             }
 
-            throw new InvalidOperationException($"Unknown argument `{argument}`. Use {ProviderFlag} and {PromptFlag}.");
+            if (argument.Equals(PreflightFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                preflight = true;
+                continue;
+            }
+
+            throw new InvalidOperationException(
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, and {PreflightFlag}.");
         }
 
         string selectedProvider = providerValue ??
@@ -51,6 +60,6 @@ internal sealed record CliOptions(ProviderKind Provider, string? Prompt)
                 $"Invalid provider `{selectedProvider}`. Supported values: codex, claude.");
         }
 
-        return new CliOptions(provider, prompt);
+        return new CliOptions(provider, prompt, preflight);
     }
 }

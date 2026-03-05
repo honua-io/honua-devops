@@ -18,6 +18,17 @@ try
     OperationRuntime runtime = OperationRuntime.Load();
     BackendConfiguration backendConfiguration = BackendConfiguration.Load();
     using BackendGateway backendGateway = new(backendConfiguration);
+
+    if (options.Preflight)
+    {
+        Environment.ExitCode = await PreflightRunner.RunAsync(
+            runtime,
+            backendConfiguration,
+            backendGateway,
+            cancellationTokenSource.Token);
+        return;
+    }
+
     IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway);
     ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
     AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
