@@ -2,4 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Honua.DevOps.Agent.Tests/Honua.DevOps.Agent.Tests.csproj" />
+  </Folder>
 </Solution>

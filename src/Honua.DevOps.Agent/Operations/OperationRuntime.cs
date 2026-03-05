@@ -9,6 +9,8 @@ internal sealed record OperationRuntime(
     string TerraformLocalPath,
     string[] TerraformDeploymentTargets)
 {
+    private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
+
     private const string ExecutionModeVariable = "HONUA_DEVOPS_EXECUTION_MODE";
     private const string GitOpsToolVariable = "HONUA_DEVOPS_GITOPS_TOOL";
     private const string EnvironmentsVariable = "HONUA_DEVOPS_ALLOWED_ENVIRONMENTS";
@@ -85,13 +87,30 @@ internal sealed record OperationRuntime(
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return ["dev", "staging", "prod"];
+            return DefaultEnvironments;
         }
 
-        return value
+        string[] parsed = value
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        if (parsed.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{EnvironmentsVariable}` parsed to an empty environment list.");
+        }
+
+        string[] invalid = parsed
+            .Where(environment => !IsValidEnvironmentName(environment))
+            .ToArray();
+        if (invalid.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{EnvironmentsVariable}` contains invalid environment names: {string.Join(", ", invalid)}.");
+        }
+
+        return parsed;
     }
 
     private static string ResolveTerraformLocalPath(string? configuredPath)
@@ -172,5 +191,22 @@ internal sealed record OperationRuntime(
         }
 
         return discovered.ToArray();
+    }
+
+    private static bool IsValidEnvironmentName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 40)
+        {
+            return false;
+        }
+
+        if (!char.IsLetterOrDigit(value[0]))
+        {
+            return false;
+        }
+
+        return value.All(character =>
+            char.IsLetterOrDigit(character) ||
+            character is '-' or '_');
     }
 }

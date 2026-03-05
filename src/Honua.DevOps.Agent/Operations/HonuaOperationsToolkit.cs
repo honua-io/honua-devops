@@ -264,43 +264,54 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         string changeSummary,
         CancellationToken cancellationToken = default)
     {
+        string normalizedService = ValidateServiceName(service);
         string[] targetEnvironments = ParseEnvironments(environmentsCsv);
-        string normalizedRevision = Normalize(revision, "HEAD");
-        string normalizedAction = Normalize(action, "sync");
+        string normalizedRevision = ValidateRevision(Normalize(revision, "HEAD"), "revision");
+        string normalizedAction = ValidateAction(action);
+        string normalizedChangeSummary = SanitizeFreeText(changeSummary, "not provided");
+        string normalizedGitOpsTool = ValidateGitOpsTool(runtime.GitOpsTool);
+        string normalizedTerraformRepository = SanitizePayloadValue(runtime.TerraformRepository, "terraform repository");
+        string normalizedTerraformRef = ValidateRevision(runtime.TerraformRef, "terraform ref");
+        string[] normalizedDeploymentTargets = ValidateDeploymentTargets(runtime.TerraformDeploymentTargets);
 
         BackendCallResult backendResult = await gateway.RequestGitOpsDeployAsync(
-            service,
+            normalizedService,
             targetEnvironments,
             normalizedRevision,
             normalizedAction,
-            changeSummary,
-            runtime.GitOpsTool,
-            runtime.TerraformRepository,
-            runtime.TerraformRef,
-            runtime.TerraformDeploymentTargets,
+            normalizedChangeSummary,
+            normalizedGitOpsTool,
+            normalizedTerraformRepository,
+            normalizedTerraformRef,
+            normalizedDeploymentTargets,
             cancellationToken);
 
         List<string> actionsList =
         [
-            $"Use GitOps tool `{runtime.GitOpsTool}` for staged promotion: {string.Join(" -> ", targetEnvironments)}.",
-            $"Source infrastructure templates from `{runtime.TerraformRepository}` at ref `{runtime.TerraformRef}`.",
-            $"Validated deployment targets: {string.Join(", ", runtime.TerraformDeploymentTargets)}.",
+            $"Use GitOps tool `{normalizedGitOpsTool}` for staged promotion: {string.Join(" -> ", targetEnvironments)}.",
+            $"Source infrastructure templates from `{normalizedTerraformRepository}` at ref `{normalizedTerraformRef}`.",
+            $"Validated deployment targets: {string.Join(", ", normalizedDeploymentTargets)}.",
             "Use Honua GitOps primitives from honua-server issues #351/#363: apply, dryRun, prune, drift detection, approval gates.",
             "Enforce health and integration checks before promoting to next environment."
         ];
-        actionsList.AddRange(BuildGitOpsCommands(service, targetEnvironments, normalizedRevision, normalizedAction));
+        actionsList.AddRange(BuildGitOpsCommands(
+            normalizedGitOpsTool,
+            normalizedService,
+            targetEnvironments,
+            normalizedRevision,
+            normalizedAction));
 
         return new OperationResponse(
             Status: backendResult.IsSuccess
                 ? runtime.ExecutionMode == ExecutionMode.Execute ? "execute-enabled" : "plan-only"
                 : "backend-error",
-            Summary: $"GitOps deployment plan for `{service}` across {string.Join(", ", targetEnvironments)}.",
+            Summary: $"GitOps deployment plan for `{normalizedService}` across {string.Join(", ", targetEnvironments)}.",
             Findings:
             [
                 $"Honua API endpoint: {backendResult.Endpoint}",
                 $"Backend result: {backendResult.Detail}",
                 $"Response excerpt: {backendResult.PayloadPreview}",
-                $"Change summary: {Normalize(changeSummary, "not provided")}."
+                $"Change summary: {normalizedChangeSummary}."
             ],
             Actions: actionsList,
             ValidationChecks:
@@ -440,30 +451,56 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
 
     private string[] ParseEnvironments(string value)
     {
-        string[] parsed = value
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException(
+                "Deployment environments are required and must match the configured allowed environment list.");
+        }
+
+        string[] requested = value
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(item => runtime.AllowedEnvironments.Contains(item, StringComparer.OrdinalIgnoreCase))
+            .Where(item => !string.IsNullOrWhiteSpace(item))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return parsed.Length == 0 ? runtime.AllowedEnvironments : parsed;
+        if (requested.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Deployment environments are required and must not be empty.");
+        }
+
+        string[] invalid = requested
+            .Where(item => !runtime.AllowedEnvironments.Contains(item, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        if (invalid.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Invalid deployment environments: {string.Join(", ", invalid)}. Allowed values: {string.Join(", ", runtime.AllowedEnvironments)}.");
+        }
+
+        return requested;
     }
 
     private IEnumerable<string> BuildGitOpsCommands(
+        string gitOpsTool,
         string service,
         IEnumerable<string> environments,
         string revision,
         string action)
     {
-        string tool = runtime.GitOpsTool.Trim().ToLowerInvariant();
+        string tool = gitOpsTool.Trim().ToLowerInvariant();
         foreach (string environment in environments)
         {
             yield return tool switch
             {
-                "honua-gitops" => $"Suggested command ({environment}): honua gitops {action} --service {service} --env {environment} --revision {revision}",
-                "flux" => $"Suggested command ({environment}): flux reconcile kustomization {service}-{environment} --with-source",
-                "argocd" => $"Suggested command ({environment}): argocd app sync {service}-{environment} --revision {revision}",
-                _ => $"Suggested command ({environment}): {runtime.GitOpsTool} sync {service}-{environment} --revision {revision}"
+                "honua-gitops" =>
+                    $"Suggested command ({environment}): honua gitops {ShellQuote(action)} --service {ShellQuote(service)} --env {ShellQuote(environment)} --revision {ShellQuote(revision)}",
+                "flux" =>
+                    $"Suggested command ({environment}): flux reconcile kustomization {ShellQuote($"{service}-{environment}")} --with-source",
+                "argocd" =>
+                    $"Suggested command ({environment}): argocd app sync {ShellQuote($"{service}-{environment}")} --revision {ShellQuote(revision)}",
+                _ =>
+                    $"Suggested command ({environment}): {ShellQuote(gitOpsTool)} sync {ShellQuote($"{service}-{environment}")} --revision {ShellQuote(revision)}"
             };
         }
     }
@@ -491,5 +528,162 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         }
 
         return runtime.TerraformDeploymentTargets;
+    }
+
+    private static string ValidateServiceName(string value)
+    {
+        string service = Normalize(value, string.Empty);
+        if (service.Length is < 1 or > 80)
+        {
+            throw new InvalidOperationException("Service name must be 1-80 characters.");
+        }
+
+        if (!char.IsLetterOrDigit(service[0]))
+        {
+            throw new InvalidOperationException("Service name must start with a letter or digit.");
+        }
+
+        if (service.Any(character =>
+                !(char.IsLetterOrDigit(character) || character is '-' or '_' or '.')))
+        {
+            throw new InvalidOperationException(
+                "Service name contains invalid characters. Allowed characters: letters, numbers, '-', '_', '.'.");
+        }
+
+        return service;
+    }
+
+    private static string ValidateRevision(string value, string fieldName)
+    {
+        string revision = Normalize(value, "HEAD");
+        if (revision.Length is < 1 or > 128)
+        {
+            throw new InvalidOperationException($"{fieldName} must be 1-128 characters.");
+        }
+
+        if (revision.Any(char.IsWhiteSpace))
+        {
+            throw new InvalidOperationException($"{fieldName} must not contain whitespace.");
+        }
+
+        if (revision.Any(character =>
+                !(char.IsLetterOrDigit(character) || character is '-' or '_' or '.' or '/' or '@' or ':')))
+        {
+            throw new InvalidOperationException(
+                $"{fieldName} contains invalid characters.");
+        }
+
+        return revision;
+    }
+
+    private static string ValidateAction(string value)
+    {
+        string normalized = Normalize(value, "sync").ToLowerInvariant();
+        return normalized switch
+        {
+            "sync" => "sync",
+            "apply" => "apply",
+            "prune" => "prune",
+            "dry-run" => "dry-run",
+            "dryrun" => "dry-run",
+            "plan" => "plan",
+            _ => throw new InvalidOperationException(
+                $"Invalid deployment action `{value}`. Allowed values: sync, apply, prune, dry-run, plan.")
+        };
+    }
+
+    private static string ValidateGitOpsTool(string value)
+    {
+        string tool = Normalize(value, "honua-gitops");
+        if (tool.Length is < 1 or > 64)
+        {
+            throw new InvalidOperationException("GitOps tool name must be 1-64 characters.");
+        }
+
+        if (tool.Any(character =>
+                !(char.IsLetterOrDigit(character) || character is '-' or '_' or '.' or '/')))
+        {
+            throw new InvalidOperationException(
+                "GitOps tool contains invalid characters.");
+        }
+
+        return tool;
+    }
+
+    private static string SanitizePayloadValue(string value, string fieldName)
+    {
+        string sanitized = SanitizeFreeText(value, string.Empty);
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            throw new InvalidOperationException($"{fieldName} must not be empty.");
+        }
+
+        return sanitized;
+    }
+
+    private static string SanitizeFreeText(string? value, string fallback)
+    {
+        string normalized = Normalize(value, fallback);
+        char[] filtered = normalized
+            .Where(character => !char.IsControl(character) || character is '\r' or '\n' or '\t')
+            .ToArray();
+        string compact = new string(filtered).Trim();
+        if (compact.Length == 0)
+        {
+            return fallback;
+        }
+
+        const int maxLength = 600;
+        return compact.Length <= maxLength
+            ? compact
+            : compact[..maxLength];
+    }
+
+    private static string[] ValidateDeploymentTargets(IEnumerable<string> targets)
+    {
+        string[] sanitized = targets
+            .Where(target => !string.IsNullOrWhiteSpace(target))
+            .Select(target => target.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (sanitized.Length == 0)
+        {
+            throw new InvalidOperationException("Terraform deployment targets must not be empty.");
+        }
+
+        string[] invalid = sanitized
+            .Where(target =>
+                target.Length > 60 ||
+                !char.IsLetterOrDigit(target[0]) ||
+                target.Any(character =>
+                    !(char.IsLetterOrDigit(character) || character is '-' or '_')))
+            .ToArray();
+
+        if (invalid.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Terraform deployment targets contain invalid values: {string.Join(", ", invalid)}.");
+        }
+
+        return sanitized;
+    }
+
+    private static string ShellQuote(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "''";
+        }
+
+        bool isSafeToken = value.All(character =>
+            char.IsLetterOrDigit(character) ||
+            character is '-' or '_' or '.' or '/' or ':' or '@');
+        if (isSafeToken)
+        {
+            return value;
+        }
+
+        return $"'{value.Replace("'", "'\"'\"'")}'";
     }
 }

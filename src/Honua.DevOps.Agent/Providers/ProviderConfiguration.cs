@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Honua.DevOps.Agent.Providers;
 
 internal sealed record ProviderConfiguration(
@@ -47,6 +49,34 @@ internal sealed record ProviderConfiguration(
                 $"Environment variable `{variableName}` must be a valid absolute URL.");
         }
 
+        if (!endpoint.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            !endpoint.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variableName}` must use http or https.");
+        }
+
+        if (!IsLocalUri(endpoint) && !endpoint.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variableName}` must use https for non-local endpoints.");
+        }
+
         return endpoint;
+    }
+
+    private static bool IsLocalUri(Uri uri)
+    {
+        if (uri.IsLoopback)
+        {
+            return true;
+        }
+
+        if (IPAddress.TryParse(uri.Host, out IPAddress? address))
+        {
+            return IPAddress.IsLoopback(address);
+        }
+
+        return uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
     }
 }
