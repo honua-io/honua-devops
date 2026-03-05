@@ -1,4 +1,5 @@
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Chat;
 using System.ClientModel;
@@ -7,7 +8,10 @@ namespace Honua.DevOps.Agent.Providers;
 
 internal static class AgentProviderFactory
 {
-    internal static ChatClientAgent Create(ProviderKind provider, string systemPrompt)
+    internal static ChatClientAgent Create(
+        ProviderKind provider,
+        string systemPrompt,
+        IList<AITool>? tools = null)
     {
         ProviderConfiguration configuration = ProviderConfiguration.Load(provider);
         ChatClient client = CreateChatClient(configuration);
@@ -15,7 +19,8 @@ internal static class AgentProviderFactory
         return client.AsAIAgent(
             instructions: systemPrompt,
             name: $"honua-devops-{configuration.Name}",
-            description: "Honua operations and solution engineering agent");
+            description: "Honua operations and solution engineering agent",
+            tools: tools);
     }
 
     private static ChatClient CreateChatClient(ProviderConfiguration configuration)

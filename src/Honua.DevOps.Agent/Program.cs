@@ -1,7 +1,9 @@
 using Honua.DevOps.Agent.Configuration;
+using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Prompts;
 using Honua.DevOps.Agent.Providers;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 
 using CancellationTokenSource cancellationTokenSource = new();
 Console.CancelKeyPress += (_, eventArgs) =>
@@ -13,7 +15,9 @@ Console.CancelKeyPress += (_, eventArgs) =>
 try
 {
     CliOptions options = CliOptions.Parse(args);
-    ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt);
+    OperationRuntime runtime = OperationRuntime.Load();
+    IList<AITool> tools = CapabilityToolset.Create(runtime);
+    ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
     AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
 
     if (!string.IsNullOrWhiteSpace(options.Prompt))
@@ -22,7 +26,8 @@ try
         return;
     }
 
-    Console.WriteLine($"honua-devops is ready ({options.Provider.ToString().ToLowerInvariant()} provider).");
+    Console.WriteLine(
+        $"honua-devops is ready ({options.Provider.ToString().ToLowerInvariant()} provider, mode={runtime.ExecutionMode.ToString().ToLowerInvariant()}, gitops={runtime.GitOpsTool}).");
     Console.WriteLine("Type a request, or `exit` to quit.");
 
     while (!cancellationTokenSource.IsCancellationRequested)
