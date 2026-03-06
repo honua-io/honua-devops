@@ -17,6 +17,18 @@ public class BackendConfigurationTests
     }
 
     [Fact]
+    public void Load_RejectsSlashPrefixedAbsolutePathOverrides()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_OTEL_LOGS_PATH", "/https://evil.example/v1/logs/search");
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(BackendConfiguration.Load);
+
+        Assert.Contains("HONUA_DEVOPS_OTEL_LOGS_PATH", exception.Message);
+    }
+
+    [Fact]
     public void Load_RejectsNonHttpsRemoteBackend()
     {
         using TestEnvironmentVariableScope environment = new();

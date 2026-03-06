@@ -141,3 +141,18 @@ dotnet run --project src/Honua.DevOps.Agent -- --provider codex --prompt "Analyz
 - Provider-pluggable agent scaffold is in place with live Honua API and OTEL endpoint wiring.
 - Honua-native GitOps and customer-requirement analysis workflows are wired as callable tools.
 - Preflight mode validates backend reachability and Terraform target discovery before live runs.
+
+## DevOps Delivery Artifacts
+
+- Deployment validation matrix and smoke contract: `docs/deployment-validation-matrix.md`
+- Manual AWS/Azure runbooks (apply -> smoke -> destroy): `docs/manual-cloud-runbooks.md`
+- SLO release gate baseline: `docs/slo-release-gates.md`
+- Supply-chain baseline and CI policy: `docs/supply-chain-baseline.md`
+
+Helper scripts:
+
+- `scripts/smoke-contract.sh`
+- `scripts/slo-release-gate.sh`
+- `scripts/check-terraform-secrets.sh`
+- `scripts/dispatch-terraform-validation.sh`
+- `scripts/helm-provenance-check.sh`

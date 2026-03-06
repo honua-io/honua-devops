@@ -385,7 +385,7 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             calls.Select(call => $"{call.Detail} :: {call.PayloadPreview}"));
 
         return new BackendCallResult(
-            IsSuccess: successCount > 0,
+            IsSuccess: successCount == calls.Count,
             Endpoint: endpoints,
             Detail: detail,
             PayloadPreview: SummarizeBody(preview));
@@ -517,7 +517,18 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         }
 
         Uri normalizedBaseUri = builder.Uri;
-        return new Uri(normalizedBaseUri, cleanedPath);
+        Uri endpoint = new(normalizedBaseUri, cleanedPath);
+        bool baseAuthorityMatchesEndpoint =
+            endpoint.Scheme.Equals(normalizedBaseUri.Scheme, StringComparison.OrdinalIgnoreCase) &&
+            endpoint.Host.Equals(normalizedBaseUri.Host, StringComparison.OrdinalIgnoreCase) &&
+            endpoint.Port == normalizedBaseUri.Port;
+        if (!baseAuthorityMatchesEndpoint)
+        {
+            throw new InvalidOperationException(
+                "Relative backend path resolved outside the configured base host.");
+        }
+
+        return endpoint;
     }
 
     private static async Task<string> ReadBodyPreviewAsync(HttpContent content, CancellationToken cancellationToken)

@@ -251,6 +251,12 @@ internal sealed record BackendConfiguration(
         }
 
         string normalized = trimmed.StartsWith('/') ? trimmed[1..] : trimmed;
+        if (LooksLikeAbsoluteUriPathOverride(normalized))
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variableName}` must be a relative path and must not include scheme/host.");
+        }
+
         string[] segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Any(segment => segment is "." or ".."))
         {
@@ -285,6 +291,13 @@ internal sealed record BackendConfiguration(
     private static string? Normalize(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static bool LooksLikeAbsoluteUriPathOverride(string value)
+    {
+        return value.StartsWith("http:", StringComparison.OrdinalIgnoreCase) ||
+               value.StartsWith("https:", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("://", StringComparison.Ordinal);
     }
 
     private static bool IsLocalUri(Uri uri)

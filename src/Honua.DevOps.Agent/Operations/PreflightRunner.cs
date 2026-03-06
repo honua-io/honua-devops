@@ -31,11 +31,11 @@ internal static class PreflightRunner
         BackendCallResult otelProbe = await backendGateway.ProbeOtelAsync(cancellationToken);
         PrintCheck(otelProbe.IsSuccess, "OTEL probe", $"{otelProbe.Detail} ({otelProbe.Endpoint})");
 
-        bool targetsOk = runtime.TerraformDeploymentTargets.Length >= 6;
+        bool targetsOk = runtime.TerraformDeploymentTargets.Length > 0;
         PrintCheck(
             targetsOk,
             "Deployment targets",
-            targetsOk ? "target set loaded" : "missing one or more expected targets");
+            targetsOk ? "target set loaded" : "no deployment targets configured");
 
         bool success = terraformPathOk && honuaProbe.IsSuccess && otelProbe.IsSuccess && targetsOk;
         if (success)

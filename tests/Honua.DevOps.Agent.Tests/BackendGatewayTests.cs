@@ -26,6 +26,48 @@ public class BackendGatewayTests
     }
 
     [Fact]
+    public void BuildEndpoint_RejectsResolvedEndpointOutsideBaseHost()
+    {
+        Uri baseUri = new("https://example.com/honua/api");
+
+        Assert.Throws<InvalidOperationException>(
+            () => BackendGateway.BuildEndpoint(baseUri, "/https://evil.example/v1/logs/search"));
+    }
+
+    [Fact]
+    public async Task RequestTroubleshootAsync_PartialFailures_ReturnsUnsuccessfulResult()
+    {
+        int callCount = 0;
+        TestHttpMessageHandler handler = new(_ =>
+        {
+            callCount++;
+            return callCount == 2
+                ? new HttpResponseMessage(HttpStatusCode.BadGateway)
+                {
+                    Content = new StringContent("upstream error")
+                }
+                : TestHttpMessageHandler.JsonOk(new { status = "ok" });
+        });
+
+        using HttpClient httpClient = new(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        BackendCallResult result = await gateway.RequestTroubleshootAsync(
+            service: "roads-api",
+            environment: "prod",
+            incidentSummary: "timeouts",
+            suspectedComponent: "database",
+            businessImpact: "degraded user experience",
+            cancellationToken: CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains("2/3 endpoint calls succeeded", result.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProbeOtelAsync_TruncatesResponsePreview()
     {
         string largeBody = new('x', 1200);
