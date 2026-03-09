@@ -14,14 +14,13 @@ require_command() {
 }
 
 require_command python3
-require_command rg
 
 python3 -m json.tool "$REPO_ROOT/observability/grafana/honua-slo-dashboard.json" >/dev/null
-rg -n "honua:slo:availability:error_budget_remaining_ratio|honua:slo:error_rate:error_budget_remaining_ratio|honua:slo:burn_rate:5m|honua:slo:burn_rate:30m|honua:slo:burn_rate:6h" \
+grep -nE -- "honua:slo:availability:error_budget_remaining_ratio|honua:slo:error_rate:error_budget_remaining_ratio|honua:slo:burn_rate:5m|honua:slo:burn_rate:30m|honua:slo:burn_rate:6h" \
   "$REPO_ROOT/observability/prometheus/honua-slo-recording-rules.yml" >/dev/null
-rg -n "HonuaSloFastBurn|HonuaSloMediumBurn|HonuaSloSlowBurn|HonuaAvailabilitySloViolation|HonuaBackupDurabilityRisk" \
+grep -nE -- "HonuaSloFastBurn|HonuaSloMediumBurn|HonuaSloSlowBurn|HonuaAvailabilitySloViolation|HonuaBackupDurabilityRisk" \
   "$REPO_ROOT/observability/prometheus/honua-slo-alert-rules.yml" >/dev/null
-rg -n "pagerduty-critical|slack-warning|email-info|maintenance-mute" \
+grep -nE -- "pagerduty-critical|slack-warning|email-info|maintenance-mute" \
   "$REPO_ROOT/observability/alertmanager/honua-slo-routes.template.yml" >/dev/null
 
 echo "SLO observability assets validation passed."

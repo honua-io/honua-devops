@@ -143,6 +143,6 @@ if [[ "$exit_code" -ne 2 ]]; then
 fi
 
 test -f "$ROLLBACK_MARKER"
-rg -n "rollback-triggered" "$ROLLBACK_MARKER" >/dev/null
+grep -nF -- "rollback-triggered" "$ROLLBACK_MARKER" >/dev/null
 
 echo "SLO watch smoke check passed."

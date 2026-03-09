@@ -14,7 +14,6 @@ require_command() {
 }
 
 require_command python3
-require_command rg
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -32,8 +31,8 @@ test -f "$WORKDIR/out/compatibility-changes.xml"
 test -f "$WORKDIR/out/badge.json"
 python3 -m json.tool "$WORKDIR/out/compatibility-matrix.json" >/dev/null
 python3 -m json.tool "$WORKDIR/out/badge.json" >/dev/null
-rg -n "Release 2026.03.1" "$WORKDIR/out/compatibility-matrix.md" >/dev/null
-rg -n "OpenLayers / WMTS: pending -> pass" "$WORKDIR/out/compatibility-matrix.md" >/dev/null
+grep -nF -- "Release 2026.03.1" "$WORKDIR/out/compatibility-matrix.md" >/dev/null
+grep -nF -- "OpenLayers / WMTS: pending -> pass" "$WORKDIR/out/compatibility-matrix.md" >/dev/null
 
 echo "Validating hard-fail release blocking path"
 cp -R "$REPO_ROOT/compatibility/releases" "$WORKDIR/failing-releases"

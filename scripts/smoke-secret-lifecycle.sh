@@ -33,7 +33,7 @@ test -f "$ROTATION_DIR/rotation-evidence.json"
 test -f "$REVOCATION_DIR/revocation-evidence.json"
 python3 -m json.tool "$ROTATION_DIR/rotation-evidence.json" >/dev/null
 python3 -m json.tool "$REVOCATION_DIR/revocation-evidence.json" >/dev/null
-rg -n 'HONUA_DEVOPS_HONUA_API_KEY' "$ROTATION_DIR/rotation-evidence.json" >/dev/null
-rg -n 'HONUA_DEVOPS_OTEL_API_KEY' "$REVOCATION_DIR/revocation-evidence.json" >/dev/null
+grep -nF -- 'HONUA_DEVOPS_HONUA_API_KEY' "$ROTATION_DIR/rotation-evidence.json" >/dev/null
+grep -nF -- 'HONUA_DEVOPS_OTEL_API_KEY' "$REVOCATION_DIR/revocation-evidence.json" >/dev/null
 
 echo "Secret lifecycle smoke check passed."

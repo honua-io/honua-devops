@@ -156,6 +156,8 @@ def build_badge(latest_release: dict[str, Any]) -> dict[str, Any]:
         color = "red"
     elif summary.get("pending", 0) > 0:
         color = "yellow"
+    elif sum(summary.values()) == 0:
+        color = "lightgrey"
     else:
         color = "green"
 
@@ -230,6 +232,11 @@ def render_markdown(scoreboard: dict[str, Any]) -> str:
     lines.append(f"Generated: `{scoreboard['generated_at_utc']}`")
     lines.append("")
 
+    if not scoreboard["releases"]:
+        lines.append("No compatibility release packs have been published yet.")
+        lines.append("")
+        return "\n".join(lines)
+
     for release in scoreboard["releases"]:
         lines.append(f"## Release {release['release']}")
         lines.append("")
@@ -261,6 +268,15 @@ def render_markdown(scoreboard: dict[str, Any]) -> str:
 
 def render_html(scoreboard: dict[str, Any]) -> str:
     sections: list[str] = []
+    if not scoreboard["releases"]:
+        sections.append(
+            """
+            <section>
+              <p>No compatibility release packs have been published yet.</p>
+            </section>
+            """
+        )
+
     for release in scoreboard["releases"]:
         rows = []
         for client in release["matrix"]:
@@ -366,7 +382,7 @@ def main() -> int:
 
     release_services = discover_services(packs_root, catalog)
     scoreboard = build_scoreboard(release_services, catalog)
-    latest_release = scoreboard["releases"][0]
+    latest_release = scoreboard["releases"][0] if scoreboard["releases"] else {"summary": {"pass": 0, "pending": 0, "fail": 0}}
 
     (output_dir / "compatibility-matrix.json").write_text(
         json.dumps(scoreboard, indent=2) + "\n", encoding="utf-8"

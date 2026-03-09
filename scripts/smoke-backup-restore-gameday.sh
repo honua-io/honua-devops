@@ -26,8 +26,8 @@ test -f "$OUTPUT_DIR/gameday-report.md"
 test -f "$OUTPUT_DIR/logs/backup.log"
 test -f "$OUTPUT_DIR/logs/restore.log"
 python3 -m json.tool "$OUTPUT_DIR/gameday-evidence.json" >/dev/null
-rg -n '"status": "pass"' "$OUTPUT_DIR/gameday-evidence.json" >/dev/null
-rg -n '"rto_target_met": true' "$OUTPUT_DIR/gameday-evidence.json" >/dev/null
-rg -n '"rpo_target_met": true' "$OUTPUT_DIR/gameday-evidence.json" >/dev/null
+grep -nF -- '"status": "pass"' "$OUTPUT_DIR/gameday-evidence.json" >/dev/null
+grep -nF -- '"rto_target_met": true' "$OUTPUT_DIR/gameday-evidence.json" >/dev/null
+grep -nF -- '"rpo_target_met": true' "$OUTPUT_DIR/gameday-evidence.json" >/dev/null
 
 echo "Backup/restore game-day smoke check passed."

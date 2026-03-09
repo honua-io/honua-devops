@@ -105,7 +105,7 @@ test -f "$CUSTOMER_ROOT/desired-state/bundles/parcels-api/prod.servicebundle.yam
 test -f "$CUSTOMER_ROOT/.github/workflows/honua-operator-validation.yml"
 test -f "$CUSTOMER_ROOT/.github/workflows/honua-operator-preflight.yml"
 bash -n "$CUSTOMER_ROOT/bootstrap/configure-honua-operator-ci.sh"
-rg -n "workflow_dispatch:" "$CUSTOMER_ROOT/.github/workflows/honua-operator-preflight.yml" >/dev/null
-rg -n "HONUA_DEVOPS_HONUA_API_BASE_URL" "$CUSTOMER_ROOT/bootstrap/configure-honua-operator-ci.sh" >/dev/null
+grep -nF -- "workflow_dispatch:" "$CUSTOMER_ROOT/.github/workflows/honua-operator-preflight.yml" >/dev/null
+grep -nF -- "HONUA_DEVOPS_HONUA_API_BASE_URL" "$CUSTOMER_ROOT/bootstrap/configure-honua-operator-ci.sh" >/dev/null
 
 echo "Customer bootstrap smoke check passed."
