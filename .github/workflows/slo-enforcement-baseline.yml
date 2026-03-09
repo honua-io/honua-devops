@@ -1,0 +1,32 @@
+name: SLO Enforcement Baseline
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  slo-enforcement:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          bash -n scripts/slo-release-gate.sh
+          bash -n scripts/slo-release-watch.sh
+          bash -n scripts/smoke-slo-release-gate.sh
+          bash -n scripts/smoke-slo-release-watch.sh
+          bash -n scripts/validate-slo-assets.sh
+
+      - name: SLO release gate smoke
+        run: ./scripts/smoke-slo-release-gate.sh
+
+      - name: SLO release watch smoke
+        run: ./scripts/smoke-slo-release-watch.sh
+
+      - name: Validate SLO observability assets
+        run: ./scripts/validate-slo-assets.sh

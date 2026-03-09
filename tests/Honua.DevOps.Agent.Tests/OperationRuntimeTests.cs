@@ -29,6 +29,44 @@ public class OperationRuntimeTests
     }
 
     [Fact]
+    public void Load_DefaultsPlanModeToPlanTier()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+        environment.Set("HONUA_DEVOPS_EXECUTION_MODE", "plan");
+        environment.Set("HONUA_DEVOPS_EXECUTION_TIER", null);
+
+        OperationRuntime runtime = OperationRuntime.Load();
+
+        Assert.Equal(ExecutionTier.Plan, runtime.ExecutionTier);
+    }
+
+    [Fact]
+    public void Load_DefaultsExecuteModeToExecuteLowerEnvTier()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+        environment.Set("HONUA_DEVOPS_EXECUTION_MODE", "execute");
+        environment.Set("HONUA_DEVOPS_EXECUTION_TIER", null);
+
+        OperationRuntime runtime = OperationRuntime.Load();
+
+        Assert.Equal(ExecutionTier.ExecuteLowerEnv, runtime.ExecutionTier);
+    }
+
+    [Fact]
+    public void Load_ParsesPromoteProdExecutionTier()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+        environment.Set("HONUA_DEVOPS_EXECUTION_TIER", "promote-prod");
+
+        OperationRuntime runtime = OperationRuntime.Load();
+
+        Assert.Equal(ExecutionTier.PromoteProd, runtime.ExecutionTier);
+    }
+
+    [Fact]
     public void Load_RejectsInvalidEnvironmentToken()
     {
         using TestEnvironmentVariableScope environment = new();
@@ -45,6 +83,7 @@ public class OperationRuntimeTests
         string[] variableNames =
         [
             "HONUA_DEVOPS_EXECUTION_MODE",
+            "HONUA_DEVOPS_EXECUTION_TIER",
             "HONUA_DEVOPS_GITOPS_TOOL",
             "HONUA_DEVOPS_ALLOWED_ENVIRONMENTS",
             "HONUA_DEVOPS_TERRAFORM_REPO",

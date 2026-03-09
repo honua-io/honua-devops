@@ -1,0 +1,214 @@
+{
+  "title": "Honua SLO Baseline",
+  "tags": [
+    "honua",
+    "slo",
+    "release-gates"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Availability (30d)",
+      "targets": [
+        {
+          "expr": "honua:slo:availability:ratio_30d",
+          "legendFormat": "{{service}} {{environment}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.99
+              },
+              {
+                "color": "green",
+                "value": 0.995
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Error Budget Remaining",
+      "targets": [
+        {
+          "expr": "honua:slo:availability:error_budget_remaining_ratio",
+          "legendFormat": "availability {{service}} {{environment}}"
+        },
+        {
+          "expr": "honua:slo:error_rate:error_budget_remaining_ratio",
+          "legendFormat": "error-rate {{service}} {{environment}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Burn Rate (5m / 30m / 6h)",
+      "targets": [
+        {
+          "expr": "honua:slo:burn_rate:5m",
+          "legendFormat": "5m {{service}} {{environment}}"
+        },
+        {
+          "expr": "honua:slo:burn_rate:30m",
+          "legendFormat": "30m {{service}} {{environment}}"
+        },
+        {
+          "expr": "honua:slo:burn_rate:6h",
+          "legendFormat": "6h {{service}} {{environment}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "orange",
+                "value": 6
+              },
+              {
+                "color": "red",
+                "value": 14.4
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Latency (P50 / P95 / P99)",
+      "targets": [
+        {
+          "expr": "honua:slo:latency:p50_ms:5m",
+          "legendFormat": "p50 {{service}} {{environment}} {{protocol}}"
+        },
+        {
+          "expr": "honua:slo:latency:p95_ms:5m",
+          "legendFormat": "p95 {{service}} {{environment}} {{protocol}}"
+        },
+        {
+          "expr": "honua:slo:latency:p99_ms:5m",
+          "legendFormat": "p99 {{service}} {{environment}} {{protocol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Durability Signals",
+      "targets": [
+        {
+          "expr": "honua:slo:backup_success:ratio_24h",
+          "legendFormat": "backup-success {{service}} {{environment}}"
+        },
+        {
+          "expr": "honua:slo:replication_lag_seconds:max_5m",
+          "legendFormat": "replication-lag {{service}} {{environment}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Maintenance Window Active",
+      "targets": [
+        {
+          "expr": "honua:maintenance_window:active",
+          "legendFormat": "{{service}} {{environment}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "No"
+                },
+                "1": {
+                  "text": "Yes"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      }
+    }
+  ]
+}

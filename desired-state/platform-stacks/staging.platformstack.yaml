@@ -1,0 +1,18 @@
+apiVersion: honua.io/v1alpha1
+kind: PlatformStack
+metadata:
+  name: platform-stack-staging
+  namespace: staging
+  labels:
+    managed-by: honua-devops
+    environment: staging
+spec:
+  environment: staging
+  terraform:
+    repository: https://github.com/honua-io/honua-terraform
+    ref: main
+    targets:
+      - eks
+  secretRefs:
+    - HONUA_ADMIN_API_KEY
+    - HONUA_DB_CONNECTION

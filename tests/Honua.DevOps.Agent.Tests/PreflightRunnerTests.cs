@@ -1,5 +1,7 @@
 using System.Net;
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
 namespace Honua.DevOps.Agent.Tests;
 
@@ -21,6 +23,7 @@ public sealed class PreflightRunnerTests
 
             int exitCode = await PreflightRunner.RunAsync(
                 runtime,
+                OperatorPolicyModel.Default,
                 CreateBackendConfiguration(),
                 gateway,
                 CancellationToken.None);
@@ -49,6 +52,7 @@ public sealed class PreflightRunnerTests
 
             int exitCode = await PreflightRunner.RunAsync(
                 runtime,
+                OperatorPolicyModel.Default,
                 CreateBackendConfiguration(),
                 gateway,
                 CancellationToken.None);
@@ -65,6 +69,7 @@ public sealed class PreflightRunnerTests
     {
         return new OperationRuntime(
             ExecutionMode.Plan,
+            ExecutionTier.Plan,
             GitOpsTool: "honua-gitops",
             AllowedEnvironments: ["dev", "staging", "prod"],
             TerraformRepository: "https://github.com/honua-io/honua-terraform",

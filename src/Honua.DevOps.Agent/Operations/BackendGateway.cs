@@ -1,6 +1,9 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
+using Honua.DevOps.Agent.Operations.DesiredState;
+using Honua.DevOps.Agent.Operations.GitOps;
 
 namespace Honua.DevOps.Agent.Operations;
 
@@ -14,6 +17,8 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         Timeout = configuration.RequestTimeout
     };
     private readonly bool _ownsHttpClient = httpClient is null;
+
+    internal BackendConfiguration Configuration => configuration;
 
     internal Task<BackendCallResult> QueryLogsAsync(
         string service,
@@ -126,38 +131,7 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         return CombineResults(operation, calls);
     }
 
-    internal async Task<BackendCallResult> RequestGitOpsDeployAsync(
-        string service,
-        string[] environments,
-        string revision,
-        string action,
-        string changeSummary,
-        string gitOpsTool,
-        string terraformRepository,
-        string terraformRef,
-        string[] deploymentTargets,
-        CancellationToken cancellationToken)
-    {
-        bool dryRun = !string.Equals(
-            Environment.GetEnvironmentVariable("HONUA_DEVOPS_EXECUTION_MODE"),
-            "execute",
-            StringComparison.OrdinalIgnoreCase);
-
-        return await RequestGitOpsDeployAsync(
-            service,
-            environments,
-            revision,
-            action,
-            changeSummary,
-            gitOpsTool,
-            terraformRepository,
-            terraformRef,
-            deploymentTargets,
-            dryRun,
-            cancellationToken);
-    }
-
-    internal async Task<BackendCallResult> RequestGitOpsDeployAsync(
+    internal async Task<GitOpsDeployBackendResult> RequestGitOpsDeployAsync(
         string service,
         string[] environments,
         string revision,
@@ -168,9 +142,12 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         string terraformRef,
         string[] deploymentTargets,
         bool dryRun,
+        ExecutionMode executionMode,
+        ExecutionTier executionTier,
+        string[] allowedEnvironments,
         CancellationToken cancellationToken)
     {
-        object requestBody = BuildManifestApplyRequest(
+        ManifestApplyRequest requestBody = DesiredStateManifestBuilder.BuildGitOpsDeployRequest(
             service,
             environments,
             revision,
@@ -180,16 +157,87 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             terraformRepository,
             terraformRef,
             deploymentTargets,
-            dryRun);
+            dryRun,
+            executionMode,
+            executionTier,
+            allowedEnvironments);
 
+        using BackendJsonResult manifestSnapshot = await GetJsonFromHonuaAsync(
+            configuration.HonuaManifestExportPath,
+            cancellationToken);
+        using BackendJsonResult capabilitiesSnapshot = await GetJsonFromHonuaAsync(
+            configuration.HonuaAdminCapabilitiesPath,
+            cancellationToken);
         BackendCallResult applyResult = await PostToHonuaAsync(
             configuration.HonuaManifestApplyPath,
             requestBody,
             cancellationToken);
 
-        BackendCallResult manifestResult = await GetFromHonuaAsync(configuration.HonuaManifestExportPath, cancellationToken);
+        BackendCallResult combinedResult = CombineResults(
+            "gitops-deploy",
+            [manifestSnapshot.CallResult, capabilitiesSnapshot.CallResult, applyResult]);
+        return new GitOpsDeployBackendResult(
+            ApplyResult: applyResult,
+            ExportResult: manifestSnapshot.CallResult,
+            CapabilitiesResult: capabilitiesSnapshot.CallResult,
+            CombinedResult: combinedResult,
+            ExportPayload: manifestSnapshot.Payload is null
+                ? null
+                : JsonDocument.Parse(manifestSnapshot.Payload.RootElement.GetRawText()),
+            CapabilitiesPayload: capabilitiesSnapshot.Payload is null
+                ? null
+                : JsonDocument.Parse(capabilitiesSnapshot.Payload.RootElement.GetRawText()));
+    }
 
-        return CombineResults("gitops-deploy", [applyResult, manifestResult]);
+    internal async Task<GitOpsDeployBackendResult> PlanGitOpsRunAsync(CancellationToken cancellationToken)
+    {
+        using BackendJsonResult manifestSnapshot = await GetJsonFromHonuaAsync(
+            configuration.HonuaManifestExportPath,
+            cancellationToken);
+        using BackendJsonResult capabilitiesSnapshot = await GetJsonFromHonuaAsync(
+            configuration.HonuaAdminCapabilitiesPath,
+            cancellationToken);
+
+        BackendCallResult skippedApplyResult = new(
+            IsSuccess: true,
+            Endpoint: BuildEndpoint(configuration.HonuaApiBaseUri, configuration.HonuaManifestApplyPath).ToString(),
+            Detail: "plan-only: manifest apply skipped",
+            PayloadPreview: "apply not requested");
+        BackendCallResult combinedResult = CombineResults(
+            "gitops-engine-plan",
+            [manifestSnapshot.CallResult, capabilitiesSnapshot.CallResult]);
+
+        return new GitOpsDeployBackendResult(
+            ApplyResult: skippedApplyResult,
+            ExportResult: manifestSnapshot.CallResult,
+            CapabilitiesResult: capabilitiesSnapshot.CallResult,
+            CombinedResult: combinedResult,
+            ExportPayload: manifestSnapshot.Payload is null
+                ? null
+                : JsonDocument.Parse(manifestSnapshot.Payload.RootElement.GetRawText()),
+            CapabilitiesPayload: capabilitiesSnapshot.Payload is null
+                ? null
+                : JsonDocument.Parse(capabilitiesSnapshot.Payload.RootElement.GetRawText()));
+    }
+
+    internal Task<BackendCallResult> ApplyManifestAsync(
+        ManifestApplyRequest requestBody,
+        CancellationToken cancellationToken)
+    {
+        return PostToHonuaAsync(
+            configuration.HonuaManifestApplyPath,
+            requestBody,
+            cancellationToken);
+    }
+
+    internal Task<BackendJsonResult> ExportManifestSnapshotAsync(CancellationToken cancellationToken)
+    {
+        return GetJsonFromHonuaAsync(configuration.HonuaManifestExportPath, cancellationToken);
+    }
+
+    internal Task<BackendJsonResult> GetCapabilitySnapshotAsync(CancellationToken cancellationToken)
+    {
+        return GetJsonFromHonuaAsync(configuration.HonuaAdminCapabilitiesPath, cancellationToken);
     }
 
     internal async Task<BackendCallResult> RequestRequirementsAnalysisAsync(
@@ -301,6 +349,18 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             cancellationToken);
     }
 
+    private Task<BackendJsonResult> GetJsonFromHonuaAsync(string relativePath, CancellationToken cancellationToken)
+    {
+        return SendJsonAsync(
+            configuration.HonuaApiBaseUri,
+            HttpMethod.Get,
+            relativePath,
+            payload: null,
+            configuration.HonuaApiKey,
+            ApiKeyTransport.XApiKey,
+            cancellationToken);
+    }
+
     private async Task<BackendCallResult> SendAsync(
         Uri baseUri,
         HttpMethod method,
@@ -345,6 +405,61 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         }
     }
 
+    private async Task<BackendJsonResult> SendJsonAsync(
+        Uri baseUri,
+        HttpMethod method,
+        string relativePath,
+        object? payload,
+        string? apiKey,
+        ApiKeyTransport apiKeyTransport,
+        CancellationToken cancellationToken)
+    {
+        Uri endpoint = BuildEndpoint(baseUri, relativePath);
+        using HttpRequestMessage request = new(method, endpoint);
+        if (payload is not null)
+        {
+            request.Content = JsonContent.Create(payload);
+        }
+
+        ApplyApiKey(request, apiKey, apiKeyTransport);
+
+        try
+        {
+            using HttpResponseMessage response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            string body = response.Content is null
+                ? string.Empty
+                : await response.Content.ReadAsStringAsync(cancellationToken);
+            bool isSuccess = response.IsSuccessStatusCode;
+            string detail = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            JsonDocument? payloadDocument = TryParseJsonDocument(body);
+
+            return new BackendJsonResult(
+                new BackendCallResult(
+                    isSuccess,
+                    endpoint.ToString(),
+                    detail,
+                    SummarizeBody(body)),
+                payloadDocument);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return new BackendJsonResult(
+                new BackendCallResult(
+                    IsSuccess: false,
+                    Endpoint: endpoint.ToString(),
+                    Detail: $"request-failed: {exception.GetType().Name}",
+                    PayloadPreview: exception.Message),
+                null);
+        }
+    }
+
     private static void ApplyApiKey(HttpRequestMessage request, string? apiKey, ApiKeyTransport apiKeyTransport)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -366,7 +481,7 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         }
     }
 
-    private static BackendCallResult CombineResults(string operation, IReadOnlyList<BackendCallResult> calls)
+    internal static BackendCallResult CombineResults(string operation, IReadOnlyList<BackendCallResult> calls)
     {
         if (calls.Count == 0)
         {
@@ -391,80 +506,21 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             PayloadPreview: SummarizeBody(preview));
     }
 
-    private static object BuildManifestApplyRequest(
-        string service,
-        IReadOnlyList<string> environments,
-        string revision,
-        string action,
-        string changeSummary,
-        string gitOpsTool,
-        string terraformRepository,
-        string terraformRef,
-        IReadOnlyList<string> deploymentTargets,
-        bool dryRun)
+    private static JsonDocument? TryParseJsonDocument(string body)
     {
-        string normalizedService = NormalizeResourceToken(service, "honua-service");
-        string normalizedChangeSummary = NormalizeText(changeSummary, "not provided");
-
-        var resources = environments
-            .Select(environment =>
-            {
-                string normalizedEnvironment = NormalizeResourceToken(environment, "default");
-                return new
-                {
-                    apiVersion = HonuaMetadataApiVersion,
-                    kind = "Service",
-                    metadata = new
-                    {
-                        name = $"{normalizedService}-{normalizedEnvironment}",
-                        @namespace = normalizedEnvironment,
-                        labels = new Dictionary<string, string>
-                        {
-                            ["managed-by"] = "honua-devops",
-                            ["service"] = normalizedService,
-                            ["environment"] = normalizedEnvironment
-                        },
-                        annotations = new Dictionary<string, string>
-                        {
-                            ["honua.devops/action"] = action,
-                            ["honua.devops/revision"] = revision,
-                            ["honua.devops/gitops-tool"] = gitOpsTool,
-                            ["honua.devops/change-summary"] = normalizedChangeSummary,
-                            ["honua.devops/terraform-ref"] = terraformRef,
-                            ["honua.devops/requested-at"] = DateTimeOffset.UtcNow.ToString("O")
-                        }
-                    },
-                    spec = new
-                    {
-                        description = $"GitOps deployment request for {normalizedService} in {normalizedEnvironment}.",
-                        srid = 4326,
-                        deployment = new
-                        {
-                            service = normalizedService,
-                            environment = normalizedEnvironment,
-                            revision,
-                            action,
-                            changeSummary = normalizedChangeSummary,
-                            gitOpsTool,
-                            terraform = new
-                            {
-                                repository = terraformRepository,
-                                @ref = terraformRef,
-                                targets = deploymentTargets
-                            }
-                        }
-                    }
-                };
-            })
-            .ToArray();
-
-        bool prune = action.Contains("prune", StringComparison.OrdinalIgnoreCase);
-        return new
+        if (string.IsNullOrWhiteSpace(body))
         {
-            resources,
-            dryRun,
-            prune
-        };
+            return null;
+        }
+
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static string NormalizeResourceToken(string? value, string fallback)
@@ -495,11 +551,6 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
 
         string normalized = builder.ToString().Trim('-');
         return string.IsNullOrWhiteSpace(normalized) ? fallback : normalized;
-    }
-
-    private static string NormalizeText(string? value, string fallback)
-    {
-        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 
     internal static Uri BuildEndpoint(Uri baseUri, string relativePath)

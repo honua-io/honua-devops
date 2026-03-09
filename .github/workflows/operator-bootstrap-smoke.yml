@@ -1,0 +1,32 @@
+name: Operator Bootstrap Smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Smoke bootstrap operator env
+        run: ./scripts/smoke-bootstrap-operator-env.sh
+
+      - name: Smoke customer bootstrap flow
+        run: ./scripts/smoke-customer-bootstrap.sh

@@ -1,0 +1,28 @@
+namespace Honua.DevOps.Agent.Operations;
+
+internal sealed record OperationEvidence(
+    string Scope,
+    string RequestedAction,
+    string EffectiveAction,
+    bool DryRun,
+    string ExecutionMode,
+    string? ExecutionTier,
+    IReadOnlyList<string> TargetEnvironments,
+    string? CurrentRevision,
+    string? DesiredRevision,
+    string? GitOpsTool,
+    string? TerraformRepository,
+    string? TerraformRef,
+    IReadOnlyList<string> DeploymentTargets,
+    string PolicyGate,
+    string ApprovalMode,
+    string AuditHookTarget,
+    string SupportSessionAccess,
+    int SupportSessionTtlMinutes,
+    bool SupportSessionCustomerVisible,
+    bool BreakGlassPostActionReviewRequired,
+    IReadOnlyList<string> RequiredChecks,
+    string? DiffSummary,
+    string? GateStatus,
+    string BackendEndpoint,
+    string BackendDetail);

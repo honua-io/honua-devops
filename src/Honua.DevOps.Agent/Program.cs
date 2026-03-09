@@ -1,9 +1,11 @@
 using Honua.DevOps.Agent.Configuration;
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Prompts;
 using Honua.DevOps.Agent.Providers;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
 using CancellationTokenSource cancellationTokenSource = new();
 Console.CancelKeyPress += (_, eventArgs) =>
@@ -14,8 +16,10 @@ Console.CancelKeyPress += (_, eventArgs) =>
 
 try
 {
+    _ = DotEnvLoader.LoadDefaultFiles();
     CliOptions options = CliOptions.Parse(args);
     OperationRuntime runtime = OperationRuntime.Load();
+    OperatorPolicyModel policy = OperatorPolicyModel.Load();
     BackendConfiguration backendConfiguration = BackendConfiguration.Load();
     using BackendGateway backendGateway = new(backendConfiguration);
 
@@ -23,13 +27,14 @@ try
     {
         Environment.ExitCode = await PreflightRunner.RunAsync(
             runtime,
+            policy,
             backendConfiguration,
             backendGateway,
             cancellationTokenSource.Token);
         return;
     }
 
-    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway);
+    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy);
     ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
     AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
 
@@ -40,7 +45,8 @@ try
     }
 
     Console.WriteLine(
-        $"honua-devops is ready ({options.Provider.ToString().ToLowerInvariant()} provider, mode={runtime.ExecutionMode.ToString().ToLowerInvariant()}, gitops={runtime.GitOpsTool}).");
+        $"honua-devops is ready ({options.Provider.ToString().ToLowerInvariant()} provider, mode={runtime.ExecutionMode.ToString().ToLowerInvariant()}, tier={runtime.ExecutionTier.ToConfigValue()}, gitops={runtime.GitOpsTool}).");
+    Console.WriteLine($"approval={policy.ApprovalMode.ToConfigValue()} audit={policy.AuditHookTarget} support-session={policy.SupportSession.Access.ToConfigValue()} ttl={policy.SupportSession.TtlMinutes}m");
     Console.WriteLine($"honua-api={backendConfiguration.HonuaApiBaseUri} otel={backendConfiguration.OTelBaseUri}");
     Console.WriteLine("Type a request, or `exit` to quit.");
 

@@ -1,0 +1,45 @@
+apiVersion: honua.io/v1alpha1
+kind: ServiceBundle
+metadata:
+  name: roads-api-prod
+  namespace: prod
+  labels:
+    managed-by: honua-devops
+    service: roads-api
+    environment: prod
+spec:
+  description: Bootstrap ServiceBundle for roads-api in prod.
+  srid: 4326
+  deployment:
+    service: roads-api
+    environment: prod
+    revision: release/2026.03
+    action: promote
+    changeSummary: Promote validated roads-api revision into prod.
+    gitOpsTool: honua-gitops
+    terraform:
+      repository: https://github.com/honua-io/honua-terraform
+      ref: main
+      targets:
+        - eks
+  relationships:
+    platformStackRef:
+      apiVersion: honua.io/v1alpha1
+      kind: PlatformStack
+      name: platform-stack-prod
+      namespace: prod
+    platformReleaseRef:
+      apiVersion: honua.io/v1alpha1
+      kind: PlatformRelease
+      name: roads-api-prod-release-2026-03
+      namespace: prod
+    executionPolicyRef:
+      apiVersion: honua.io/v1alpha1
+      kind: ExecutionPolicy
+      name: execution-policy-default
+      namespace: control-plane
+    promotionRef:
+      apiVersion: honua.io/v1alpha1
+      kind: Promotion
+      name: roads-api-staging-to-prod
+      namespace: prod

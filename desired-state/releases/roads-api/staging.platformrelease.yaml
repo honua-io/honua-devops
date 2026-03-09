@@ -1,0 +1,21 @@
+apiVersion: honua.io/v1alpha1
+kind: PlatformRelease
+metadata:
+  name: roads-api-staging-release-2026-03
+  namespace: staging
+  labels:
+    managed-by: honua-devops
+    service: roads-api
+    environment: staging
+spec:
+  service: roads-api
+  environment: staging
+  revision: release/2026.03
+  action: sync
+  changeSummary: Promote validated roads-api revision into staging.
+  gitOpsTool: honua-gitops
+  terraform:
+    repository: https://github.com/honua-io/honua-terraform
+    ref: main
+    targets:
+      - eks

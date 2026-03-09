@@ -2,6 +2,7 @@ namespace Honua.DevOps.Agent.Operations;
 
 internal sealed record OperationRuntime(
     ExecutionMode ExecutionMode,
+    ExecutionTier ExecutionTier,
     string GitOpsTool,
     string[] AllowedEnvironments,
     string TerraformRepository,
@@ -12,6 +13,7 @@ internal sealed record OperationRuntime(
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
 
     private const string ExecutionModeVariable = "HONUA_DEVOPS_EXECUTION_MODE";
+    private const string ExecutionTierVariable = "HONUA_DEVOPS_EXECUTION_TIER";
     private const string GitOpsToolVariable = "HONUA_DEVOPS_GITOPS_TOOL";
     private const string EnvironmentsVariable = "HONUA_DEVOPS_ALLOWED_ENVIRONMENTS";
     private const string TerraformRepositoryVariable = "HONUA_DEVOPS_TERRAFORM_REPO";
@@ -23,6 +25,9 @@ internal sealed record OperationRuntime(
     {
         ExecutionMode mode = ParseExecutionMode(
             Environment.GetEnvironmentVariable(ExecutionModeVariable));
+        ExecutionTier tier = ParseExecutionTier(
+            Environment.GetEnvironmentVariable(ExecutionTierVariable),
+            mode);
 
         string? gitOpsTool = Environment.GetEnvironmentVariable(GitOpsToolVariable)?.Trim();
         if (string.IsNullOrWhiteSpace(gitOpsTool))
@@ -54,6 +59,7 @@ internal sealed record OperationRuntime(
 
         return new OperationRuntime(
             mode,
+            tier,
             gitOpsTool,
             environments,
             terraformRepository,
@@ -81,6 +87,29 @@ internal sealed record OperationRuntime(
 
         throw new InvalidOperationException(
             $"Invalid `{ExecutionModeVariable}` value `{value}`. Allowed values: plan, execute.");
+    }
+
+    private static ExecutionTier ParseExecutionTier(string? value, ExecutionMode mode)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return mode == ExecutionMode.Execute
+                ? ExecutionTier.ExecuteLowerEnv
+                : ExecutionTier.Plan;
+        }
+
+        string normalized = value.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "observe" => ExecutionTier.Observe,
+            "plan" => ExecutionTier.Plan,
+            "propose" => ExecutionTier.Propose,
+            "execute-lower-env" or "execute_lower_env" or "lower-env" => ExecutionTier.ExecuteLowerEnv,
+            "promote-prod" or "promote_prod" => ExecutionTier.PromoteProd,
+            "break-glass" or "break_glass" => ExecutionTier.BreakGlass,
+            _ => throw new InvalidOperationException(
+                $"Invalid `{ExecutionTierVariable}` value `{value}`. Allowed values: observe, plan, propose, execute-lower-env, promote-prod, break-glass.")
+        };
     }
 
     private static string[] ParseEnvironments(string? value)

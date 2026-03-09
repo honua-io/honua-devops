@@ -1,0 +1,18 @@
+apiVersion: honua.io/v1alpha1
+kind: Promotion
+metadata:
+  name: roads-api-dev-to-staging
+  namespace: staging
+  labels:
+    managed-by: honua-devops
+    service: roads-api
+spec:
+  service: roads-api
+  sourceEnvironment: dev
+  targetEnvironment: staging
+  revision: release/2026.03
+  executionPolicyRef:
+    apiVersion: honua.io/v1alpha1
+    kind: ExecutionPolicy
+    name: execution-policy-default
+    namespace: control-plane

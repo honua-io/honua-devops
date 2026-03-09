@@ -1,12 +1,14 @@
+using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Microsoft.Extensions.AI;
+using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
 namespace Honua.DevOps.Agent.Operations;
 
 internal static class CapabilityToolset
 {
-    internal static IList<AITool> Create(OperationRuntime runtime, BackendGateway gateway)
+    internal static IList<AITool> Create(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null)
     {
-        HonuaOperationsToolkit toolkit = new(runtime, gateway);
+        HonuaOperationsToolkit toolkit = new(runtime, gateway, policy);
 
         return
         [
@@ -35,6 +37,11 @@ internal static class CapabilityToolset
                     => toolkit.PlanServerUpgradeAsync(environment, currentVersion, targetVersion, maintenanceWindow, constraints),
                 "plan_server_upgrade",
                 "Plan a Honua server upgrade with staged rollout and rollback criteria."),
+            CreateTool(
+                (string service, string environmentsCsv, string revision, string action, string changeSummary)
+                    => toolkit.PlanGitOpsEngineAsync(service, environmentsCsv, revision, action, changeSummary),
+                "plan_gitops_engine",
+                "Plan the internal honua-gitops engine diff, drift, and state transitions without applying desired state."),
             CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary)
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),

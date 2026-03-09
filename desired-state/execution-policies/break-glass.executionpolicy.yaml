@@ -1,0 +1,22 @@
+apiVersion: honua.io/v1alpha1
+kind: ExecutionPolicy
+metadata:
+  name: execution-policy-break-glass
+  namespace: control-plane
+  labels:
+    managed-by: honua-devops
+    policy-class: break-glass
+spec:
+  executionMode: execute
+  executionTier: break-glass
+  allowedEnvironments:
+    - dev
+    - staging
+    - prod
+  requiredChecks:
+    - incident-context
+    - operator-justification
+    - rollback-intent
+    - post-action-review
+  requiresApproval: false
+  allowsBreakGlass: true

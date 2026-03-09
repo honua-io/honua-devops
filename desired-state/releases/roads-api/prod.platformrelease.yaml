@@ -1,0 +1,21 @@
+apiVersion: honua.io/v1alpha1
+kind: PlatformRelease
+metadata:
+  name: roads-api-prod-release-2026-03
+  namespace: prod
+  labels:
+    managed-by: honua-devops
+    service: roads-api
+    environment: prod
+spec:
+  service: roads-api
+  environment: prod
+  revision: release/2026.03
+  action: promote
+  changeSummary: Promote validated roads-api revision into prod.
+  gitOpsTool: honua-gitops
+  terraform:
+    repository: https://github.com/honua-io/honua-terraform
+    ref: main
+    targets:
+      - eks
