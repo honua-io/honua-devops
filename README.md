@@ -11,6 +11,17 @@ This repository is the execution vehicle for [honua-server issue #364](https://g
 
 Mission: raise the technical and delivery bar high enough to disrupt the GIS professional services status quo.
 
+## License and Availability
+
+`honua-devops` is private operator tooling and is **not** part of Honua's
+open-core runtime promise.
+
+- Public/open surfaces remain in `honua-server`, the official SDK repos, the
+  mobile repos, and the base MCP data-access surface.
+- This repository covers operator-grade AI DevOps/copilot workflows such as
+  rollout planning, delegated operations, and implementation-partner delivery.
+- Licensing for this repository is proprietary. See [LICENSE](LICENSE).
+
 ## Stack
 
 - .NET 10 console host
