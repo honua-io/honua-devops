@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Honua Compatibility Changes</title>
+    <description>Per-release compatibility changes for Honua client integrations.</description>
+    <link>https://compatibility.honua.dev/</link>
+    
+            <item>
+              <title>Compatibility changes for 2026.03.1</title>
+              <description>QGIS / WMTS: pending -&gt; pass; OpenLayers / WMTS: pending -&gt; pass</description>
+              <pubDate>2026-03-08</pubDate>
+              <guid>2026.03.1</guid>
+            </item>
+            
+  </channel>
+</rss>

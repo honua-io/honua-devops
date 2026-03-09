@@ -1,9 +1,18 @@
 using System.ComponentModel;
 
+using Honua.DevOps.Agent.Operations.GitOps;
+using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
+using Honua.DevOps.Agent.Operations.RuntimeAdapters;
+using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
+using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
+
 namespace Honua.DevOps.Agent.Operations;
 
-internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGateway gateway)
+internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null)
 {
+    private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
+
     [Description("Analyze logs through OTEL endpoint and produce findings, remediation steps, and validation checks.")]
     public async Task<OperationResponse> AnalyzeLogsAsync(
         string service,
@@ -225,6 +234,42 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             maintenanceWindow,
             constraints,
             cancellationToken);
+        RuntimeAdapterRequest adapterRequest = new(
+            Service: "honua-server",
+            Environments: [environment],
+            Revision: Normalize(targetVersion, "target"),
+            Action: "upgrade",
+            ChangeSummary: $"upgrade from {Normalize(currentVersion, "current")} to {Normalize(targetVersion, "target")}",
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            DryRun: runtime.ExecutionMode != ExecutionMode.Execute,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        IReadOnlyList<RuntimeAdapterWorkflow> upgradeWorkflows = RuntimeAdapterRegistry.ResolveMany(runtime.TerraformDeploymentTargets)
+            .Select(adapter => adapter.BuildWorkflow(adapterRequest))
+            .ToArray();
+        ReleaseOrchestrationPlan releaseOrchestration = ReleaseOrchestrationPlanner.Build(
+            upgradeWorkflows,
+            [environment],
+            "upgrade",
+            runtime.ExecutionMode != ExecutionMode.Execute,
+            runtime.ExecutionMode != ExecutionMode.Execute ? "plan-only-upgrade" : "staged-rollout-required");
+        List<string> upgradeActions =
+        [
+            "Validate compatibility and backup/restore path before first rollout.",
+            "Run staged rollout dev -> staging -> prod with explicit stop gates.",
+            "Keep rollback manifest and verify downgrade safety constraints."
+        ];
+        upgradeActions.AddRange(BuildOperatorPolicyActions());
+        upgradeActions.AddRange(BuildReleaseOrchestrationActions(releaseOrchestration));
+        List<string> upgradeValidationChecks =
+        [
+            "Post-upgrade smoke tests pass across all protocol entrypoints.",
+            "No regression in latency, error-rate, or replication health."
+        ];
+        upgradeValidationChecks.AddRange(ReleaseOrchestrationPlanner.FlattenEvidenceRequirements(releaseOrchestration));
 
         return new OperationResponse(
             Status: backendResult.IsSuccess
@@ -235,24 +280,26 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             [
                 $"Honua API endpoint: {backendResult.Endpoint}",
                 $"Backend result: {backendResult.Detail}",
-                $"Response excerpt: {backendResult.PayloadPreview}"
+                $"Response excerpt: {backendResult.PayloadPreview}",
+                $"Release strategy: {releaseOrchestration.Strategy}.",
+                $"Migration mode: {releaseOrchestration.MigrationMode}.",
+                $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+                $"Audit hook target: {EffectivePolicy.AuditHookTarget}."
             ],
-            Actions:
-            [
-                "Validate compatibility and backup/restore path before first rollout.",
-                "Run staged rollout dev -> staging -> prod with explicit stop gates.",
-                "Keep rollback manifest and verify downgrade safety constraints."
-            ],
-            ValidationChecks:
-            [
-                "Post-upgrade smoke tests pass across all protocol entrypoints.",
-                "No regression in latency, error-rate, or replication health."
-            ],
+            Actions: upgradeActions,
+            ValidationChecks: upgradeValidationChecks,
             Risks:
             [
                 "Schema drift can break rollback path.",
                 "Bypassing staged promotion increases blast radius."
-            ]);
+            ],
+            Evidence: BuildUpgradeEvidence(
+                environment,
+                currentVersion,
+                targetVersion,
+                releaseOrchestration,
+                backendResult),
+            ReleaseOrchestration: releaseOrchestration);
     }
 
     [Description("Generate GitOps deployment actions across environments via Honua API using validated Terraform templates.")]
@@ -273,8 +320,27 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         string normalizedTerraformRepository = SanitizePayloadValue(runtime.TerraformRepository, "terraform repository");
         string normalizedTerraformRef = ValidateRevision(runtime.TerraformRef, "terraform ref");
         string[] normalizedDeploymentTargets = ValidateDeploymentTargets(runtime.TerraformDeploymentTargets);
-
-        BackendCallResult backendResult = await gateway.RequestGitOpsDeployAsync(
+        DeploymentAuthorization authorization = AuthorizeDeployment(targetEnvironments, normalizedAction);
+        RuntimeAdapterRequest adapterRequest = new(
+            Service: normalizedService,
+            Environments: targetEnvironments,
+            Revision: normalizedRevision,
+            Action: normalizedAction,
+            ChangeSummary: normalizedChangeSummary,
+            GitOpsTool: normalizedGitOpsTool,
+            TerraformRepository: normalizedTerraformRepository,
+            TerraformRef: normalizedTerraformRef,
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            DryRun: authorization.DryRun,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry.ResolveMany(normalizedDeploymentTargets)
+            .Select(adapter => adapter.BuildWorkflow(adapterRequest))
+            .ToArray();
+        IReadOnlyList<RuntimeAdapterCapability> adapterCapabilities = adapterWorkflows
+            .Select(workflow => workflow.Capability)
+            .ToArray();
+        using GitOpsDeployBackendResult backendResult = await gateway.RequestGitOpsDeployAsync(
             normalizedService,
             targetEnvironments,
             normalizedRevision,
@@ -284,46 +350,252 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             normalizedTerraformRepository,
             normalizedTerraformRef,
             normalizedDeploymentTargets,
+            authorization.DryRun,
+            runtime.ExecutionMode,
+            runtime.ExecutionTier,
+            runtime.AllowedEnvironments,
             cancellationToken);
-
-        List<string> actionsList =
-        [
-            $"Use GitOps tool `{normalizedGitOpsTool}` for staged promotion: {string.Join(" -> ", targetEnvironments)}.",
-            $"Source infrastructure templates from `{normalizedTerraformRepository}` at ref `{normalizedTerraformRef}`.",
-            $"Validated deployment targets: {string.Join(", ", normalizedDeploymentTargets)}.",
-            "Use Honua GitOps primitives from honua-server issues #351/#363: apply, dryRun, prune, drift detection, approval gates.",
-            "Enforce health and integration checks before promoting to next environment."
-        ];
-        actionsList.AddRange(BuildGitOpsCommands(
-            normalizedGitOpsTool,
+        ReleaseOrchestrationPlan releaseOrchestration = ReleaseOrchestrationPlanner.Build(
+            adapterWorkflows,
+            targetEnvironments,
+            normalizedAction,
+            authorization.DryRun,
+            authorization.PolicyGate);
+        ServiceBundleReconciliationPlan serviceBundleReconciliation = ServiceBundleReconciliationPlanner.Build(
+            normalizedService,
+            targetEnvironments,
+            gateway.Configuration,
+            backendResult.CapabilitiesPayload,
+            backendResult.CapabilitiesResult.PayloadPreview,
+            backendResult.ExportPayload,
+            backendResult.ExportResult.PayloadPreview);
+        GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
             normalizedService,
             targetEnvironments,
             normalizedRevision,
-            normalizedAction));
+            normalizedAction,
+            normalizedGitOpsTool,
+            authorization.DryRun,
+            authorization.PolicyGate,
+            backendResult,
+            releaseOrchestration,
+            serviceBundleReconciliation);
+
+        List<string> actionsList =
+        [
+            authorization.WorkflowGuidance,
+            $"Use GitOps tool `{normalizedGitOpsTool}` for staged promotion: {string.Join(" -> ", targetEnvironments)}.",
+            $"Source infrastructure templates from `{normalizedTerraformRepository}` at ref `{normalizedTerraformRef}`.",
+            $"Validated deployment targets: {string.Join(", ", normalizedDeploymentTargets)}.",
+            $"Runtime adapter capability matrix: {string.Join(" | ", adapterCapabilities.Select(capability => capability.ToSummary()))}.",
+            "Use Honua GitOps primitives from honua-server issues #351/#363: apply, dryRun, prune, drift detection, approval gates.",
+            "Enforce health and integration checks before promoting to next environment."
+        ];
+        actionsList.AddRange(BuildOperatorPolicyActions());
+        actionsList.AddRange(BuildRuntimeAdapterActions(adapterWorkflows, authorization.DryRun));
+        actionsList.AddRange(BuildReleaseOrchestrationActions(releaseOrchestration));
+        actionsList.AddRange(BuildServiceBundleReconciliationActions(serviceBundleReconciliation));
+        actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
 
         return new OperationResponse(
-            Status: backendResult.IsSuccess
+            Status: backendResult.CombinedResult.IsSuccess
                 ? runtime.ExecutionMode == ExecutionMode.Execute ? "execute-enabled" : "plan-only"
                 : "backend-error",
             Summary: $"GitOps deployment plan for `{normalizedService}` across {string.Join(", ", targetEnvironments)}.",
             Findings:
             [
-                $"Honua API endpoint: {backendResult.Endpoint}",
-                $"Backend result: {backendResult.Detail}",
-                $"Response excerpt: {backendResult.PayloadPreview}",
-                $"Change summary: {normalizedChangeSummary}."
+                $"Honua API endpoint: {backendResult.CombinedResult.Endpoint}",
+                $"Backend result: {backendResult.CombinedResult.Detail}",
+                $"Response excerpt: {backendResult.CombinedResult.PayloadPreview}",
+                $"Change summary: {normalizedChangeSummary}.",
+                $"Runtime adapter families: {string.Join(", ", adapterCapabilities.Select(capability => $"{capability.Target}={capability.Family}"))}.",
+                $"Release strategy: {releaseOrchestration.Strategy}.",
+                $"Migration mode: {releaseOrchestration.MigrationMode}.",
+                $"Promotion gate: {releaseOrchestration.PromotionPolicy.Gate}.",
+                $"Rollback fallback mode: {releaseOrchestration.RollbackPolicy.FallbackMode}.",
+                $"ServiceBundle reconciliation strategy: {serviceBundleReconciliation.Strategy}.",
+                $"ServiceBundle export mode: {serviceBundleReconciliation.ExportMode}.",
+                $"ServiceBundle current state: {serviceBundleReconciliation.CurrentStateSummary}.",
+                $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
+                $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
+                $"GitOps actual state source: {gitOpsPlan.ActualStateSource}.",
+                $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+                $"Audit hook target: {EffectivePolicy.AuditHookTarget}.",
+                $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
+                $"Execution tier `{runtime.ExecutionTier.ToConfigValue()}` resolved to {(authorization.DryRun ? "dry-run" : "write-enabled")} behavior."
             ],
             Actions: actionsList,
             ValidationChecks:
             [
+                authorization.ValidationGuidance,
+                ..BuildOperatorPolicyValidationChecks(),
+                ..BuildRuntimeAdapterValidationChecks(adapterWorkflows),
+                ..gitOpsPlan.RequiredEvidence,
+                ..ReleaseOrchestrationPlanner.FlattenEvidenceRequirements(releaseOrchestration),
+                ..ServiceBundleReconciliationPlanner.FlattenEvidenceRequirements(serviceBundleReconciliation),
                 "Deployment diff matches approved scope and Terraform template version.",
                 "Each environment passes validation before promotion."
             ],
             Risks:
             [
+                authorization.RiskGuidance,
+                ..BuildOperatorPolicyRisks(),
+                ..BuildRuntimeAdapterRisks(adapterWorkflows),
+                ..releaseOrchestration.PromotionPolicy.Blockers.Select(blocker => $"Promotion blocker: {blocker}."),
+                ..releaseOrchestration.RollbackPolicy.Triggers.Select(trigger => $"Rollback trigger: {trigger}."),
                 "Environment drift can invalidate promotion assumptions.",
                 "Template drift from validated Terraform repo can cause inconsistent infra state."
-            ]);
+            ],
+            Evidence: BuildDeploymentEvidence(
+                normalizedTerraformRepository,
+                normalizedTerraformRef,
+                normalizedDeploymentTargets,
+                adapterWorkflows,
+                releaseOrchestration,
+                serviceBundleReconciliation,
+                gitOpsPlan,
+                authorization,
+                backendResult.CombinedResult),
+            GitOpsPlan: gitOpsPlan,
+            ReleaseOrchestration: releaseOrchestration,
+            ServiceBundleReconciliation: serviceBundleReconciliation);
+    }
+
+    [Description("Plan the internal honua-gitops engine state transitions, diff, and drift without applying desired state.")]
+    public async Task<OperationResponse> PlanGitOpsEngineAsync(
+        string service,
+        string environmentsCsv,
+        string revision,
+        string action,
+        string changeSummary,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedService = ValidateServiceName(service);
+        string[] targetEnvironments = ParseEnvironments(environmentsCsv);
+        string normalizedRevision = ValidateRevision(Normalize(revision, "HEAD"), "revision");
+        string normalizedAction = ValidateAction(action);
+        string normalizedChangeSummary = SanitizeFreeText(changeSummary, "not provided");
+        string normalizedGitOpsTool = ValidateGitOpsTool(runtime.GitOpsTool);
+        string normalizedTerraformRepository = SanitizePayloadValue(runtime.TerraformRepository, "terraform repository");
+        string normalizedTerraformRef = ValidateRevision(runtime.TerraformRef, "terraform ref");
+        string[] normalizedDeploymentTargets = ValidateDeploymentTargets(runtime.TerraformDeploymentTargets);
+        DeploymentAuthorization authorization = AuthorizeDeployment(targetEnvironments, normalizedAction) with
+        {
+            DryRun = true,
+            PolicyGate = "gitops-engine-plan",
+            WorkflowGuidance = "Plan the internal honua-gitops engine only; do not apply desired state in this path."
+        };
+
+        RuntimeAdapterRequest adapterRequest = new(
+            Service: normalizedService,
+            Environments: targetEnvironments,
+            Revision: normalizedRevision,
+            Action: normalizedAction,
+            ChangeSummary: normalizedChangeSummary,
+            GitOpsTool: normalizedGitOpsTool,
+            TerraformRepository: normalizedTerraformRepository,
+            TerraformRef: normalizedTerraformRef,
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            DryRun: true,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry.ResolveMany(normalizedDeploymentTargets)
+            .Select(adapter => adapter.BuildWorkflow(adapterRequest))
+            .ToArray();
+        IReadOnlyList<RuntimeAdapterCapability> adapterCapabilities = adapterWorkflows
+            .Select(workflow => workflow.Capability)
+            .ToArray();
+
+        using GitOpsDeployBackendResult backendResult = await gateway.PlanGitOpsRunAsync(cancellationToken);
+        ReleaseOrchestrationPlan releaseOrchestration = ReleaseOrchestrationPlanner.Build(
+            adapterWorkflows,
+            targetEnvironments,
+            normalizedAction,
+            dryRun: true,
+            authorization.PolicyGate);
+        ServiceBundleReconciliationPlan serviceBundleReconciliation = ServiceBundleReconciliationPlanner.Build(
+            normalizedService,
+            targetEnvironments,
+            gateway.Configuration,
+            backendResult.CapabilitiesPayload,
+            backendResult.CapabilitiesResult.PayloadPreview,
+            backendResult.ExportPayload,
+            backendResult.ExportResult.PayloadPreview);
+        GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
+            normalizedService,
+            targetEnvironments,
+            normalizedRevision,
+            normalizedAction,
+            normalizedGitOpsTool,
+            dryRun: true,
+            authorization.PolicyGate,
+            backendResult,
+            releaseOrchestration,
+            serviceBundleReconciliation);
+
+        List<string> actionsList =
+        [
+            authorization.WorkflowGuidance,
+            $"Inspect internal `{normalizedGitOpsTool}` transitions before any apply path for {string.Join(" -> ", targetEnvironments)}.",
+            $"Source infrastructure templates from `{normalizedTerraformRepository}` at ref `{normalizedTerraformRef}`.",
+            $"Validated deployment targets: {string.Join(", ", normalizedDeploymentTargets)}.",
+            $"Runtime adapter capability matrix: {string.Join(" | ", adapterCapabilities.Select(capability => capability.ToSummary()))}.",
+            "Use this plan-only engine output to review diff, drift, and approval transitions before deploy_service_gitops."
+        ];
+        actionsList.AddRange(BuildOperatorPolicyActions());
+        actionsList.AddRange(BuildRuntimeAdapterActions(adapterWorkflows, dryRun: true));
+        actionsList.AddRange(BuildReleaseOrchestrationActions(releaseOrchestration));
+        actionsList.AddRange(BuildServiceBundleReconciliationActions(serviceBundleReconciliation));
+        actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
+
+        return new OperationResponse(
+            Status: backendResult.CombinedResult.IsSuccess ? "gitops-engine-plan" : "backend-error",
+            Summary: $"honua-gitops engine plan for `{normalizedService}` across {string.Join(", ", targetEnvironments)}.",
+            Findings:
+            [
+                $"Honua API endpoint: {backendResult.CombinedResult.Endpoint}",
+                $"Backend result: {backendResult.CombinedResult.Detail}",
+                $"Response excerpt: {backendResult.CombinedResult.PayloadPreview}",
+                $"Change summary: {normalizedChangeSummary}.",
+                $"Runtime adapter families: {string.Join(", ", adapterCapabilities.Select(capability => $"{capability.Target}={capability.Family}"))}.",
+                $"Release strategy: {releaseOrchestration.Strategy}.",
+                $"ServiceBundle current state: {serviceBundleReconciliation.CurrentStateSummary}.",
+                $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
+                $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
+                $"GitOps actual state source: {gitOpsPlan.ActualStateSource}."
+            ],
+            Actions: actionsList,
+            ValidationChecks:
+            [
+                authorization.ValidationGuidance,
+                ..BuildOperatorPolicyValidationChecks(),
+                ..BuildRuntimeAdapterValidationChecks(adapterWorkflows),
+                ..gitOpsPlan.RequiredEvidence,
+                ..ReleaseOrchestrationPlanner.FlattenEvidenceRequirements(releaseOrchestration),
+                ..ServiceBundleReconciliationPlanner.FlattenEvidenceRequirements(serviceBundleReconciliation),
+                "Review state transitions before approving any write-capable GitOps path."
+            ],
+            Risks:
+            [
+                authorization.RiskGuidance,
+                ..BuildOperatorPolicyRisks(),
+                ..BuildRuntimeAdapterRisks(adapterWorkflows),
+                "Snapshot-only planning can drift from reality if actual state changes before apply.",
+                ..releaseOrchestration.PromotionPolicy.Blockers.Select(blocker => $"Promotion blocker: {blocker}.")
+            ],
+            Evidence: BuildDeploymentEvidence(
+                normalizedTerraformRepository,
+                normalizedTerraformRef,
+                normalizedDeploymentTargets,
+                adapterWorkflows,
+                releaseOrchestration,
+                serviceBundleReconciliation,
+                gitOpsPlan,
+                authorization,
+                backendResult.CombinedResult),
+            GitOpsPlan: gitOpsPlan,
+            ReleaseOrchestration: releaseOrchestration,
+            ServiceBundleReconciliation: serviceBundleReconciliation);
     }
 
     [Description("Analyze customer requirements through Honua API and generate deployment recommendations.")]
@@ -481,30 +753,6 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         return requested;
     }
 
-    private IEnumerable<string> BuildGitOpsCommands(
-        string gitOpsTool,
-        string service,
-        IEnumerable<string> environments,
-        string revision,
-        string action)
-    {
-        string tool = gitOpsTool.Trim().ToLowerInvariant();
-        foreach (string environment in environments)
-        {
-            yield return tool switch
-            {
-                "honua-gitops" =>
-                    $"Suggested command ({environment}): honua gitops {ShellQuote(action)} --service {ShellQuote(service)} --env {ShellQuote(environment)} --revision {ShellQuote(revision)}",
-                "flux" =>
-                    $"Suggested command ({environment}): flux reconcile kustomization {ShellQuote($"{service}-{environment}")} --with-source",
-                "argocd" =>
-                    $"Suggested command ({environment}): argocd app sync {ShellQuote($"{service}-{environment}")} --revision {ShellQuote(revision)}",
-                _ =>
-                    $"Suggested command ({environment}): {ShellQuote(gitOpsTool)} sync {ShellQuote($"{service}-{environment}")} --revision {ShellQuote(revision)}"
-            };
-        }
-    }
-
     private string[] RecommendTargetsForCloud(string? preferredCloud)
     {
         if (string.IsNullOrWhiteSpace(preferredCloud))
@@ -587,8 +835,117 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             "dry-run" => "dry-run",
             "dryrun" => "dry-run",
             "plan" => "plan",
+            "promote" => "promote",
             _ => throw new InvalidOperationException(
-                $"Invalid deployment action `{value}`. Allowed values: sync, apply, prune, dry-run, plan.")
+                $"Invalid deployment action `{value}`. Allowed values: sync, apply, prune, dry-run, plan, promote.")
+        };
+    }
+
+    private DeploymentAuthorization AuthorizeDeployment(
+        IReadOnlyList<string> targetEnvironments,
+        string action)
+    {
+        bool targetsProd = targetEnvironments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        bool requestedDryRun = action is "plan" or "dry-run";
+        bool executionEnabled = runtime.ExecutionMode == ExecutionMode.Execute && !requestedDryRun;
+        OperatorPolicyModel policy = EffectivePolicy;
+
+        if (executionEnabled)
+        {
+            switch (policy.ApprovalMode)
+            {
+                case ApprovalMode.PrFirst when runtime.ExecutionTier != ExecutionTier.BreakGlass:
+                    throw new InvalidOperationException(
+                        "Approval mode `pr-first` blocks direct execution. Use plan/propose flow or set approval mode to `direct-allowed`.");
+                case ApprovalMode.BreakGlassOnly when runtime.ExecutionTier != ExecutionTier.BreakGlass:
+                    throw new InvalidOperationException(
+                        "Approval mode `break-glass-only` allows direct execution only in the `break-glass` tier.");
+            }
+        }
+
+        return runtime.ExecutionTier switch
+        {
+            ExecutionTier.Observe => new DeploymentAuthorization(
+                DryRun: true,
+                PolicyGate: "observe-only",
+                RequiredChecks:
+                [
+                    "telemetry-snapshot",
+                    "drift-review"
+                ],
+                WorkflowGuidance: "Observe tier is read-only; emit evidence and hand the change off for proposal or execution.",
+                ValidationGuidance: "Capture current health, drift, and release evidence without mutating any environment.",
+                RiskGuidance: "Read-only evidence can still be incomplete if backend telemetry is stale."),
+            ExecutionTier.Plan => new DeploymentAuthorization(
+                DryRun: true,
+                PolicyGate: "plan-only",
+                RequiredChecks:
+                [
+                    "manifest-diff",
+                    "target-validation"
+                ],
+                WorkflowGuidance: "Plan tier produces dry-run output only; use it to validate scope before any write-capable tier runs.",
+                ValidationGuidance: "Review the diff, runtime target, and environment sequence before approval.",
+                RiskGuidance: "A correct plan can still fail later if environment drift changes after approval."),
+            ExecutionTier.Propose => new DeploymentAuthorization(
+                DryRun: true,
+                PolicyGate: "proposal-required",
+                RequiredChecks:
+                [
+                    "manifest-diff",
+                    "approval-context"
+                ],
+                WorkflowGuidance: "Propose tier prepares desired state and approval-ready evidence, but does not execute writes.",
+                ValidationGuidance: "Capture the desired change and approval context in Git or the operator review flow.",
+                RiskGuidance: "Proposal-only flows can drift from reality if they are executed long after creation."),
+            ExecutionTier.ExecuteLowerEnv when targetsProd => throw new InvalidOperationException(
+                "Execution tier `execute-lower-env` cannot target `prod`. Use `promote-prod` or `break-glass` for production changes."),
+            ExecutionTier.ExecuteLowerEnv => new DeploymentAuthorization(
+                DryRun: !executionEnabled,
+                PolicyGate: executionEnabled ? "lower-env-execution" : "lower-env-plan-only",
+                RequiredChecks:
+                [
+                    "manifest-diff",
+                    "smoke-contract",
+                    "release-evidence"
+                ],
+                WorkflowGuidance: "Execute-lower-env tier may write to non-prod environments after validation gates are satisfied.",
+                ValidationGuidance: "Require lower-environment smoke and evidence capture before requesting prod promotion.",
+                RiskGuidance: "Skipping staging evidence weakens the later prod promotion decision."),
+            ExecutionTier.PromoteProd when targetsProd && action != "promote" => throw new InvalidOperationException(
+                "Execution tier `promote-prod` requires action `promote` when targeting `prod`."),
+            ExecutionTier.PromoteProd => new DeploymentAuthorization(
+                DryRun: !executionEnabled,
+                PolicyGate: targetsProd ? "prod-promotion-gated" : "promotion-prep",
+                RequiredChecks:
+                [
+                    "lower-env-evidence",
+                    "smoke-contract",
+                    "release-evidence",
+                    "approval-record"
+                ],
+                WorkflowGuidance: targetsProd
+                    ? "Promote-prod tier is active; only a validated promotion into `prod` should execute."
+                    : "Promote-prod tier is active, but this request only targets lower environments.",
+                ValidationGuidance: targetsProd
+                    ? "Require approved lower-environment evidence and release validation before prod promotion."
+                    : "Validate lower environments before opening a prod promotion request.",
+                RiskGuidance: targetsProd
+                    ? "Prod promotion without validated release evidence increases rollback risk."
+                    : "Using prod-promotion credentials for non-prod work can blur audit boundaries."),
+            ExecutionTier.BreakGlass => new DeploymentAuthorization(
+                DryRun: !executionEnabled,
+                PolicyGate: executionEnabled ? "break-glass" : "break-glass-plan-only",
+                RequiredChecks:
+                [
+                    "incident-context",
+                    "operator-justification",
+                    "rollback-intent"
+                ],
+                WorkflowGuidance: "Break-glass tier may execute directly, but only for exceptional recovery or urgent operator action.",
+                ValidationGuidance: "Record incident context, operator justification, and rollback intent with the execution evidence.",
+                RiskGuidance: "Break-glass bypasses normal guardrails and should be treated as elevated operational risk."),
+            _ => throw new InvalidOperationException("Unsupported execution tier.")
         };
     }
 
@@ -669,21 +1026,243 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         return sanitized;
     }
 
-    private static string ShellQuote(string value)
+    private static IEnumerable<string> BuildRuntimeAdapterActions(
+        IEnumerable<RuntimeAdapterWorkflow> workflows,
+        bool dryRun)
     {
-        if (string.IsNullOrEmpty(value))
+        foreach (RuntimeAdapterWorkflow workflow in workflows)
         {
-            return "''";
+            yield return $"Adapter validate ({workflow.Capability.Target}): {workflow.Validate.Summary}";
+            yield return $"Adapter plan infra ({workflow.Capability.Target}): {workflow.PlanInfrastructure.SuggestedCommands.First()}";
+            yield return dryRun
+                ? $"Adapter plan release ({workflow.Capability.Target}): {workflow.PlanRelease.SuggestedCommands.First()}"
+                : $"Adapter apply release ({workflow.Capability.Target}): {workflow.ApplyRelease.SuggestedCommands.First()}";
+            yield return $"Adapter verify ({workflow.Capability.Target}): {workflow.Verify.SuggestedCommands.First()}";
+            yield return $"Adapter rollback ({workflow.Capability.Target}): {workflow.Rollback.SuggestedCommands.First()}";
         }
-
-        bool isSafeToken = value.All(character =>
-            char.IsLetterOrDigit(character) ||
-            character is '-' or '_' or '.' or '/' or ':' or '@');
-        if (isSafeToken)
-        {
-            return value;
-        }
-
-        return $"'{value.Replace("'", "'\"'\"'")}'";
     }
+
+    private IEnumerable<string> BuildOperatorPolicyActions()
+    {
+        yield return $"Operator policy approval mode: `{EffectivePolicy.ApprovalMode.ToConfigValue()}`.";
+        yield return $"Audit hook target: `{EffectivePolicy.AuditHookTarget}`.";
+        yield return $"Support session access: `{EffectivePolicy.SupportSession.Access.ToConfigValue()}` with TTL `{EffectivePolicy.SupportSession.TtlMinutes}` minutes and customer-visible `{EffectivePolicy.SupportSession.CustomerVisible}`.";
+
+        if (EffectivePolicy.BreakGlassPostActionReviewRequired)
+        {
+            yield return "Break-glass actions require post-action review.";
+        }
+    }
+
+    private IEnumerable<string> BuildOperatorPolicyValidationChecks()
+    {
+        yield return "approval-policy";
+        yield return "audit-hook";
+
+        if (EffectivePolicy.SupportSession.Access != SupportSessionAccess.Disabled)
+        {
+            yield return "support-session-ttl";
+        }
+
+        if (EffectivePolicy.BreakGlassPostActionReviewRequired)
+        {
+            yield return "post-action-review";
+        }
+    }
+
+    private IEnumerable<string> BuildOperatorPolicyRisks()
+    {
+        if (EffectivePolicy.ApprovalMode == ApprovalMode.DirectAllowed)
+        {
+            yield return "Direct execution policy increases the chance of bypassing review compared to PR-first posture.";
+        }
+
+        if (EffectivePolicy.SupportSession.Access != SupportSessionAccess.Disabled)
+        {
+            yield return "Delegated support access must stay scoped and time-bound to avoid silent privilege expansion.";
+        }
+    }
+
+    private static IEnumerable<string> BuildRuntimeAdapterValidationChecks(IEnumerable<RuntimeAdapterWorkflow> workflows)
+    {
+        return workflows
+            .SelectMany(workflow => workflow.Verify.ValidationChecks)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> BuildRuntimeAdapterRisks(IEnumerable<RuntimeAdapterWorkflow> workflows)
+    {
+        return workflows
+            .SelectMany(workflow => workflow.Rollback.Risks)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> BuildReleaseOrchestrationActions(ReleaseOrchestrationPlan plan)
+    {
+        yield return $"Promotion policy `{plan.PromotionPolicy.Gate}` requires: {string.Join(", ", plan.PromotionPolicy.RequiredEvidence)}";
+        yield return $"Rollback policy `{plan.RollbackPolicy.FallbackMode}` triggers on: {string.Join(", ", plan.RollbackPolicy.Triggers)}";
+
+        foreach (ReleasePromotionStep step in plan.PromotionSequence)
+        {
+            string path = step.SourceEnvironment is null
+                ? $"bootstrap -> {step.TargetEnvironment}"
+                : $"{step.SourceEnvironment} -> {step.TargetEnvironment}";
+            yield return $"Promotion sequence `{path}` via gate `{step.Gate}` requires: {string.Join(", ", step.RequiredEvidence)}";
+        }
+
+        foreach (ReleaseStagePlan stage in plan.Stages)
+        {
+            yield return $"Release stage `{stage.Kind.ToConfigValue()}` ({stage.ExecutionCondition}): {stage.Summary}";
+        }
+
+        foreach (ReleaseRollbackSemanticsPlan rollback in plan.RollbackSemantics)
+        {
+            yield return $"Rollback `{rollback.ChangeClass}`: {rollback.RecoveryPath}";
+        }
+    }
+
+    private static IEnumerable<string> BuildServiceBundleReconciliationActions(ServiceBundleReconciliationPlan plan)
+    {
+        yield return $"ServiceBundle export mode: `{plan.ExportMode}` with long-running handling `{plan.LongRunningOperationMode}`.";
+        yield return $"ServiceBundle current state: {plan.CurrentStateSummary}";
+
+        foreach (ServiceBundleDriftScope scope in plan.DriftScopes)
+        {
+            yield return $"ServiceBundle drift `{scope.Scope}`: export `{scope.ExportSource}` -> compare via `{scope.ComparisonMode}`";
+        }
+
+        foreach (ServiceBundleReconciliationOperation operation in plan.Operations)
+        {
+            yield return $"ServiceBundle reconcile `{operation.Surface}` ({operation.Availability}): read `{operation.ReadSource}` -> write `{operation.WriteTarget}`";
+            yield return $"ServiceBundle diff `{operation.Surface}`: {operation.DiffSummary}";
+        }
+    }
+
+    private static IEnumerable<string> BuildGitOpsPlanActions(GitOpsPlan plan)
+    {
+        yield return $"GitOps engine `{plan.Engine}` gate status: {plan.GateStatus}.";
+        yield return $"GitOps diff summary: {plan.DiffSummary}.";
+        yield return $"GitOps drift summary: {plan.DriftSummary}.";
+
+        foreach (GitOpsEnvironmentPlan environment in plan.Environments)
+        {
+            yield return $"GitOps state `{environment.Environment}`: desired `{environment.DesiredRevision}`, actual `{environment.ActualRevision}`, diff `{environment.DiffStatus}`.";
+
+            foreach (GitOpsDriftStatus drift in environment.Drift)
+            {
+                yield return $"GitOps drift `{environment.Environment}/{drift.Scope}`: {drift.Status}.";
+            }
+
+            foreach (GitOpsCommandPlan command in environment.Commands)
+            {
+                string approvalSuffix = command.RequiresApproval ? " (approval-gated)" : string.Empty;
+                yield return $"GitOps command `{environment.Environment}/{command.Operation}`{approvalSuffix}: {command.Command}";
+            }
+        }
+
+        foreach (GitOpsStateTransitionPlan transition in plan.StateTransitions)
+        {
+            yield return $"GitOps transition `{transition.Environment}/{transition.Operation}`: {transition.Summary}";
+        }
+    }
+
+    private OperationEvidence BuildDeploymentEvidence(
+        string terraformRepository,
+        string terraformRef,
+        IReadOnlyList<string> deploymentTargets,
+        IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows,
+        ReleaseOrchestrationPlan releaseOrchestration,
+        ServiceBundleReconciliationPlan serviceBundleReconciliation,
+        GitOpsPlan gitOpsPlan,
+        DeploymentAuthorization authorization,
+        BackendCallResult backendResult)
+    {
+        return new OperationEvidence(
+            Scope: $"gitops-deploy:{string.Join("+", gitOpsPlan.Environments.Select(environment => environment.Environment))}",
+            RequestedAction: gitOpsPlan.RequestedAction,
+            EffectiveAction: gitOpsPlan.EffectiveAction,
+            DryRun: authorization.DryRun,
+            ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
+            ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
+            TargetEnvironments: gitOpsPlan.Environments.Select(environment => environment.Environment).ToArray(),
+            CurrentRevision: GitOpsPlanner.BuildCurrentRevisionSummary(gitOpsPlan),
+            DesiredRevision: gitOpsPlan.Environments.FirstOrDefault()?.DesiredRevision,
+            GitOpsTool: gitOpsPlan.Engine,
+            TerraformRepository: terraformRepository,
+            TerraformRef: terraformRef,
+            DeploymentTargets: deploymentTargets.ToArray(),
+            PolicyGate: authorization.PolicyGate,
+            ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
+            AuditHookTarget: EffectivePolicy.AuditHookTarget,
+            SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
+            SupportSessionTtlMinutes: EffectivePolicy.SupportSession.TtlMinutes,
+            SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
+            BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
+            RequiredChecks: authorization.RequiredChecks
+                .Concat(BuildOperatorPolicyValidationChecks())
+                .Concat(gitOpsPlan.RequiredEvidence)
+                .Concat(BuildRuntimeAdapterValidationChecks(adapterWorkflows))
+                .Concat(ReleaseOrchestrationPlanner.FlattenEvidenceRequirements(releaseOrchestration))
+                .Concat(ServiceBundleReconciliationPlanner.FlattenEvidenceRequirements(serviceBundleReconciliation))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            DiffSummary: gitOpsPlan.DiffSummary,
+            GateStatus: gitOpsPlan.GateStatus,
+            BackendEndpoint: backendResult.Endpoint,
+            BackendDetail: backendResult.Detail);
+    }
+
+    private OperationEvidence BuildUpgradeEvidence(
+        string environment,
+        string currentVersion,
+        string targetVersion,
+        ReleaseOrchestrationPlan releaseOrchestration,
+        BackendCallResult backendResult)
+    {
+        bool dryRun = runtime.ExecutionMode != ExecutionMode.Execute;
+        string[] requiredChecks = ReleaseOrchestrationPlanner.FlattenEvidenceRequirements(releaseOrchestration)
+            .Concat(
+            [
+                "deploy-preflight",
+                "post-upgrade-smoke",
+                "rollback-readiness"
+            ])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new OperationEvidence(
+            Scope: $"upgrade:{Normalize(environment, "unknown")}",
+            RequestedAction: "upgrade",
+            EffectiveAction: dryRun ? "plan-upgrade" : "upgrade",
+            DryRun: dryRun,
+            ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
+            ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
+            TargetEnvironments: [Normalize(environment, "unknown")],
+            CurrentRevision: Normalize(currentVersion, "current"),
+            DesiredRevision: Normalize(targetVersion, "target"),
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            DeploymentTargets: runtime.TerraformDeploymentTargets.ToArray(),
+            PolicyGate: dryRun ? "plan-only-upgrade" : "staged-rollout-required",
+            ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
+            AuditHookTarget: EffectivePolicy.AuditHookTarget,
+            SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
+            SupportSessionTtlMinutes: EffectivePolicy.SupportSession.TtlMinutes,
+            SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
+            BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
+            RequiredChecks: requiredChecks,
+            DiffSummary: $"{currentVersion}->{targetVersion}",
+            GateStatus: dryRun ? "plan-only-upgrade" : "staged-rollout-required",
+            BackendEndpoint: backendResult.Endpoint,
+            BackendDetail: backendResult.Detail);
+    }
+
+    private sealed record DeploymentAuthorization(
+        bool DryRun,
+        string PolicyGate,
+        IReadOnlyList<string> RequiredChecks,
+        string WorkflowGuidance,
+        string ValidationGuidance,
+        string RiskGuidance);
 }

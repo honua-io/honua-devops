@@ -1,0 +1,18 @@
+apiVersion: honua.io/v1alpha1
+kind: PlatformStack
+metadata:
+  name: platform-stack-dev
+  namespace: dev
+  labels:
+    managed-by: honua-devops
+    environment: dev
+spec:
+  environment: dev
+  terraform:
+    repository: https://github.com/honua-io/honua-terraform
+    ref: main
+    targets:
+      - eks
+  secretRefs:
+    - HONUA_ADMIN_API_KEY
+    - HONUA_DB_CONNECTION

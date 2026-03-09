@@ -22,10 +22,13 @@ Runs on:
 
 `scripts/helm-provenance-check.sh` supports:
 - chart lint/package checks by default
+- auto-detecting the current Honua chart path in `honua-helm`
 - strict provenance verification when:
   - `HELM_SIGNED_PACKAGE_URL` is provided
   - `HELM_PROV_URL` is provided
   - `HELM_KEYRING_PATH` is provided
+
+If the chart layout changes again, set `HELM_CHART_PATH` explicitly.
 
 Use strict mode in release branches:
 

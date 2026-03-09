@@ -2,7 +2,7 @@
 
 AI DevOps operator and solution architect for Honua.
 
-This repository is the execution vehicle for [honua-server issue #364](https://github.com/honua-io/honua-server/issues/364):
+This repository is the execution vehicle for the operator control system tracked in [honua-devops#11](https://github.com/honua-io/honua-devops/issues/11):
 
 - Operate Honua like a senior platform operator (install, configure, optimize, monitor, troubleshoot, upgrade).
 - Act as a solution engineer and architect to design and deploy Honua workloads to cloud environments.
@@ -43,6 +43,7 @@ open-core runtime promise.
 
 Set `HONUA_DEVOPS_PROVIDER` to `codex` or `claude` (defaults to `codex`).
 Reference defaults live in `.env.example`.
+`honua-devops` auto-loads `.env` and `.env.local` from the working directory, with process environment variables taking precedence and `.env.local` overriding `.env`.
 
 ### Codex provider
 
@@ -59,6 +60,13 @@ Reference defaults live in `.env.example`.
 ## Runtime Controls
 
 - `HONUA_DEVOPS_EXECUTION_MODE` (`plan` default, or `execute`)
+- `HONUA_DEVOPS_EXECUTION_TIER` (`plan` default for plan mode; `execute-lower-env` default for execute mode)
+- `HONUA_DEVOPS_APPROVAL_MODE` (`pr-first` default; also supports `direct-allowed`, `break-glass-only`)
+- `HONUA_DEVOPS_AUDIT_HOOK_TARGET` (`stdout-evidence` default)
+- `HONUA_DEVOPS_SUPPORT_SESSION_ACCESS` (`disabled` default; also supports `read-only`, `operator-scoped`)
+- `HONUA_DEVOPS_SUPPORT_SESSION_TTL_MINUTES` (`60` default)
+- `HONUA_DEVOPS_SUPPORT_SESSION_CUSTOMER_VISIBLE` (`true` default)
+- `HONUA_DEVOPS_BREAK_GLASS_POST_REVIEW_REQUIRED` (`true` default)
 - `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
 - `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`)
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-terraform`)
@@ -117,6 +125,27 @@ Legacy aliases still accepted for compatibility:
 
 ## Run
 
+Bootstrap a local `.env.local` for onboarding:
+
+```bash
+./scripts/bootstrap-operator-env.sh --provider codex
+```
+
+Bootstrap smoke check:
+
+```bash
+./scripts/smoke-bootstrap-operator-env.sh
+```
+
+Customer bootstrap command:
+
+```bash
+./scripts/bootstrap-customer-repo.sh --service roads-api --runtime-target eks
+```
+
+The customer bootstrap command also emits a starter GitHub Actions workflow at `.github/workflows/honua-operator-validation.yml` so desired-state validation is wired into the customer repo immediately.
+It now also emits `.github/workflows/honua-operator-preflight.yml` for manual backend/terraform preflight checks and `bootstrap/configure-honua-operator-ci.sh` to load the expected repo vars/secrets with `gh`.
+
 ```bash
 dotnet restore
 dotnet build
@@ -147,23 +176,93 @@ Customer requirement analysis example:
 dotnet run --project src/Honua.DevOps.Agent -- --provider codex --prompt "Analyze requirements for a state GIS portal and recommend deployment topology, scaling, and GitOps rollout across dev/staging/prod."
 ```
 
+## Customer Adoption
+
+The recommended first install mode is to start directly from `honua-devops` as the customer-owned control repo, keep execution in `plan` mode with `pr-first` approval, and use the repo itself to store desired-state objects until a split-repo model is justified.
+
+Reference material:
+
+- `desired-state/README.md` for the starter control-repo layout and sample typed objects
+- `docs/desired-state-scaffold.md` for the scaffold script that generates new service trees
+- `docs/operator-adoption-packaging.md` for install modes, repo layouts, target-specific adoption differences, and reference workflows
+- `docs/operator-policy-and-delegated-ops.md` for approvals, support sessions, and break-glass posture
+- `docs/manual-cloud-runbooks.md` for cloud bootstrap and validation loops
+
+Onboarding helper:
+
+- `scripts/bootstrap-operator-env.sh` writes a local `.env.local` and can immediately run preflight
+
 ## Current Status
 
 - Provider-pluggable agent scaffold is in place with live Honua API and OTEL endpoint wiring.
 - Honua-native GitOps and customer-requirement analysis workflows are wired as callable tools.
 - Preflight mode validates backend reachability and Terraform target discovery before live runs.
+- Operator execution tiers now gate GitOps behavior for read-only, lower-env execute, prod promotion, and break-glass paths.
+- Upgrade and GitOps responses now emit structured evidence bundles with effective action, policy gate, target environments, and required checks.
+- Runtime targets now resolve through a typed adapter catalog so preflight and deploy planning surface family-specific verify, rollback, drift, and migration semantics.
+- The operator now has a shared runtime-adapter lifecycle in code for `validate -> plan/apply infra -> plan/apply release -> verify -> rollback -> drift -> export actual state`.
+- Upgrade and deploy planning now emit an explicit release-orchestration state machine covering preflight, backup, migration, rollout, smoke, SLO watch, promote, and rollback, plus typed promotion and rollback semantics.
+- Deploy planning now emits a typed ServiceBundle reconciliation map for capabilities, export, metadata subset apply, connections, publishing, policy, styles, and imports, plus explicit drift/export state.
+- Deploy planning now also emits a typed in-repo `honua-gitops` engine plan with per-environment diff, drift, gate state, and supported operation transitions.
+- Operator policy is now explicit in runtime output and evidence: approval mode, audit hook target, support-session posture, and break-glass post-review requirements.
 
 ## DevOps Delivery Artifacts
 
 - Deployment validation matrix and smoke contract: `docs/deployment-validation-matrix.md`
 - Manual AWS/Azure runbooks (apply -> smoke -> destroy): `docs/manual-cloud-runbooks.md`
+- Backup and restore game-day: `docs/backup-restore-gameday.md`
 - SLO release gate baseline: `docs/slo-release-gates.md`
+- SLO observability assets: `observability/`
+- Client compatibility scoreboard: `docs/client-compatibility-scoreboard.md`
+- Secrets lifecycle: `docs/secrets-lifecycle.md`
 - Supply-chain baseline and CI policy: `docs/supply-chain-baseline.md`
+- Operating cadence and close hygiene: `docs/operating-cadence.md`
+- Operator control contract: `docs/operator-control-contract.md`
+- Desired-state schema contract: `docs/desired-state-schemas.md`
+- Runtime adapter framework: `docs/runtime-adapter-framework.md`
+- honua-gitops engine: `docs/honua-gitops-engine.md`
+- Release orchestration state machine: `docs/release-orchestration-state-machine.md`
+- ServiceBundle reconciliation: `docs/service-bundle-reconciliation.md`
+- Operator policy and delegated ops: `docs/operator-policy-and-delegated-ops.md`
+- Operator adoption packaging: `docs/operator-adoption-packaging.md`
+- Desired-state starter pack: `desired-state/README.md`
+- Desired-state scaffold helper: `docs/desired-state-scaffold.md`
+
+Validation:
+
+```bash
+./scripts/validate-desired-state.sh
+```
+
+Conventions for desired-state naming and allowed runtime targets live in `desired-state/conventions.env`.
+
+Scaffold smoke check:
+
+```bash
+./scripts/smoke-desired-state-scaffold.sh
+```
 
 Helper scripts:
 
+- `scripts/bootstrap-operator-env.sh`
+- `scripts/smoke-bootstrap-operator-env.sh`
+- `scripts/bootstrap-customer-repo.sh`
+- `scripts/install-customer-ci.sh`
+- `scripts/smoke-customer-bootstrap.sh`
 - `scripts/smoke-contract.sh`
 - `scripts/slo-release-gate.sh`
+- `scripts/smoke-slo-release-gate.sh`
+- `scripts/slo-release-watch.sh`
+- `scripts/smoke-slo-release-watch.sh`
+- `scripts/validate-slo-assets.sh`
+- `scripts/generate-client-compat-scoreboard.py`
+- `scripts/smoke-client-compat-scoreboard.sh`
+- `scripts/run-backup-restore-gameday.sh`
+- `scripts/smoke-backup-restore-gameday.sh`
+- `scripts/rotate-operator-secrets.sh`
+- `scripts/revoke-operator-secrets.sh`
+- `scripts/smoke-secret-lifecycle.sh`
+- `scripts/post-weekly-backlog-review.sh`
 - `scripts/check-terraform-secrets.sh`
 - `scripts/dispatch-terraform-validation.sh`
 - `scripts/helm-provenance-check.sh`

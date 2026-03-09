@@ -1,0 +1,67 @@
+name: Client Compatibility Scoreboard
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-scoreboard:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: compatibility-scoreboard
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Generate scoreboard
+        run: |
+          bash -n scripts/smoke-client-compat-scoreboard.sh
+          python3 scripts/generate-client-compat-scoreboard.py \
+            --packs-root compatibility/releases \
+            --catalog compatibility/clients.catalog.json \
+            --output-dir compatibility/scoreboard \
+            --hard-fail
+
+      - name: Smoke scoreboard generator
+        run: ./scripts/smoke-client-compat-scoreboard.sh
+
+      - name: Upload static scoreboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-scoreboard
+          path: compatibility/scoreboard
+
+      - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: compatibility/scoreboard
+
+  deploy-pages:
+    if: github.event_name != 'pull_request'
+    needs:
+      - build-scoreboard
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

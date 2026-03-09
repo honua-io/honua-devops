@@ -1,0 +1,23 @@
+name: Backup Restore Game-Day
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  gameday-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          bash -n scripts/run-backup-restore-gameday.sh
+          bash -n scripts/smoke-backup-restore-gameday.sh
+
+      - name: Smoke backup and restore game-day
+        run: ./scripts/smoke-backup-restore-gameday.sh

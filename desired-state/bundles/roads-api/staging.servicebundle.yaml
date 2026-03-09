@@ -1,0 +1,45 @@
+apiVersion: honua.io/v1alpha1
+kind: ServiceBundle
+metadata:
+  name: roads-api-staging
+  namespace: staging
+  labels:
+    managed-by: honua-devops
+    service: roads-api
+    environment: staging
+spec:
+  description: Bootstrap ServiceBundle for roads-api in staging.
+  srid: 4326
+  deployment:
+    service: roads-api
+    environment: staging
+    revision: release/2026.03
+    action: sync
+    changeSummary: Promote validated roads-api revision into staging.
+    gitOpsTool: honua-gitops
+    terraform:
+      repository: https://github.com/honua-io/honua-terraform
+      ref: main
+      targets:
+        - eks
+  relationships:
+    platformStackRef:
+      apiVersion: honua.io/v1alpha1
+      kind: PlatformStack
+      name: platform-stack-staging
+      namespace: staging
+    platformReleaseRef:
+      apiVersion: honua.io/v1alpha1
+      kind: PlatformRelease
+      name: roads-api-staging-release-2026-03
+      namespace: staging
+    executionPolicyRef:
+      apiVersion: honua.io/v1alpha1
+      kind: ExecutionPolicy
+      name: execution-policy-default
+      namespace: control-plane
+    promotionRef:
+      apiVersion: honua.io/v1alpha1
+      kind: Promotion
+      name: roads-api-dev-to-staging
+      namespace: staging

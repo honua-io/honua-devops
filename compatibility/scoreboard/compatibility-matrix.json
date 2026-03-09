@@ -1,0 +1,576 @@
+{
+  "generated_at_utc": "2026-03-08T18:24:47Z",
+  "releases": [
+    {
+      "release": "2026.03.1",
+      "release_date": "2026-03-08",
+      "services": [
+        {
+          "release": "2026.03.1",
+          "release_date": "2026-03-08",
+          "service_id": "demo-service",
+          "service_title": "Compatibility Demo",
+          "source_pack": "compatibility/releases/2026.03.1/demo-service",
+          "clients": [
+            {
+              "name": "ArcGIS Pro",
+              "version": "3.3",
+              "status": "pass",
+              "notes": "Desktop connection smoke passed.",
+              "protocols": [
+                {
+                  "name": "FeatureServer",
+                  "status": "pass"
+                },
+                {
+                  "name": "MapServer",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "QGIS",
+              "version": "3.36",
+              "status": "pass",
+              "notes": "WMTS moved from pending to pass in this release.",
+              "protocols": [
+                {
+                  "name": "OGC WFS",
+                  "status": "pass"
+                },
+                {
+                  "name": "OGC API Features",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMS",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMTS",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "Power BI",
+              "version": "2.138",
+              "status": "pass",
+              "notes": "OData v4 smoke passed.",
+              "protocols": [
+                {
+                  "name": "OData v4",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "Excel",
+              "version": "2402",
+              "status": "pass",
+              "notes": "OData v4 smoke passed.",
+              "protocols": [
+                {
+                  "name": "OData v4",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "MapLibre GL JS",
+              "version": "4.1",
+              "status": "pass",
+              "notes": "Map rendering and tile metadata passed.",
+              "protocols": [
+                {
+                  "name": "MVT",
+                  "status": "pass"
+                },
+                {
+                  "name": "TileJSON",
+                  "status": "pass"
+                },
+                {
+                  "name": "Style Endpoint",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "OpenLayers",
+              "version": "9.1",
+              "status": "pass",
+              "notes": "WMTS added to the pass set.",
+              "protocols": [
+                {
+                  "name": "OGC API Features",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMS",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMTS",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "Leaflet",
+              "version": "1.9",
+              "status": "pass",
+              "notes": "WMS and GeoJSON checks passed.",
+              "protocols": [
+                {
+                  "name": "WMS",
+                  "status": "pass"
+                },
+                {
+                  "name": "GeoJSON",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "Python (GeoPandas)",
+              "version": "0.14",
+              "status": "pass",
+              "notes": "GeoJSON and OGC API Features ingest passed.",
+              "protocols": [
+                {
+                  "name": "OGC API Features",
+                  "status": "pass"
+                },
+                {
+                  "name": "GeoJSON",
+                  "status": "pass"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "pass": 8,
+        "pending": 0,
+        "fail": 0
+      },
+      "matrix": [
+        {
+          "client": "ArcGIS Pro",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "FeatureServer",
+              "status": "pass"
+            },
+            {
+              "name": "MapServer",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "QGIS",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OGC WFS",
+              "status": "pass"
+            },
+            {
+              "name": "OGC API Features",
+              "status": "pass"
+            },
+            {
+              "name": "WMS",
+              "status": "pass"
+            },
+            {
+              "name": "WMTS",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "Power BI",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OData v4",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "Excel",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OData v4",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "MapLibre GL JS",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "MVT",
+              "status": "pass"
+            },
+            {
+              "name": "TileJSON",
+              "status": "pass"
+            },
+            {
+              "name": "Style Endpoint",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "OpenLayers",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OGC API Features",
+              "status": "pass"
+            },
+            {
+              "name": "WMS",
+              "status": "pass"
+            },
+            {
+              "name": "WMTS",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "Leaflet",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "WMS",
+              "status": "pass"
+            },
+            {
+              "name": "GeoJSON",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "Python (GeoPandas)",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OGC API Features",
+              "status": "pass"
+            },
+            {
+              "name": "GeoJSON",
+              "status": "pass"
+            }
+          ]
+        }
+      ],
+      "changed_from_previous": [
+        {
+          "client": "QGIS",
+          "protocol": "WMTS",
+          "from": "pending",
+          "to": "pass"
+        },
+        {
+          "client": "OpenLayers",
+          "protocol": "WMTS",
+          "from": "pending",
+          "to": "pass"
+        }
+      ]
+    },
+    {
+      "release": "2026.03.0",
+      "release_date": "2026-03-01",
+      "services": [
+        {
+          "release": "2026.03.0",
+          "release_date": "2026-03-01",
+          "service_id": "demo-service",
+          "service_title": "Compatibility Demo",
+          "source_pack": "compatibility/releases/2026.03.0/demo-service",
+          "clients": [
+            {
+              "name": "ArcGIS Pro",
+              "version": "3.3",
+              "status": "pass",
+              "notes": "Desktop connection smoke passed.",
+              "protocols": [
+                {
+                  "name": "FeatureServer",
+                  "status": "pass"
+                },
+                {
+                  "name": "MapServer",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "QGIS",
+              "version": "3.36",
+              "status": "pass",
+              "notes": "OGC smoke paths passed.",
+              "protocols": [
+                {
+                  "name": "OGC WFS",
+                  "status": "pass"
+                },
+                {
+                  "name": "OGC API Features",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMS",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMTS",
+                  "status": "pending"
+                }
+              ]
+            },
+            {
+              "name": "Power BI",
+              "version": "2.138",
+              "status": "pass",
+              "notes": "OData v4 smoke passed.",
+              "protocols": [
+                {
+                  "name": "OData v4",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "Excel",
+              "version": "2402",
+              "status": "pass",
+              "notes": "OData v4 smoke passed.",
+              "protocols": [
+                {
+                  "name": "OData v4",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "MapLibre GL JS",
+              "version": "4.1",
+              "status": "pass",
+              "notes": "Map rendering and tile metadata passed.",
+              "protocols": [
+                {
+                  "name": "MVT",
+                  "status": "pass"
+                },
+                {
+                  "name": "TileJSON",
+                  "status": "pass"
+                },
+                {
+                  "name": "Style Endpoint",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "OpenLayers",
+              "version": "9.1",
+              "status": "pending",
+              "notes": "WMTS automation not wired yet.",
+              "protocols": [
+                {
+                  "name": "OGC API Features",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMS",
+                  "status": "pass"
+                },
+                {
+                  "name": "WMTS",
+                  "status": "pending"
+                }
+              ]
+            },
+            {
+              "name": "Leaflet",
+              "version": "1.9",
+              "status": "pass",
+              "notes": "WMS and GeoJSON checks passed.",
+              "protocols": [
+                {
+                  "name": "WMS",
+                  "status": "pass"
+                },
+                {
+                  "name": "GeoJSON",
+                  "status": "pass"
+                }
+              ]
+            },
+            {
+              "name": "Python (GeoPandas)",
+              "version": "0.14",
+              "status": "pass",
+              "notes": "GeoJSON and OGC API Features ingest passed.",
+              "protocols": [
+                {
+                  "name": "OGC API Features",
+                  "status": "pass"
+                },
+                {
+                  "name": "GeoJSON",
+                  "status": "pass"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "pass": 6,
+        "pending": 2,
+        "fail": 0
+      },
+      "matrix": [
+        {
+          "client": "ArcGIS Pro",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "FeatureServer",
+              "status": "pass"
+            },
+            {
+              "name": "MapServer",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "QGIS",
+          "status": "pending",
+          "protocols": [
+            {
+              "name": "OGC WFS",
+              "status": "pass"
+            },
+            {
+              "name": "OGC API Features",
+              "status": "pass"
+            },
+            {
+              "name": "WMS",
+              "status": "pass"
+            },
+            {
+              "name": "WMTS",
+              "status": "pending"
+            }
+          ]
+        },
+        {
+          "client": "Power BI",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OData v4",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "Excel",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OData v4",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "MapLibre GL JS",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "MVT",
+              "status": "pass"
+            },
+            {
+              "name": "TileJSON",
+              "status": "pass"
+            },
+            {
+              "name": "Style Endpoint",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "OpenLayers",
+          "status": "pending",
+          "protocols": [
+            {
+              "name": "OGC API Features",
+              "status": "pass"
+            },
+            {
+              "name": "WMS",
+              "status": "pass"
+            },
+            {
+              "name": "WMTS",
+              "status": "pending"
+            }
+          ]
+        },
+        {
+          "client": "Leaflet",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "WMS",
+              "status": "pass"
+            },
+            {
+              "name": "GeoJSON",
+              "status": "pass"
+            }
+          ]
+        },
+        {
+          "client": "Python (GeoPandas)",
+          "status": "pass",
+          "protocols": [
+            {
+              "name": "OGC API Features",
+              "status": "pass"
+            },
+            {
+              "name": "GeoJSON",
+              "status": "pass"
+            }
+          ]
+        }
+      ],
+      "changed_from_previous": []
+    }
+  ]
+}

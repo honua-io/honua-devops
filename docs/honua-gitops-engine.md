@@ -1,0 +1,85 @@
+# honua-gitops Engine
+
+This document captures the first in-repo `honua-gitops` engine slice for `honua-devops#14`.
+
+## Goal
+
+`honua-devops` should stop treating GitOps as a loose list of suggested commands and instead emit a typed internal engine plan that the AI runtime can reason about directly.
+
+The first slice is plan-first:
+
+- model the core command/state transitions
+- capture desired vs actual revision state per environment
+- distinguish infra, release, and service-state drift
+- expose gate status and required evidence before any write-capable path runs
+
+## Supported Operations
+
+The current engine plan emits the baseline operation set:
+
+- `plan`
+- `diff`
+- `sync`
+- `status`
+- `drift`
+- `pause`
+- `resume`
+- `approve`
+- `promote`
+- `rollback`
+
+## Current Plan Model
+
+Deploy responses now include a typed GitOps plan with:
+
+- engine name
+- requested action and effective action
+- actual-state source
+- diff summary
+- drift summary
+- overall gate status
+- required evidence
+- per-environment state
+- typed state transitions
+
+Per environment, the plan carries:
+
+- desired revision
+- actual revision
+- diff status
+- gate status
+- drift buckets for `infra`, `release`, and `service-state`
+- typed commands for the supported operations
+
+## Actual-State Read Path
+
+The current implementation uses Honua manifest export as the first actual-state source.
+
+That means:
+
+- actual revision is read from exported manifest state when present
+- missing or incomplete export data is surfaced explicitly as pending actual-state evidence
+- service-state drift points back to the typed `ServiceBundle` reconciliation model rather than collapsing into a generic manifest diff
+
+## Current Limitations
+
+This is intentionally the first engine slice, not the finished execution subsystem.
+
+Current gaps:
+
+- no standalone CLI entrypoint for `honua-gitops` yet
+- no persistent reconciliation loop yet
+- no pause/resume/approve backend implementation yet
+- diff and drift are still evidence/planning-first, not full actuation
+
+## What Landed
+
+The current repo implementation now:
+
+- exposes a dedicated `plan_gitops_engine` tool for snapshot-only engine planning
+- emits typed GitOps plan state from `deploy_service_gitops`
+- folds GitOps required evidence into the shared operation evidence bundle
+- ties promotion/rollback semantics to release orchestration policy
+- ties service-state drift to `ServiceBundle` export/reconciliation semantics
+
+That is enough to make `#14` real in code and to support the next execution-focused slice without redesigning the response contract again.

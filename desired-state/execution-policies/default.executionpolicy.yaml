@@ -1,0 +1,22 @@
+apiVersion: honua.io/v1alpha1
+kind: ExecutionPolicy
+metadata:
+  name: execution-policy-default
+  namespace: control-plane
+  labels:
+    managed-by: honua-devops
+    policy-class: default
+spec:
+  executionMode: plan
+  executionTier: plan
+  allowedEnvironments:
+    - dev
+    - staging
+    - prod
+  requiredChecks:
+    - manifest-diff
+    - smoke-contract
+    - release-evidence
+    - approval-policy
+  requiresApproval: true
+  allowsBreakGlass: false

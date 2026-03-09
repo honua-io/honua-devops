@@ -1,13 +1,19 @@
+using Honua.DevOps.Agent.Operations.RuntimeAdapters;
+using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
+
 namespace Honua.DevOps.Agent.Operations;
 
 internal static class PreflightRunner
 {
     internal static async Task<int> RunAsync(
         OperationRuntime runtime,
+        OperatorPolicyModel? policy,
         BackendConfiguration backendConfiguration,
         BackendGateway backendGateway,
         CancellationToken cancellationToken)
     {
+        OperatorPolicyModel effectivePolicy = policy ?? OperatorPolicyModel.Default;
         Console.WriteLine("Running honua-devops preflight...");
         Console.WriteLine($"Honua API base: {backendConfiguration.HonuaApiBaseUri}");
         Console.WriteLine($"OTEL base: {backendConfiguration.OTelBaseUri}");
@@ -15,9 +21,28 @@ internal static class PreflightRunner
         Console.WriteLine($"Honua manifest apply path: /{backendConfiguration.HonuaManifestApplyPath}");
         Console.WriteLine("Honua auth header: X-API-Key");
         Console.WriteLine($"GitOps mode: {runtime.GitOpsTool}");
+        Console.WriteLine($"Approval mode: {effectivePolicy.ApprovalMode.ToConfigValue()}");
+        Console.WriteLine($"Audit hook target: {effectivePolicy.AuditHookTarget}");
+        Console.WriteLine($"Support session: {effectivePolicy.SupportSession.Access.ToConfigValue()} ttl={effectivePolicy.SupportSession.TtlMinutes}m visible={effectivePolicy.SupportSession.CustomerVisible}");
         Console.WriteLine($"Terraform repo/ref: {runtime.TerraformRepository}@{runtime.TerraformRef}");
         Console.WriteLine($"Terraform local path: {runtime.TerraformLocalPath}");
         Console.WriteLine($"Terraform targets: {string.Join(", ", runtime.TerraformDeploymentTargets)}");
+        IReadOnlyList<IRuntimeAdapter> adapters = RuntimeAdapterRegistry.ResolveMany(runtime.TerraformDeploymentTargets);
+        Console.WriteLine($"Runtime adapters: {string.Join(" | ", adapters.Select(adapter => adapter.Capability.ToSummary()))}");
+        RuntimeAdapterRequest adapterRequest = new(
+            Service: "honua-platform",
+            Environments: ["dev"],
+            Revision: "HEAD",
+            Action: "plan",
+            ChangeSummary: "preflight validation",
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            DryRun: true,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        Console.WriteLine($"Adapter validate plans: {string.Join(" | ", adapters.Select(adapter => adapter.Validate(adapterRequest).Summary))}");
 
         bool terraformPathOk = Directory.Exists(runtime.TerraformLocalPath);
         PrintCheck(
@@ -36,8 +61,13 @@ internal static class PreflightRunner
             targetsOk,
             "Deployment targets",
             targetsOk ? "target set loaded" : "no deployment targets configured");
+        bool adaptersOk = adapters.Count == runtime.TerraformDeploymentTargets.Length;
+        PrintCheck(
+            adaptersOk,
+            "Runtime adapter catalog",
+            adaptersOk ? "all targets resolved to adapter capabilities" : "one or more targets failed adapter resolution");
 
-        bool success = terraformPathOk && honuaProbe.IsSuccess && otelProbe.IsSuccess && targetsOk;
+        bool success = terraformPathOk && honuaProbe.IsSuccess && otelProbe.IsSuccess && targetsOk && adaptersOk;
         if (success)
         {
             Console.WriteLine("Preflight passed.");

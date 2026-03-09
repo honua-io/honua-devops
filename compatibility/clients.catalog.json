@@ -1,0 +1,62 @@
+{
+  "clients": [
+    {
+      "name": "ArcGIS Pro",
+      "protocols": [
+        "FeatureServer",
+        "MapServer"
+      ]
+    },
+    {
+      "name": "QGIS",
+      "protocols": [
+        "OGC WFS",
+        "OGC API Features",
+        "WMS",
+        "WMTS"
+      ]
+    },
+    {
+      "name": "Power BI",
+      "protocols": [
+        "OData v4"
+      ]
+    },
+    {
+      "name": "Excel",
+      "protocols": [
+        "OData v4"
+      ]
+    },
+    {
+      "name": "MapLibre GL JS",
+      "protocols": [
+        "MVT",
+        "TileJSON",
+        "Style Endpoint"
+      ]
+    },
+    {
+      "name": "OpenLayers",
+      "protocols": [
+        "OGC API Features",
+        "WMS",
+        "WMTS"
+      ]
+    },
+    {
+      "name": "Leaflet",
+      "protocols": [
+        "WMS",
+        "GeoJSON"
+      ]
+    },
+    {
+      "name": "Python (GeoPandas)",
+      "protocols": [
+        "OGC API Features",
+        "GeoJSON"
+      ]
+    }
+  ]
+}

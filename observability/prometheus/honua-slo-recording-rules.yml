@@ -1,0 +1,133 @@
+groups:
+  - name: honua-slo-recording-rules
+    interval: 30s
+    rules:
+      - record: honua:slo:availability:ratio_30d
+        expr: |
+          1 - (
+            sum by (service, environment) (
+              rate(honua_http_requests_total{status_code=~"5.."}[30d])
+            )
+            /
+            clamp_min(
+              sum by (service, environment) (
+                rate(honua_http_requests_total[30d])
+              ),
+              0.001
+            )
+          )
+      - record: honua:slo:error_rate:ratio_5m
+        expr: |
+          sum by (service, environment, protocol) (
+            rate(honua_http_requests_total{status_code=~"5.."}[5m])
+          )
+          /
+          clamp_min(
+            sum by (service, environment, protocol) (
+              rate(honua_http_requests_total[5m])
+            ),
+            0.001
+          )
+      - record: honua:slo:latency:p50_ms:5m
+        expr: |
+          histogram_quantile(
+            0.50,
+            sum by (le, service, environment, protocol) (
+              rate(honua_request_duration_ms_bucket[5m])
+            )
+          )
+      - record: honua:slo:latency:p95_ms:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, service, environment, protocol) (
+              rate(honua_request_duration_ms_bucket[5m])
+            )
+          )
+      - record: honua:slo:latency:p99_ms:5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, service, environment, protocol) (
+              rate(honua_request_duration_ms_bucket[5m])
+            )
+          )
+      - record: honua:slo:backup_success:ratio_24h
+        expr: |
+          avg by (service, environment) (
+            avg_over_time(honua_backup_success_ratio[24h])
+          )
+      - record: honua:slo:replication_lag_seconds:max_5m
+        expr: |
+          max by (service, environment) (
+            max_over_time(honua_replication_lag_seconds[5m])
+          )
+      - record: honua:slo:availability:error_budget_remaining_ratio
+        expr: |
+          clamp_min(
+            clamp_max(
+              1,
+              1 - (
+                (1 - honua:slo:availability:ratio_30d)
+                /
+                (1 - 0.990)
+              )
+            ),
+            0
+          )
+      - record: honua:slo:error_rate:error_budget_remaining_ratio
+        expr: |
+          clamp_min(
+            clamp_max(
+              1,
+              1 - (honua:slo:error_rate:ratio_5m / 0.010)
+            ),
+            0
+          )
+      - record: honua:slo:burn_rate:5m
+        expr: |
+          sum by (service, environment) (
+            rate(honua_http_requests_total{status_code=~"5.."}[5m])
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[5m])
+            ),
+            0.001
+          )
+          /
+          0.010
+      - record: honua:slo:burn_rate:30m
+        expr: |
+          sum by (service, environment) (
+            rate(honua_http_requests_total{status_code=~"5.."}[30m])
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[30m])
+            ),
+            0.001
+          )
+          /
+          0.010
+      - record: honua:slo:burn_rate:6h
+        expr: |
+          sum by (service, environment) (
+            rate(honua_http_requests_total{status_code=~"5.."}[6h])
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[6h])
+            ),
+            0.001
+          )
+          /
+          0.010
+      - record: honua:maintenance_window:active
+        expr: |
+          max by (service, environment) (
+            max_over_time(honua_maintenance_window_active[5m])
+          )

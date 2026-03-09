@@ -1,0 +1,109 @@
+groups:
+  - name: honua-slo-alert-rules
+    interval: 30s
+    rules:
+      - alert: HonuaSloFastBurn
+        expr: |
+          (honua:slo:burn_rate:5m > 14.4)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 5m
+        labels:
+          severity: critical
+          route: pagerduty-critical
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Fast SLO burn for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Error budget burn over 5m is above the fast-burn threshold. Promotion should stop and rollback should be evaluated."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaSloMediumBurn
+        expr: |
+          (honua:slo:burn_rate:30m > 6.0)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 15m
+        labels:
+          severity: warning
+          route: slack-warning
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Medium SLO burn for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Error budget burn over 30m is above the warning threshold. Hold rollout progression until the burn rate stabilizes."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaSloSlowBurn
+        expr: |
+          (honua:slo:burn_rate:6h > 3.0)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 30m
+        labels:
+          severity: warning
+          route: email-info
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Slow SLO burn for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Error budget burn over 6h suggests sustained degradation. Review capacity, traffic, and release health before the next promotion."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaAvailabilitySloViolation
+        expr: |
+          (honua:slo:availability:ratio_30d < 0.990)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 10m
+        labels:
+          severity: critical
+          route: pagerduty-critical
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Availability SLO violation for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Rolling 30-day availability is below the 99.0% target."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaP95LatencySloViolation
+        expr: |
+          (honua:slo:latency:p95_ms:5m > 1200)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 10m
+        labels:
+          severity: warning
+          route: slack-warning
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "P95 latency SLO violation for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "P95 latency over 5m is above the 1200ms release gate."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaBackupDurabilityRisk
+        expr: |
+          (honua:slo:backup_success:ratio_24h < 0.999)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 15m
+        labels:
+          severity: warning
+          route: email-info
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Backup durability risk for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Backup success ratio over 24h is below target. Promotion should not proceed without a fresh recovery checkpoint."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaReplicationLagRisk
+        expr: |
+          (honua:slo:replication_lag_seconds:max_5m > 300)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 10m
+        labels:
+          severity: warning
+          route: slack-warning
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Replication lag risk for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Replication lag is above 300s. Durability and rollback confidence are degraded."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
