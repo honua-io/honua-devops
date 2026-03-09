@@ -17,10 +17,114 @@ require_command python3
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+FIXTURES_ROOT="$WORKDIR/releases"
+mkdir -p "$FIXTURES_ROOT/2026.03.0/demo-service/evidence" "$FIXTURES_ROOT/2026.03.1/demo-service/evidence"
 
-echo "Generating compatibility scoreboard from repo fixtures"
+cat >"$FIXTURES_ROOT/2026.03.0/demo-service/evidence/session.json" <<'EOF'
+{
+  "service_id": "demo-service",
+  "service_title": "Demo Service",
+  "clients": [
+    {
+      "name": "QGIS",
+      "version": "3.38",
+      "status": "pass"
+    },
+    {
+      "name": "OpenLayers",
+      "version": "10.0",
+      "status": "pass"
+    }
+  ]
+}
+EOF
+
+cat >"$FIXTURES_ROOT/2026.03.0/demo-service/compatibility-results.json" <<'EOF'
+{
+  "release": "2026.03.0",
+  "release_date": "Mon, 02 Mar 2026 00:00:00 GMT",
+  "service_id": "demo-service",
+  "service_title": "Demo Service",
+  "source_pack": "compatibility/releases/2026.03.0/demo-service",
+  "clients": [
+    {
+      "name": "QGIS",
+      "status": "pending",
+      "protocols": [
+        { "name": "WMTS", "status": "pending" }
+      ]
+    },
+    {
+      "name": "OpenLayers",
+      "status": "pending",
+      "protocols": [
+        { "name": "WMTS", "status": "pending" }
+      ]
+    }
+  ]
+}
+EOF
+
+cat >"$FIXTURES_ROOT/2026.03.1/demo-service/evidence/session.json" <<'EOF'
+{
+  "service_id": "demo-service",
+  "service_title": "Demo Service",
+  "clients": [
+    {
+      "name": "QGIS",
+      "version": "3.38",
+      "status": "pass"
+    },
+    {
+      "name": "OpenLayers",
+      "version": "10.0",
+      "status": "pass"
+    },
+    {
+      "name": "Power BI",
+      "version": "2.141",
+      "status": "pass"
+    }
+  ]
+}
+EOF
+
+cat >"$FIXTURES_ROOT/2026.03.1/demo-service/compatibility-results.json" <<'EOF'
+{
+  "release": "2026.03.1",
+  "release_date": "Mon, 09 Mar 2026 00:00:00 GMT",
+  "service_id": "demo-service",
+  "service_title": "Demo Service",
+  "source_pack": "compatibility/releases/2026.03.1/demo-service",
+  "clients": [
+    {
+      "name": "QGIS",
+      "status": "pass",
+      "protocols": [
+        { "name": "WMTS", "status": "pass" }
+      ]
+    },
+    {
+      "name": "OpenLayers",
+      "status": "pass",
+      "protocols": [
+        { "name": "WMTS", "status": "pass" }
+      ]
+    },
+    {
+      "name": "Power BI",
+      "status": "pass",
+      "protocols": [
+        { "name": "OData v4", "status": "pass" }
+      ]
+    }
+  ]
+}
+EOF
+
+echo "Generating compatibility scoreboard from smoke fixtures"
 python3 "$REPO_ROOT/scripts/generate-client-compat-scoreboard.py" \
-  --packs-root "$REPO_ROOT/compatibility/releases" \
+  --packs-root "$FIXTURES_ROOT" \
   --catalog "$REPO_ROOT/compatibility/clients.catalog.json" \
   --output-dir "$WORKDIR/out"
 
@@ -35,7 +139,7 @@ grep -nF -- "Release 2026.03.1" "$WORKDIR/out/compatibility-matrix.md" >/dev/nul
 grep -nF -- "OpenLayers / WMTS: pending -> pass" "$WORKDIR/out/compatibility-matrix.md" >/dev/null
 
 echo "Validating hard-fail release blocking path"
-cp -R "$REPO_ROOT/compatibility/releases" "$WORKDIR/failing-releases"
+cp -R "$FIXTURES_ROOT" "$WORKDIR/failing-releases"
 python3 - "$WORKDIR/failing-releases/2026.03.1/demo-service/compatibility-results.json" <<'PY'
 import json
 import sys
