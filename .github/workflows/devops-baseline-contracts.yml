@@ -1,0 +1,24 @@
+name: DevOps Baseline Contracts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  smoke-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          bash -n scripts/check-terraform-secrets.sh
+          bash -n scripts/smoke-contract.sh
+          bash -n scripts/smoke-contract-smoke.sh
+
+      - name: Smoke contract self-test
+        run: ./scripts/smoke-contract-smoke.sh
