@@ -396,6 +396,36 @@ public class GuidedFixWorkflowTests
     }
 
     [Fact]
+    public async Task TriageSupportTicketAsync_ReadOnlyTicketRemainsReadOnlyUnderPrFirstPolicy()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        OperatorPolicyModel prFirstPolicy = new(
+            ApprovalMode.PrFirst,
+            "stdout-evidence",
+            new SupportSessionPolicy(SupportSessionAccess.OperatorScoped, 60, true),
+            BreakGlassPostActionReviewRequired: true);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(mode: ExecutionMode.Execute, executionTier: ExecutionTier.ExecuteLowerEnv),
+            gateway,
+            prFirstPolicy);
+
+        OperationResponse response = await toolkit.TriageSupportTicketAsync(
+            ticketId: "TICKET-READONLY",
+            severity: "high",
+            environment: "staging",
+            symptoms: "Service returning 500 after deployment",
+            requestedAction: "diagnose",
+            allowedAccessMode: "read-only",
+            ttlMinutes: 30,
+            rollbackExpected: false,
+            attachedEvidence: "health endpoint failing",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("read-only-triage", response.Status);
+        Assert.True(response.Evidence!.DryRun);
+    }
+
+    [Fact]
     public async Task TriageSupportTicketAsync_ProposeTierForcesReadOnlyTriage()
     {
         using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
@@ -418,6 +448,36 @@ public class GuidedFixWorkflowTests
 
         Assert.Equal("read-only-triage", response.Status);
         Assert.True(response.Evidence!.DryRun);
+    }
+
+    [Fact]
+    public async Task TriageSupportTicketAsync_EvidenceUsesEffectiveRequestedTtl()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        OperatorPolicyModel policy = new(
+            ApprovalMode.DirectAllowed,
+            "audit://test",
+            new SupportSessionPolicy(SupportSessionAccess.OperatorScoped, 30, true),
+            BreakGlassPostActionReviewRequired: true);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(mode: ExecutionMode.Execute, executionTier: ExecutionTier.ExecuteLowerEnv),
+            gateway,
+            policy);
+
+        OperationResponse response = await toolkit.TriageSupportTicketAsync(
+            ticketId: "TICKET-TTL",
+            severity: "critical",
+            environment: "staging",
+            symptoms: "DB outage after secret rotation",
+            requestedAction: "fix",
+            allowedAccessMode: "operator-scoped",
+            ttlMinutes: 15,
+            rollbackExpected: true,
+            attachedEvidence: "FATAL: password authentication failed. Npgsql.PostgresException. connection refused",
+            cancellationToken: CancellationToken.None);
+
+        Assert.NotNull(response.Evidence);
+        Assert.Equal(15, response.Evidence!.SupportSessionTtlMinutes);
     }
 
     [Fact]

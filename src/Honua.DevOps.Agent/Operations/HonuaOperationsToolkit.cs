@@ -826,6 +826,8 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         GuidedFixResult guidedFix,
         BackendCallResult backendResult)
     {
+        int effectiveSupportSessionTtl = guidedFix.Escalation?.TtlMinutes ??
+            Math.Min(ticket.TtlMinutes, EffectivePolicy.SupportSession.TtlMinutes);
         List<string> requiredChecks =
         [
             "ticket-context",
@@ -862,7 +864,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
             AuditHookTarget: EffectivePolicy.AuditHookTarget,
             SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
-            SupportSessionTtlMinutes: EffectivePolicy.SupportSession.TtlMinutes,
+            SupportSessionTtlMinutes: effectiveSupportSessionTtl,
             SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
             BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
             RequiredChecks: requiredChecks.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),

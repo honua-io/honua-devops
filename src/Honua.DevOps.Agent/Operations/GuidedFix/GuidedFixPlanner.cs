@@ -138,6 +138,13 @@ internal static class GuidedFixPlanner
             return GuidedFixMode.ReadOnlyTriage;
         }
 
+        string allowedAccess = ticket.AllowedAccessMode.Trim().ToLowerInvariant();
+
+        if (allowedAccess is "read-only" or "read_only" or "triage")
+        {
+            return GuidedFixMode.ReadOnlyTriage;
+        }
+
         if (policy.ApprovalMode == ApprovalMode.PrFirst &&
             executionTier != ExecutionTier.BreakGlass)
         {
@@ -148,13 +155,6 @@ internal static class GuidedFixPlanner
             executionTier != ExecutionTier.BreakGlass)
         {
             return GuidedFixMode.GuidedFix;
-        }
-
-        string allowedAccess = ticket.AllowedAccessMode.Trim().ToLowerInvariant();
-
-        if (allowedAccess is "read-only" or "read_only" or "triage")
-        {
-            return GuidedFixMode.ReadOnlyTriage;
         }
 
         if (policy.SupportSession.Access == SupportSessionAccess.OperatorScoped &&
