@@ -848,7 +848,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             Scope: $"support-triage:{ticket.TicketId}",
             RequestedAction: ticket.RequestedAction,
             EffectiveAction: guidedFix.Mode.ToConfigValue(),
-            DryRun: guidedFix.Mode == GuidedFixMode.ReadOnlyTriage,
+            DryRun: guidedFix.Mode != GuidedFixMode.OperatorScoped,
             ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
             ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
             TargetEnvironments: [ticket.Environment],

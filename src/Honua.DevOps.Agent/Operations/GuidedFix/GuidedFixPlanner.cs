@@ -16,7 +16,7 @@ internal static class GuidedFixPlanner
         FaultMatch? matchedFault = DiagnoseFromEvidence(ticket);
         string confidence = ComputeConfidence(ticket, backendResult, matchedFault);
         List<string> missingEvidence = BuildMissingEvidence(ticket, backendResult, matchedFault);
-        string recommendedNextAction = ResolveNextAction(mode, confidence, missingEvidence, matchedFault, executionMode);
+        string recommendedNextAction = ResolveNextAction(mode, confidence, missingEvidence, matchedFault, executionMode, policy, executionTier);
         List<string> guidedCommands = BuildGuidedCommands(ticket, mode, matchedFault, executionMode);
         List<string> validationSteps = BuildValidationSteps(ticket, mode, matchedFault);
         GuidedFixEscalation? escalation = mode == GuidedFixMode.OperatorScoped
@@ -107,6 +107,12 @@ internal static class GuidedFixPlanner
             }
         }
 
+        const double minimumMatchScore = 15.0;
+        if (bestMatch is not null && bestMatch.MatchScore < minimumMatchScore)
+        {
+            return null;
+        }
+
         return bestMatch;
     }
 
@@ -117,7 +123,7 @@ internal static class GuidedFixPlanner
         ExecutionTier executionTier)
     {
         if (executionMode == ExecutionMode.Plan ||
-            executionTier is ExecutionTier.Observe or ExecutionTier.Plan)
+            executionTier is ExecutionTier.Observe or ExecutionTier.Plan or ExecutionTier.Propose)
         {
             return GuidedFixMode.ReadOnlyTriage;
         }
@@ -125,6 +131,18 @@ internal static class GuidedFixPlanner
         if (policy.SupportSession.Access == SupportSessionAccess.Disabled)
         {
             return GuidedFixMode.ReadOnlyTriage;
+        }
+
+        if (policy.ApprovalMode == ApprovalMode.PrFirst &&
+            executionTier != ExecutionTier.BreakGlass)
+        {
+            return GuidedFixMode.GuidedFix;
+        }
+
+        if (policy.ApprovalMode == ApprovalMode.BreakGlassOnly &&
+            executionTier != ExecutionTier.BreakGlass)
+        {
+            return GuidedFixMode.GuidedFix;
         }
 
         string allowedAccess = ticket.AllowedAccessMode.Trim().ToLowerInvariant();
@@ -209,7 +227,9 @@ internal static class GuidedFixPlanner
         string confidence,
         IReadOnlyList<string> missingEvidence,
         FaultMatch? matchedFault,
-        ExecutionMode executionMode)
+        ExecutionMode executionMode,
+        OperatorPolicy.OperatorPolicy policy,
+        ExecutionTier executionTier)
     {
         if (matchedFault is null && confidence == "low")
         {
@@ -218,7 +238,9 @@ internal static class GuidedFixPlanner
 
         if (matchedFault is not null && executionMode == ExecutionMode.Execute &&
             mode == GuidedFixMode.OperatorScoped &&
-            matchedFault.RemediationScope == RemediationScope.WriteCapable)
+            matchedFault.RemediationScope == RemediationScope.WriteCapable &&
+            policy.ApprovalMode == ApprovalMode.DirectAllowed &&
+            executionTier is ExecutionTier.ExecuteLowerEnv or ExecutionTier.PromoteProd or ExecutionTier.BreakGlass)
         {
             return "execute-remediation";
         }

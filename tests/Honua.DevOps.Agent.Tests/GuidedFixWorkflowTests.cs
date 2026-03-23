@@ -60,7 +60,7 @@ public class GuidedFixWorkflowTests
 
         Assert.Equal("guided-fix", response.Status);
         Assert.NotNull(response.Evidence);
-        Assert.False(response.Evidence!.DryRun);
+        Assert.True(response.Evidence!.DryRun);
         Assert.Equal("guided-fix", response.Evidence.PolicyGate);
         Assert.Contains(response.Findings, finding => finding.Contains("guided-fix", StringComparison.Ordinal));
         Assert.Contains(response.Findings, finding => finding.Contains("Missing:", StringComparison.Ordinal));
@@ -333,6 +333,115 @@ public class GuidedFixWorkflowTests
         Assert.Contains(result.Escalation.RequiredApprovalContext, ctx => ctx == "operator-justification");
         Assert.Equal("rollback-prepared", result.Escalation.RollbackIntent);
         Assert.Equal(15, result.Escalation.TtlMinutes);
+    }
+
+    [Fact]
+    public async Task TriageSupportTicketAsync_PrFirstBlocksOperatorScopedEscalation()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        OperatorPolicyModel prFirstPolicy = new(
+            ApprovalMode.PrFirst,
+            "stdout-evidence",
+            new SupportSessionPolicy(SupportSessionAccess.OperatorScoped, 60, true),
+            BreakGlassPostActionReviewRequired: true);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(mode: ExecutionMode.Execute, executionTier: ExecutionTier.ExecuteLowerEnv),
+            gateway,
+            prFirstPolicy);
+
+        OperationResponse response = await toolkit.TriageSupportTicketAsync(
+            ticketId: "TICKET-PRFIRST",
+            severity: "critical",
+            environment: "staging",
+            symptoms: "DB unreachable",
+            requestedAction: "fix",
+            allowedAccessMode: "operator-scoped",
+            ttlMinutes: 30,
+            rollbackExpected: false,
+            attachedEvidence: "connection refused",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("guided-fix", response.Status);
+        Assert.True(response.Evidence!.DryRun);
+    }
+
+    [Fact]
+    public async Task TriageSupportTicketAsync_BreakGlassOnlyBlocksOperatorScopedUnlessBGTier()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        OperatorPolicyModel bgOnlyPolicy = new(
+            ApprovalMode.BreakGlassOnly,
+            "stdout-evidence",
+            new SupportSessionPolicy(SupportSessionAccess.OperatorScoped, 60, true),
+            BreakGlassPostActionReviewRequired: true);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(mode: ExecutionMode.Execute, executionTier: ExecutionTier.ExecuteLowerEnv),
+            gateway,
+            bgOnlyPolicy);
+
+        OperationResponse response = await toolkit.TriageSupportTicketAsync(
+            ticketId: "TICKET-BGONLY",
+            severity: "critical",
+            environment: "staging",
+            symptoms: "Complete outage",
+            requestedAction: "fix",
+            allowedAccessMode: "operator-scoped",
+            ttlMinutes: 15,
+            rollbackExpected: true,
+            attachedEvidence: "all endpoints down",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("guided-fix", response.Status);
+        Assert.True(response.Evidence!.DryRun);
+    }
+
+    [Fact]
+    public async Task TriageSupportTicketAsync_ProposeTierForcesReadOnlyTriage()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(mode: ExecutionMode.Execute, executionTier: ExecutionTier.Propose),
+            gateway,
+            GuidedFixPolicy(SupportSessionAccess.OperatorScoped));
+
+        OperationResponse response = await toolkit.TriageSupportTicketAsync(
+            ticketId: "TICKET-PROPOSE",
+            severity: "high",
+            environment: "staging",
+            symptoms: "Latency regression",
+            requestedAction: "fix",
+            allowedAccessMode: "operator-scoped",
+            ttlMinutes: 60,
+            rollbackExpected: false,
+            attachedEvidence: "P95 latency doubled",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("read-only-triage", response.Status);
+        Assert.True(response.Evidence!.DryRun);
+    }
+
+    [Fact]
+    public void DiagnoseFromEvidence_RejectsAmbiguousGenericSymptoms()
+    {
+        string[] ambiguousInputs =
+        [
+            "Service returning 500 errors intermittently",
+            "Deployment failed",
+            "Database errors",
+            "Something is wrong with the service",
+            "Performance is slow"
+        ];
+
+        foreach (string input in ambiguousInputs)
+        {
+            SupportTicket ticket = CreateTicket(symptoms: input, attachedEvidence: "");
+            FaultMatch? match = GuidedFixPlanner.DiagnoseFromEvidence(ticket);
+
+            Assert.True(
+                match is null || match.MatchScore >= 15.0,
+                $"Ambiguous input '{input}' produced a low-confidence match: " +
+                $"{match?.ScenarioName} at {match?.MatchScore:F0}%");
+        }
     }
 
     [Fact]
