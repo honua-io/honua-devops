@@ -1,7 +1,9 @@
 using System.ComponentModel;
 
 using Honua.DevOps.Agent.Operations.GitOps;
+using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.Troubleshooting;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
@@ -699,6 +701,175 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 "No-WAF posture increases exposure to application-layer attacks.",
                 "Skipping validated template modules can introduce config drift."
             ]);
+    }
+
+    [Description("Triage a support ticket with read-only diagnosis, guided-fix commands, or operator-scoped escalation.")]
+    public async Task<OperationResponse> TriageSupportTicketAsync(
+        string ticketId,
+        string severity,
+        string environment,
+        string symptoms,
+        string requestedAction,
+        string allowedAccessMode,
+        int ttlMinutes,
+        bool rollbackExpected,
+        string attachedEvidence,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedTicketId = SanitizePayloadValue(ticketId, "ticket ID");
+        SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        string normalizedSymptoms = SanitizeFreeText(symptoms, "not provided");
+        string normalizedRequestedAction = SanitizeFreeText(requestedAction, "diagnose");
+        string normalizedAccessMode = Normalize(allowedAccessMode, "read-only");
+        int effectiveTtl = ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes;
+        string normalizedEvidence = SanitizeFreeText(attachedEvidence, string.Empty);
+
+        SupportTicket ticket = new(
+            TicketId: normalizedTicketId,
+            Severity: parsedSeverity,
+            Environment: normalizedEnvironment,
+            Symptoms: normalizedSymptoms,
+            RequestedAction: normalizedRequestedAction,
+            AllowedAccessMode: normalizedAccessMode,
+            TtlMinutes: effectiveTtl,
+            RollbackExpected: rollbackExpected,
+            AttachedEvidence: normalizedEvidence);
+
+        BackendCallResult backendResult = await gateway.RequestTroubleshootAsync(
+            "support-triage",
+            normalizedEnvironment,
+            normalizedSymptoms,
+            normalizedRequestedAction,
+            $"ticket:{normalizedTicketId}",
+            cancellationToken);
+
+        GuidedFixResult guidedFix = GuidedFixPlanner.Build(
+            ticket,
+            EffectivePolicy,
+            runtime.ExecutionMode,
+            runtime.ExecutionTier,
+            backendResult);
+
+        List<string> findings =
+        [
+            $"Ticket: {normalizedTicketId} ({parsedSeverity.ToConfigValue()}).",
+            $"Environment: {normalizedEnvironment}.",
+            $"Honua API endpoint: {backendResult.Endpoint}",
+            $"Backend result: {backendResult.Detail}",
+            $"Diagnosis confidence: {guidedFix.Confidence}.",
+            $"Guided-fix mode: {guidedFix.Mode.ToConfigValue()}.",
+            $"Recommended next action: {guidedFix.RecommendedNextAction}.",
+            $"Diagnosis: {guidedFix.DiagnosisSummary}",
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+            $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
+            $"Customer-visible: {EffectivePolicy.SupportSession.CustomerVisible}."
+        ];
+
+        if (guidedFix.MatchedFault is not null)
+        {
+            findings.Add($"Matched fault: {guidedFix.MatchedFault.ScenarioName} ({guidedFix.MatchedFault.FaultCategory}).");
+            findings.Add($"Match score: {guidedFix.MatchedFault.MatchScore:F0}% ({guidedFix.MatchedFault.MatchedIndicators.Count} indicators).");
+            findings.Add($"Remediation scope: {guidedFix.MatchedFault.RemediationScope.ToConfigValue()}.");
+            findings.Add($"Rollback path: {guidedFix.MatchedFault.RollbackPath}.");
+        }
+
+        if (guidedFix.MissingEvidence.Count > 0)
+        {
+            findings.AddRange(guidedFix.MissingEvidence.Select(missing => $"Missing: {missing}"));
+        }
+
+        List<string> actions =
+        [
+            $"Operate in `{guidedFix.Mode.ToConfigValue()}` posture for this ticket.",
+            ..guidedFix.GuidedCommands
+        ];
+
+        if (guidedFix.Escalation is not null)
+        {
+            actions.Add($"Escalation requires approval: {string.Join(", ", guidedFix.Escalation.RequiredApprovalContext)}.");
+            actions.Add($"Escalation access scope: {guidedFix.Escalation.AccessScope} with TTL {guidedFix.Escalation.TtlMinutes}m.");
+            actions.Add($"Rollback intent: {guidedFix.Escalation.RollbackIntent}.");
+        }
+
+        actions.AddRange(BuildOperatorPolicyActions());
+
+        List<string> validationChecks = [..guidedFix.ValidationSteps];
+        validationChecks.AddRange(BuildOperatorPolicyValidationChecks());
+
+        List<string> risks =
+        [
+            "Diagnosis accuracy depends on telemetry completeness and symptom quality.",
+            "Guided commands should be validated by the customer before execution."
+        ];
+        risks.AddRange(BuildOperatorPolicyRisks());
+
+        if (guidedFix.Mode == GuidedFixMode.OperatorScoped)
+        {
+            risks.Add("Operator-scoped access must stay within ticket scope and TTL to avoid silent privilege expansion.");
+        }
+
+        return new OperationResponse(
+            Status: backendResult.IsSuccess
+                ? guidedFix.Mode.ToConfigValue()
+                : "backend-error",
+            Summary: $"Support triage for ticket {normalizedTicketId} ({parsedSeverity.ToConfigValue()}) in `{normalizedEnvironment}`.",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks: validationChecks,
+            Risks: risks,
+            Evidence: BuildGuidedFixEvidence(ticket, guidedFix, backendResult));
+    }
+
+    private OperationEvidence BuildGuidedFixEvidence(
+        SupportTicket ticket,
+        GuidedFixResult guidedFix,
+        BackendCallResult backendResult)
+    {
+        List<string> requiredChecks =
+        [
+            "ticket-context",
+            "diagnosis-evidence",
+            "access-mode-record"
+        ];
+        requiredChecks.AddRange(BuildOperatorPolicyValidationChecks());
+
+        if (guidedFix.Mode == GuidedFixMode.OperatorScoped && guidedFix.Escalation is not null)
+        {
+            requiredChecks.AddRange(guidedFix.Escalation.RequiredApprovalContext);
+        }
+
+        if (ticket.RollbackExpected)
+        {
+            requiredChecks.Add("rollback-readiness");
+        }
+
+        return new OperationEvidence(
+            Scope: $"support-triage:{ticket.TicketId}",
+            RequestedAction: ticket.RequestedAction,
+            EffectiveAction: guidedFix.Mode.ToConfigValue(),
+            DryRun: guidedFix.Mode == GuidedFixMode.ReadOnlyTriage,
+            ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
+            ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
+            TargetEnvironments: [ticket.Environment],
+            CurrentRevision: null,
+            DesiredRevision: null,
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            DeploymentTargets: runtime.TerraformDeploymentTargets.ToArray(),
+            PolicyGate: guidedFix.Mode.ToConfigValue(),
+            ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
+            AuditHookTarget: EffectivePolicy.AuditHookTarget,
+            SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
+            SupportSessionTtlMinutes: EffectivePolicy.SupportSession.TtlMinutes,
+            SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
+            BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
+            RequiredChecks: requiredChecks.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            DiffSummary: null,
+            GateStatus: guidedFix.RecommendedNextAction,
+            BackendEndpoint: backendResult.Endpoint,
+            BackendDetail: backendResult.Detail);
     }
 
     private static string Scope(string service, string environment, string timeframe)

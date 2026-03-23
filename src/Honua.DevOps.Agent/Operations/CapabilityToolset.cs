@@ -56,7 +56,12 @@ internal static class CapabilityToolset
                 (string environment, bool enableWaf, bool useNginxProxy, bool enableEdgeRateLimiting, string trafficProfile, string riskTolerance)
                     => toolkit.RecommendDeploymentTopologyAsync(environment, enableWaf, useNginxProxy, enableEdgeRateLimiting, trafficProfile, riskTolerance),
                 "recommend_deployment_topology",
-                "Recommend deployment topology options including WAF, ingress, and edge rate limiting.")
+                "Recommend deployment topology options including WAF, ingress, and edge rate limiting."),
+            CreateTool(
+                (string ticketId, string severity, string environment, string symptoms, string requestedAction, string allowedAccessMode, int ttlMinutes, bool rollbackExpected, string attachedEvidence)
+                    => toolkit.TriageSupportTicketAsync(ticketId, severity, environment, symptoms, requestedAction, allowedAccessMode, ttlMinutes, rollbackExpected, attachedEvidence),
+                "triage_support_ticket",
+                "Triage a support ticket: read-only diagnosis, guided-fix commands for the customer, or approval-gated operator-scoped remediation.")
         ];
     }
 
