@@ -23,7 +23,9 @@ internal sealed record BackendConfiguration(
     string HonuaAdminCapabilitiesPath,
     string HonuaManifestExportPath,
     string HonuaManifestApplyPath,
-    TimeSpan RequestTimeout)
+    TimeSpan RequestTimeout,
+    Uri? SupportApiBaseUri = null,
+    string SupportApiTicketsPath = "api/v1/tickets")
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
     private const string OTelBaseUrlVariable = "HONUA_DEVOPS_OTEL_BASE_URL";
@@ -58,6 +60,9 @@ internal sealed record BackendConfiguration(
     private const string LegacyDeployPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_PATH";
     private const string LegacyRequirementsPathVariable = "HONUA_DEVOPS_HONUA_REQUIREMENTS_PATH";
     private const string LegacyTopologyPathVariable = "HONUA_DEVOPS_HONUA_TOPOLOGY_PATH";
+
+    private const string SupportApiBaseUrlVariable = "HONUA_DEVOPS_SUPPORT_API_BASE_URL";
+    private const string SupportApiTicketsPathVariable = "HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH";
 
     private const string TimeoutSecondsVariable = "HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS";
 
@@ -145,6 +150,14 @@ internal sealed record BackendConfiguration(
 
         TimeSpan timeout = ParseTimeout(Environment.GetEnvironmentVariable(TimeoutSecondsVariable));
 
+        Uri? supportApiBaseUri = ParseOptionalBaseUri(
+            Environment.GetEnvironmentVariable(SupportApiBaseUrlVariable),
+            SupportApiBaseUrlVariable);
+        string supportApiTicketsPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(SupportApiTicketsPathVariable),
+            "api/v1/tickets",
+            SupportApiTicketsPathVariable);
+
         return new BackendConfiguration(
             HonuaApiBaseUri: honuaApiBaseUri,
             OTelBaseUri: otelBaseUri,
@@ -166,7 +179,9 @@ internal sealed record BackendConfiguration(
             HonuaAdminCapabilitiesPath: honuaAdminCapabilitiesPath,
             HonuaManifestExportPath: honuaManifestExportPath,
             HonuaManifestApplyPath: honuaManifestApplyPath,
-            RequestTimeout: timeout);
+            RequestTimeout: timeout,
+            SupportApiBaseUri: supportApiBaseUri,
+            SupportApiTicketsPath: supportApiTicketsPath);
     }
 
     private static string ParseRelativePathWithLegacy(string variableName, string legacyVariableName, string fallback)
@@ -298,6 +313,16 @@ internal sealed record BackendConfiguration(
         return value.StartsWith("http:", StringComparison.OrdinalIgnoreCase) ||
                value.StartsWith("https:", StringComparison.OrdinalIgnoreCase) ||
                value.Contains("://", StringComparison.Ordinal);
+    }
+
+    private static Uri? ParseOptionalBaseUri(string? value, string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return ParseBaseUri(value, value, variableName);
     }
 
     private static bool IsLocalUri(Uri uri)
