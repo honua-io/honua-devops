@@ -48,28 +48,35 @@ internal static class GuidedFixPlanner
         foreach (FaultScenario scenario in FaultCatalog.All)
         {
             List<string> matchedIndicators = [];
-
-            foreach (string symptom in scenario.ExpectedSymptoms)
-            {
-                if (ContainsAny(combined, ExtractKeyTerms(symptom)))
-                {
-                    matchedIndicators.Add($"symptom: {symptom}");
-                }
-            }
+            int exactLogMatches = 0;
+            int exactMetricMatches = 0;
+            int symptomKeywordMatches = 0;
+            int healthKeywordMatches = 0;
 
             foreach (string logPattern in scenario.ExpectedLogEvidence)
             {
                 if (combined.Contains(logPattern.ToLowerInvariant(), StringComparison.Ordinal))
                 {
                     matchedIndicators.Add($"log: {logPattern}");
+                    exactLogMatches++;
                 }
             }
 
             foreach (string metricPattern in scenario.ExpectedMetricEvidence)
             {
-                if (ContainsAny(combined, ExtractKeyTerms(metricPattern)))
+                if (combined.Contains(metricPattern.ToLowerInvariant(), StringComparison.Ordinal))
                 {
                     matchedIndicators.Add($"metric: {metricPattern}");
+                    exactMetricMatches++;
+                }
+            }
+
+            foreach (string symptom in scenario.ExpectedSymptoms)
+            {
+                if (ContainsAny(combined, ExtractKeyTerms(symptom)))
+                {
+                    matchedIndicators.Add($"symptom: {symptom}");
+                    symptomKeywordMatches++;
                 }
             }
 
@@ -78,19 +85,23 @@ internal static class GuidedFixPlanner
                 if (ContainsAny(combined, ExtractKeyTerms(healthPattern)))
                 {
                     matchedIndicators.Add($"health: {healthPattern}");
+                    healthKeywordMatches++;
                 }
             }
 
-            if (matchedIndicators.Count == 0)
+            int exactMatches = exactLogMatches + exactMetricMatches;
+            if (exactMatches == 0)
             {
                 continue;
             }
 
-            int totalIndicators = scenario.ExpectedSymptoms.Count +
-                                  scenario.ExpectedLogEvidence.Count +
-                                  scenario.ExpectedMetricEvidence.Count +
-                                  scenario.ExpectedHealthEvidence.Count;
-            double score = (double)matchedIndicators.Count / totalIndicators * 100.0;
+            double exactWeight = 3.0;
+            double keywordWeight = 1.0;
+            double weightedHits = (exactMatches * exactWeight) +
+                                  ((symptomKeywordMatches + healthKeywordMatches) * keywordWeight);
+            double maxPossibleWeight = ((scenario.ExpectedLogEvidence.Count + scenario.ExpectedMetricEvidence.Count) * exactWeight) +
+                                      ((scenario.ExpectedSymptoms.Count + scenario.ExpectedHealthEvidence.Count) * keywordWeight);
+            double score = maxPossibleWeight > 0 ? weightedHits / maxPossibleWeight * 100.0 : 0;
 
             if (bestMatch is null || score > bestMatch.MatchScore)
             {
@@ -105,12 +116,6 @@ internal static class GuidedFixPlanner
                     CleanupPath: scenario.CleanupPath,
                     RemediationScope: scenario.RemediationScope);
             }
-        }
-
-        const double minimumMatchScore = 15.0;
-        if (bestMatch is not null && bestMatch.MatchScore < minimumMatchScore)
-        {
-            return null;
         }
 
         return bestMatch;
@@ -236,10 +241,14 @@ internal static class GuidedFixPlanner
             return "request-more-evidence";
         }
 
+        bool directExecutionAllowed =
+            policy.ApprovalMode == ApprovalMode.DirectAllowed ||
+            (policy.ApprovalMode == ApprovalMode.BreakGlassOnly && executionTier == ExecutionTier.BreakGlass);
+
         if (matchedFault is not null && executionMode == ExecutionMode.Execute &&
             mode == GuidedFixMode.OperatorScoped &&
             matchedFault.RemediationScope == RemediationScope.WriteCapable &&
-            policy.ApprovalMode == ApprovalMode.DirectAllowed &&
+            directExecutionAllowed &&
             executionTier is ExecutionTier.ExecuteLowerEnv or ExecutionTier.PromoteProd or ExecutionTier.BreakGlass)
         {
             return "execute-remediation";

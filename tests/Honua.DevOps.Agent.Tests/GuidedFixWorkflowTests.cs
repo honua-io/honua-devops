@@ -429,7 +429,9 @@ public class GuidedFixWorkflowTests
             "Deployment failed",
             "Database errors",
             "Something is wrong with the service",
-            "Performance is slow"
+            "Performance is slow",
+            "Service unhealthy",
+            "Latency increased"
         ];
 
         foreach (string input in ambiguousInputs)
@@ -437,11 +439,35 @@ public class GuidedFixWorkflowTests
             SupportTicket ticket = CreateTicket(symptoms: input, attachedEvidence: "");
             FaultMatch? match = GuidedFixPlanner.DiagnoseFromEvidence(ticket);
 
-            Assert.True(
-                match is null || match.MatchScore >= 15.0,
-                $"Ambiguous input '{input}' produced a low-confidence match: " +
-                $"{match?.ScenarioName} at {match?.MatchScore:F0}%");
+            Assert.True(match is null,
+                $"Generic symptom '{input}' should not match any scenario but matched: {match?.ScenarioName}");
         }
+    }
+
+    [Fact]
+    public void GuidedFixPlanner_BreakGlassOnlyReachesExecuteInBreakGlassTier()
+    {
+        SupportTicket ticket = CreateTicket(
+            allowedAccessMode: "operator-scoped",
+            symptoms: "Complete DB outage after secret rotation",
+            attachedEvidence: "FATAL: password authentication failed. Npgsql.PostgresException. connection refused");
+        OperatorPolicyModel bgPolicy = new(
+            ApprovalMode.BreakGlassOnly,
+            "audit://emergency",
+            new SupportSessionPolicy(SupportSessionAccess.OperatorScoped, 30, true),
+            BreakGlassPostActionReviewRequired: true);
+        BackendCallResult backend = CreateSuccessBackendResult();
+
+        GuidedFixResult result = GuidedFixPlanner.Build(
+            ticket,
+            bgPolicy,
+            ExecutionMode.Execute,
+            ExecutionTier.BreakGlass,
+            backend);
+
+        Assert.Equal(GuidedFixMode.OperatorScoped, result.Mode);
+        Assert.NotNull(result.MatchedFault);
+        Assert.Equal("execute-remediation", result.RecommendedNextAction);
     }
 
     [Fact]
