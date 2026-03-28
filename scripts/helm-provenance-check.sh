@@ -48,6 +48,10 @@ fi
 echo "[INFO] Running helm lint"
 helm lint "$chart_dir"
 
+echo "[INFO] Ensuring Helm dependency repositories are configured"
+helm repo add bitnami https://charts.bitnami.com/bitnami --force-update >/dev/null
+helm repo update >/dev/null
+
 echo "[INFO] Building chart dependencies"
 helm dependency build "$chart_dir" >/dev/null
 

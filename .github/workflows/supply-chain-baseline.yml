@@ -45,6 +45,7 @@ jobs:
           path: sbom.cdx.json
 
       - name: Attest SBOM Provenance
+        if: ${{ !github.event.repository.private || vars.ENABLE_GITHUB_ATTESTATIONS == 'true' }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: sbom.cdx.json
@@ -56,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy filesystem scan (HIGH/CRITICAL gate)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: fs
           format: sarif
