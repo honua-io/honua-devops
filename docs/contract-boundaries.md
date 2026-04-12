@@ -23,7 +23,7 @@ than building a local equivalent.
 
 | Surface | Contract Owner | Consumption Pattern | Status | Lockstep |
 | --- | --- | --- | --- | --- |
-| honua-server REST API | honua-server | BackendGateway HTTP to 16 admin/metrics/manifest/observability endpoints | Active | — |
+| honua-server REST API | honua-server | BackendGateway HTTP to 13 readiness/admin/metrics/manifest endpoints | Active | — |
 | honua-server packaging | honua-server | Docker images, Helm charts, image registries consumed by runtime adapters | Active | — |
 | honua-terraform modules | honua-terraform | Infra plan/apply for 6 targets (azure-functions, lambda, eks, aks, ecs, aca) | Active | — |
 | OTEL telemetry | OTEL standard | Log and metrics queries via BackendGateway | Active | — |
