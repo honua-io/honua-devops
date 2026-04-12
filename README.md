@@ -227,6 +227,7 @@ Onboarding helper:
 - Operator adoption packaging: `docs/operator-adoption-packaging.md`
 - Desired-state starter pack: `desired-state/README.md`
 - Desired-state scaffold helper: `docs/desired-state-scaffold.md`
+- Contract boundaries and consumption matrix: `docs/contract-boundaries.md`
 
 Validation:
 

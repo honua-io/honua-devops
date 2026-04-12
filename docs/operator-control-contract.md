@@ -33,6 +33,10 @@ The operator surface is intentionally split into distinct control zones:
 - Telemetry truth: OTEL and Honua metrics provide observed health, drift, and release evidence.
 - Approval layer: humans or policy gates decide whether proposed state can advance to execution.
 
+For the contract boundary between what `honua-devops` owns as private
+orchestration versus what it consumes from upstream standards (`geospatial-mcp`,
+`geospatial-grpc`, `honua-server`), see `docs/contract-boundaries.md`.
+
 ## Execution Model
 
 Two knobs govern behavior:
