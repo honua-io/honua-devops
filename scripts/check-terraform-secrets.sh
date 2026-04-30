@@ -89,6 +89,11 @@ case "$aws_stack" in
       required_vars+=(HONUA_AWS_SERVERLESS_PREVIOUS_IMAGE)
     fi
     ;;
+  *)
+    echo "[ERROR] Invalid HONUA_AWS_VALIDATION_STACK value: $aws_stack" >&2
+    echo "Allowed values: both, ecs, serverless" >&2
+    exit 2
+    ;;
 esac
 
 case "$azure_stack" in
@@ -109,6 +114,11 @@ case "$azure_stack" in
     if [[ "$run_upgrade_rollback" == "true" ]]; then
       required_vars+=(HONUA_FUNCTIONS_PREVIOUS_IMAGE)
     fi
+    ;;
+  *)
+    echo "[ERROR] Invalid HONUA_AZURE_VALIDATION_STACK value: $azure_stack" >&2
+    echo "Allowed values: both, aca, functions" >&2
+    exit 2
     ;;
 esac
 
