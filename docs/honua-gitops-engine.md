@@ -51,6 +51,28 @@ Per environment, the plan carries:
 - drift buckets for `infra`, `release`, and `service-state`
 - typed commands for the supported operations
 
+## State Machine Contract
+
+Each transition now exposes the explicit state boundary the operator is crossing:
+
+- `fromState`
+- `toState`
+- whether the transition mutates customer state
+- whether approval evidence is required
+- the required checks that must be attached before execution
+
+The baseline path is:
+
+`desired-revision -> planned -> diff-reviewed -> applied -> status-read -> drift-checked`
+
+Promotion and recovery paths extend that contract with:
+
+- `approval-requested -> approved -> promoted`
+- `reconciling -> paused -> reconciling`
+- `applied -> rolled-back`
+
+Plan-only responses keep the same transition shape, but mark mutating operations as non-mutating and render `sync` as `diff-reviewed -> sync-preview`. That lets agents reason over the same contract before and after write access is enabled.
+
 ## Actual-State Read Path
 
 The current implementation uses Honua manifest export as the first actual-state source.
@@ -79,6 +101,7 @@ The current repo implementation now:
 - exposes a dedicated `plan_gitops_engine` tool for snapshot-only engine planning
 - emits typed GitOps plan state from `deploy_service_gitops`
 - folds GitOps required evidence into the shared operation evidence bundle
+- exposes explicit from/to GitOps state transitions with mutation and approval flags
 - ties promotion/rollback semantics to release orchestration policy
 - ties service-state drift to `ServiceBundle` export/reconciliation semantics
 

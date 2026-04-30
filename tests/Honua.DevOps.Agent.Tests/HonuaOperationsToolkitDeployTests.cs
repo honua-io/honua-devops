@@ -269,6 +269,13 @@ public class HonuaOperationsToolkitDeployTests
         Assert.Contains(
             response.Actions,
             action => action.Contains("honua-gitops diff --service roads-api --env dev --revision release/2026.03", StringComparison.Ordinal));
+        var syncTransition = response.GitOpsPlan.StateTransitions.Single(transition =>
+            transition.Environment == "dev" && transition.Operation == "sync");
+        Assert.Equal("diff-reviewed", syncTransition.FromState);
+        Assert.Equal("sync-preview", syncTransition.ToState);
+        Assert.False(syncTransition.MutatesState);
+        Assert.False(syncTransition.RequiresApproval);
+        Assert.True(syncTransition.Enabled);
     }
 
     [Fact]
@@ -356,6 +363,13 @@ public class HonuaOperationsToolkitDeployTests
         Assert.Contains("approval-record", response.Evidence.RequiredChecks);
         Assert.Equal("prod-promotion-gated", response.GitOpsPlan!.GateStatus);
         Assert.Contains(response.GitOpsPlan.Environments, environment => environment.Environment == "prod" && environment.GateStatus == "promotion-approval");
+        var promoteTransition = response.GitOpsPlan.StateTransitions.Single(transition =>
+            transition.Environment == "prod" && transition.Operation == "promote");
+        Assert.Equal("approved", promoteTransition.FromState);
+        Assert.Equal("promoted", promoteTransition.ToState);
+        Assert.True(promoteTransition.MutatesState);
+        Assert.True(promoteTransition.RequiresApproval);
+        Assert.True(promoteTransition.Enabled);
         Assert.Contains(response.ReleaseOrchestration!.Stages, stage => stage.Kind == ReleaseStageKind.Promote);
         Assert.Equal("promotion-approval", response.ReleaseOrchestration.PromotionPolicy.Gate);
         Assert.Contains(response.ServiceBundleReconciliation!.Operations, operation => operation.Surface == "connections");
