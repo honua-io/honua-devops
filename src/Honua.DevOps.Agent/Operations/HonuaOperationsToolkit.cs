@@ -719,7 +719,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         string normalizedTicketId = SanitizePayloadValue(ticketId, "ticket ID");
         SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
         string normalizedEnvironment = Normalize(environment, "unknown");
-        string normalizedSymptoms = SanitizeFreeText(symptoms, "not provided");
+        string normalizedSymptoms = SanitizeFreeText(symptoms, string.Empty);
         string normalizedRequestedAction = SanitizeFreeText(requestedAction, "diagnose");
         string normalizedAccessMode = Normalize(allowedAccessMode, "read-only");
         int effectiveTtl = ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes;

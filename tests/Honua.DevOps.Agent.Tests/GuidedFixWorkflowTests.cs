@@ -151,6 +151,30 @@ public class GuidedFixWorkflowTests
     }
 
     [Fact]
+    public async Task TriageSupportTicketAsync_PreservesEmptySymptomsForMissingEvidence()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway);
+
+        OperationResponse response = await toolkit.TriageSupportTicketAsync(
+            ticketId: "TICKET-NO-SYMPTOMS",
+            severity: "medium",
+            environment: "prod",
+            symptoms: "",
+            requestedAction: "diagnose",
+            allowedAccessMode: "read-only",
+            ttlMinutes: 30,
+            rollbackExpected: false,
+            attachedEvidence: "",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Contains(response.Findings, finding =>
+            finding.Contains("Symptom description is empty", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, finding =>
+            finding.Contains("Recommended next action: request-more-evidence", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task TriageSupportTicketAsync_RejectsInvalidSeverity()
     {
         using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
