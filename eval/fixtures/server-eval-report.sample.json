@@ -1,0 +1,136 @@
+{
+  "reportSchemaVersion": "1",
+  "generatedAt": "2026-04-25T23:18:51.6463014+00:00",
+  "environment": {
+    "corpusVersion": "seed.yaml@v1",
+    "corpusSource": "local-seed",
+    "redisAvailable": false
+  },
+  "scenarios": [
+    {
+      "id": "analysis-buffer-places",
+      "name": "Buffer places and summarize overlap",
+      "mode": "Analysis",
+      "status": "PassedWithSkips",
+      "stages": [
+        {
+          "stage": "CaptureIntent",
+          "status": "Passed",
+          "elapsedMs": 0
+        },
+        {
+          "stage": "CompilePlan",
+          "status": "Passed",
+          "elapsedMs": 0
+        },
+        {
+          "stage": "ValidatePlan",
+          "status": "Passed",
+          "elapsedMs": 5
+        },
+        {
+          "stage": "DryRun",
+          "status": "Passed",
+          "elapsedMs": 4
+        },
+        {
+          "stage": "ProtocolParity",
+          "status": "Skipped",
+          "reason": "one-or-more-probes-skipped",
+          "elapsedMs": 12
+        }
+      ],
+      "protocolParity": {
+        "status": "Skipped",
+        "reason": "one-or-more-probes-skipped"
+      },
+      "elapsedMs": 21
+    },
+    {
+      "id": "publish-refresh-roads",
+      "name": "Refresh the 'roads' publication with updated features",
+      "mode": "Publish",
+      "status": "PassedWithSkips",
+      "stages": [
+        {
+          "stage": "CaptureIntent",
+          "status": "Passed",
+          "elapsedMs": 0
+        },
+        {
+          "stage": "CompilePlan",
+          "status": "Passed",
+          "elapsedMs": 0
+        },
+        {
+          "stage": "ValidatePlan",
+          "status": "Passed",
+          "elapsedMs": 5
+        },
+        {
+          "stage": "DryRun",
+          "status": "Passed",
+          "elapsedMs": 5
+        },
+        {
+          "stage": "ProtocolParity",
+          "status": "Skipped",
+          "reason": "one-or-more-probes-skipped",
+          "elapsedMs": 14
+        }
+      ],
+      "protocolParity": {
+        "status": "Skipped",
+        "reason": "one-or-more-probes-skipped"
+      },
+      "elapsedMs": 30
+    },
+    {
+      "id": "package-map-tsunami",
+      "name": "Package a tsunami-evacuation operations map",
+      "mode": "Package",
+      "status": "PassedWithSkips",
+      "stages": [
+        {
+          "stage": "CaptureIntent",
+          "status": "Passed",
+          "elapsedMs": 0
+        },
+        {
+          "stage": "CompilePlan",
+          "status": "Passed",
+          "elapsedMs": 0
+        },
+        {
+          "stage": "ValidatePlan",
+          "status": "Passed",
+          "elapsedMs": 5
+        },
+        {
+          "stage": "DryRun",
+          "status": "Passed",
+          "elapsedMs": 3
+        },
+        {
+          "stage": "ComposeMapPackage",
+          "status": "Skipped",
+          "reason": "map-package-surface-pending",
+          "elapsedMs": 0
+        }
+      ],
+      "protocolParity": {
+        "status": "Skipped",
+        "reason": "one-or-more-probes-skipped"
+      },
+      "elapsedMs": 29
+    }
+  ],
+  "rollup": {
+    "total": 3,
+    "passed": 0,
+    "failed": 0,
+    "passedWithSkips": 3,
+    "firstFailure": null,
+    "totalElapsedMs": 80
+  }
+}

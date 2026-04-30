@@ -1,0 +1,22 @@
+{
+  "id": "publish-refresh-roads",
+  "name": "Refresh the 'roads' publication with updated features",
+  "mode": "Publish",
+  "fixtureProfile": "ogc",
+  "intent": {
+    "intentId": "intent-publish-refresh-roads",
+    "goal": "Re-simplify the roads layer and republish the canonical layer.",
+    "mode": "publish",
+    "requestedOutputs": ["FeatureLayer"],
+    "inputs": ["roads"],
+    "assumptionPolicy": "UseDefaults"
+  },
+  "expectedOutcome": {
+    "isExecutable": true,
+    "requiresApproval": false,
+    "estimatedArtifactKinds": ["FeatureLayer"],
+    "terminalWorkflowStatus": "Completed",
+    "expectsMapPackage": false,
+    "expectsAppPackage": false
+  }
+}
