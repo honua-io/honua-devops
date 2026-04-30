@@ -34,6 +34,7 @@ open-core runtime promise.
 - Log analysis and root-cause guidance (via OTEL endpoints)
 - Metrics analysis and performance tuning plans (via OTEL + Honua API)
 - Troubleshooting and optimization workflows (via Honua API)
+- Honua support ticket triage through `honua-support` (`process_pending_tickets`)
 - Server upgrade planning with rollback gates (via Honua API)
 - GitOps-driven multi-environment deployment planning (Honua-native GitOps; see `honua-server` #351/#363)
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
@@ -80,11 +81,18 @@ Primary operational backends:
 
 - Honua API (`HONUA_DEVOPS_HONUA_API_BASE_URL`)
 - OTEL endpoints (`HONUA_DEVOPS_OTEL_BASE_URL`)
+- Honua support API (`HONUA_DEVOPS_SUPPORT_API_BASE_URL`, optional)
 
 Optional auth:
 
 - `HONUA_DEVOPS_HONUA_API_KEY` (sent as `X-API-Key` for Honua admin/metrics contracts)
 - `HONUA_DEVOPS_OTEL_API_KEY` (sent as `Authorization: Bearer ...` for OTEL queries)
+
+Support ticket integration:
+
+- `HONUA_DEVOPS_SUPPORT_API_BASE_URL` enables `process_pending_tickets`
+- `HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH` defaults to `/api/v1/tickets`
+- Diagnosis posts include guided-fix output plus `OperationEvidence` and `DiagnosisScorecard` payloads for ticket audit and score tracking.
 
 Health probes:
 
@@ -206,6 +214,7 @@ Onboarding helper:
 - Deploy planning now also emits a typed in-repo `honua-gitops` engine plan with per-environment diff, drift, gate state, and supported operation transitions.
 - Operator policy is now explicit in runtime output and evidence: approval mode, audit hook target, support-session posture, and break-glass post-review requirements.
 - The Azure-first operator host now has a typed orchestration planner and `plan_azure_operator_workflow` tool that maps analyze, publish, build, and deploy workflows to MCP/gRPC/honua-server contract responsibilities without redefining those surfaces.
+- Honua support ticket processing now wires `honua-support` into the runtime toolset and posts diagnosis evidence/scorecards back to ticket records.
 
 ## DevOps Delivery Artifacts
 
@@ -226,6 +235,7 @@ Onboarding helper:
 - ServiceBundle reconciliation: `docs/service-bundle-reconciliation.md`
 - Operator policy and delegated ops: `docs/operator-policy-and-delegated-ops.md`
 - Operator adoption packaging: `docs/operator-adoption-packaging.md`
+- Guided-fix workflow: `docs/guided-fix-workflow.md`
 - Desired-state starter pack: `desired-state/README.md`
 - Desired-state scaffold helper: `docs/desired-state-scaffold.md`
 - Contract boundaries and consumption matrix: `docs/contract-boundaries.md`
