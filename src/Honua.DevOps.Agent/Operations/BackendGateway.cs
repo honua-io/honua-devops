@@ -70,16 +70,21 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         string businessImpact,
         CancellationToken cancellationToken)
     {
-        _ = incidentSummary;
-        _ = suspectedComponent;
-        _ = businessImpact;
         string operation =
             $"troubleshoot:{NormalizeResourceToken(service, "service")}:{NormalizeResourceToken(environment, "env")}";
+        (string Name, string Value)[] queryContext =
+        [
+            ("service", service),
+            ("environment", environment),
+            ("incidentSummary", incidentSummary),
+            ("suspectedComponent", suspectedComponent),
+            ("businessImpact", businessImpact)
+        ];
         BackendCallResult[] calls =
         [
-            await GetFromHonuaAsync(configuration.HonuaAdminErrorsPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsHealthPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsPerformancePath, cancellationToken)
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaAdminErrorsPath, queryContext), cancellationToken),
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsHealthPath, queryContext), cancellationToken),
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken)
         ];
 
         return CombineResults(operation, calls);
@@ -93,18 +98,23 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         string targetSlo,
         CancellationToken cancellationToken)
     {
-        _ = workloadProfile;
-        _ = bottleneck;
-        _ = targetSlo;
         string operation =
             $"tune:{NormalizeResourceToken(service, "service")}:{NormalizeResourceToken(environment, "env")}";
+        (string Name, string Value)[] queryContext =
+        [
+            ("service", service),
+            ("environment", environment),
+            ("workloadProfile", workloadProfile),
+            ("bottleneck", bottleneck),
+            ("targetSlo", targetSlo)
+        ];
         BackendCallResult[] calls =
         [
-            await GetFromHonuaAsync(configuration.HonuaMetricsPerformancePath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsDatabasePath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsCachePath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsMemoryPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaQueryCacheStatisticsPath, cancellationToken)
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken),
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsDatabasePath, queryContext), cancellationToken),
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsCachePath, queryContext), cancellationToken),
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsMemoryPath, queryContext), cancellationToken),
+            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaQueryCacheStatisticsPath, queryContext), cancellationToken)
         ];
 
         return CombineResults(operation, calls);
@@ -551,6 +561,28 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
 
         string normalized = builder.ToString().Trim('-');
         return string.IsNullOrWhiteSpace(normalized) ? fallback : normalized;
+    }
+
+    private static string AddQueryParameters(string relativePath, params (string Name, string Value)[] parameters)
+    {
+        StringBuilder builder = new(relativePath);
+        string separator = relativePath.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        foreach ((string name, string value) in parameters)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            builder
+                .Append(separator)
+                .Append(Uri.EscapeDataString(name))
+                .Append('=')
+                .Append(Uri.EscapeDataString(value.Trim()));
+            separator = "&";
+        }
+
+        return builder.ToString();
     }
 
     internal static Uri BuildEndpoint(Uri baseUri, string relativePath)

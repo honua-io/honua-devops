@@ -68,6 +68,66 @@ public class BackendGatewayTests
     }
 
     [Fact]
+    public async Task RequestTroubleshootAsync_PropagatesIncidentContextToHonuaRequests()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        BackendCallResult result = await gateway.RequestTroubleshootAsync(
+            service: "roads-api",
+            environment: "prod",
+            incidentSummary: "timeouts on export",
+            suspectedComponent: "database pool",
+            businessImpact: "degraded checkout",
+            cancellationToken: CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(3, handler.CapturedRequests.Count);
+        Assert.All(handler.CapturedRequests, request =>
+        {
+            Assert.Contains("service=roads-api", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("environment=prod", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("incidentSummary=timeouts%20on%20export", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("suspectedComponent=database%20pool", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("businessImpact=degraded%20checkout", request.Uri, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public async Task RequestTuneAsync_PropagatesTuningContextToHonuaRequests()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        BackendCallResult result = await gateway.RequestTuneAsync(
+            service: "roads-api",
+            environment: "staging",
+            workloadProfile: "batch imports",
+            bottleneck: "cache miss storm",
+            targetSlo: "p95 < 250ms",
+            cancellationToken: CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(5, handler.CapturedRequests.Count);
+        Assert.All(handler.CapturedRequests, request =>
+        {
+            Assert.Contains("service=roads-api", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("environment=staging", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("workloadProfile=batch%20imports", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("bottleneck=cache%20miss%20storm", request.Uri, StringComparison.Ordinal);
+            Assert.Contains("targetSlo=p95%20%3C%20250ms", request.Uri, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public async Task ProbeOtelAsync_TruncatesResponsePreview()
     {
         string largeBody = new('x', 1200);

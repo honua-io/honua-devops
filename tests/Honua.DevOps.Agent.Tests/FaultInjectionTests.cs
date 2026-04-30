@@ -387,10 +387,22 @@ public class FaultInjectionTests
     public void FaultInjectionReport_FullCycleSucceeded_TrueWhenBothSucceed()
     {
         FaultInjectionResult inject = new(true, "FAULT-001", FaultInjectionAction.Inject, "ok", TimeSpan.FromSeconds(1), []);
+        FaultInjectionResult verifyInjected = new(true, "FAULT-001", FaultInjectionAction.VerifyInjected, "active", TimeSpan.FromSeconds(1), []);
+        FaultInjectionResult restore = new(true, "FAULT-001", FaultInjectionAction.Restore, "ok", TimeSpan.FromSeconds(1), []);
+        FaultInjectionResult verifyRestored = new(true, "FAULT-001", FaultInjectionAction.VerifyRestored, "restored", TimeSpan.FromSeconds(1), []);
+
+        FaultInjectionReport report = new("FAULT-001", inject, verifyInjected, null, restore, verifyRestored, TimeSpan.FromSeconds(5));
+        Assert.True(report.FullCycleSucceeded);
+    }
+
+    [Fact]
+    public void FaultInjectionReport_FullCycleSucceeded_FalseWhenVerificationIsMissing()
+    {
+        FaultInjectionResult inject = new(true, "FAULT-001", FaultInjectionAction.Inject, "ok", TimeSpan.FromSeconds(1), []);
         FaultInjectionResult restore = new(true, "FAULT-001", FaultInjectionAction.Restore, "ok", TimeSpan.FromSeconds(1), []);
 
         FaultInjectionReport report = new("FAULT-001", inject, null, null, restore, null, TimeSpan.FromSeconds(5));
-        Assert.True(report.FullCycleSucceeded);
+        Assert.False(report.FullCycleSucceeded);
     }
 
     [Fact]
@@ -410,6 +422,44 @@ public class FaultInjectionTests
         FaultInjectionResult restore = new(false, "FAULT-001", FaultInjectionAction.Restore, "failed", TimeSpan.FromSeconds(1), []);
 
         FaultInjectionReport report = new("FAULT-001", inject, null, null, restore, null, TimeSpan.FromSeconds(5));
+        Assert.False(report.FullCycleSucceeded);
+    }
+
+    [Fact]
+    public async Task FaultInjectionOrchestrator_FailsFullCycleWhenInjectionVerificationFails()
+    {
+        FakeFaultInjector injector = new(
+            injectSuccess: true,
+            verifyInjectedSuccess: false,
+            restoreSuccess: true,
+            verifyRestoredSuccess: true);
+        FaultInjectionOrchestrator orchestrator = new(injector);
+
+        FaultInjectionReport report = await orchestrator.ExecuteFullCycleAsync(CreateValidContext());
+
+        Assert.True(report.InjectionResult.Success);
+        Assert.NotNull(report.InjectionVerification);
+        Assert.False(report.InjectionVerification!.Success);
+        Assert.True(report.RestorationResult.Success);
+        Assert.True(report.RestorationVerification!.Success);
+        Assert.False(report.FullCycleSucceeded);
+    }
+
+    [Fact]
+    public async Task FaultInjectionOrchestrator_FailsFullCycleWhenRestorationVerificationFails()
+    {
+        FakeFaultInjector injector = new(
+            injectSuccess: true,
+            verifyInjectedSuccess: true,
+            restoreSuccess: true,
+            verifyRestoredSuccess: false);
+        FaultInjectionOrchestrator orchestrator = new(injector);
+
+        FaultInjectionReport report = await orchestrator.ExecuteFullCycleAsync(CreateValidContext());
+
+        Assert.True(report.InjectionVerification!.Success);
+        Assert.True(report.RestorationResult.Success);
+        Assert.False(report.RestorationVerification!.Success);
         Assert.False(report.FullCycleSucceeded);
     }
 
@@ -436,5 +486,49 @@ public class FaultInjectionTests
         string scriptsRoot = Path.Combine(repoRoot, "scripts", "fault-injection");
         Assert.True(Directory.Exists(scriptsRoot), $"Fault-injection scripts root not found: `{scriptsRoot}`.");
         return scriptsRoot;
+    }
+
+    private sealed class FakeFaultInjector(
+        bool injectSuccess,
+        bool verifyInjectedSuccess,
+        bool restoreSuccess,
+        bool verifyRestoredSuccess) : IFaultInjector
+    {
+        public string ScenarioId => "FAULT-TEST";
+
+        public string TargetCloud => "test";
+
+        public FaultInjectorStatus Status => FaultInjectorStatus.Ready;
+
+        public Task<FaultInjectionResult> InjectAsync(FaultInjectionContext context, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Result(FaultInjectionAction.Inject, injectSuccess));
+        }
+
+        public Task<FaultInjectionResult> RestoreAsync(FaultInjectionContext context, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Result(FaultInjectionAction.Restore, restoreSuccess));
+        }
+
+        public Task<FaultInjectionResult> VerifyInjectedAsync(FaultInjectionContext context, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Result(FaultInjectionAction.VerifyInjected, verifyInjectedSuccess));
+        }
+
+        public Task<FaultInjectionResult> VerifyRestoredAsync(FaultInjectionContext context, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Result(FaultInjectionAction.VerifyRestored, verifyRestoredSuccess));
+        }
+
+        private static FaultInjectionResult Result(FaultInjectionAction action, bool success)
+        {
+            return new FaultInjectionResult(
+                success,
+                "FAULT-TEST",
+                action,
+                success ? "ok" : "failed verification",
+                TimeSpan.FromMilliseconds(1),
+                []);
+        }
     }
 }

@@ -16,7 +16,7 @@ internal sealed class TestHttpMessageHandler(Func<HttpRequestMessage, HttpRespon
 
         CapturedRequests.Add(new CapturedRequest(
             request.Method.Method,
-            request.RequestUri?.ToString() ?? string.Empty,
+            request.RequestUri?.AbsoluteUri ?? string.Empty,
             body));
 
         return responder(request);

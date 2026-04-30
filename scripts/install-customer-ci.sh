@@ -383,6 +383,48 @@ set_secret_if_present() {
   echo "Set repo secret: \$name"
 }
 
+load_dotenv_file() {
+  local env_path="\$1"
+  local line key value
+
+  while IFS= read -r line || [[ -n "\$line" ]]; do
+    line="\${line%\$'\\r'}"
+    line="\${line#"\${line%%[![:space:]]*}"}"
+
+    if [[ -z "\$line" || "\$line" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "\$line" == export[[:space:]]* ]]; then
+      line="\${line#export}"
+      line="\${line#"\${line%%[![:space:]]*}"}"
+    fi
+
+    if [[ "\$line" != *=* ]]; then
+      echo "[WARN] skipped dotenv line without assignment in \$env_path" >&2
+      continue
+    fi
+
+    key="\${line%%=*}"
+    value="\${line#*=}"
+    key="\${key//[[:space:]]/}"
+    value="\${value#"\${value%%[![:space:]]*}"}"
+
+    if [[ ! "\$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "[WARN] skipped invalid dotenv key in \$env_path: \$key" >&2
+      continue
+    fi
+
+    if [[ "\$value" == \"*\" && "\$value" == *\" ]]; then
+      value="\${value:1:\${#value}-2}"
+    elif [[ "\$value" == \'*\' && "\$value" == *\' ]]; then
+      value="\${value:1:\${#value}-2}"
+    fi
+
+    export "\$key=\$value"
+  done < "\$env_path"
+}
+
 while [[ \$# -gt 0 ]]; do
   case "\$1" in
     --repo)
@@ -408,15 +450,9 @@ done
 require_command gh
 
 if [[ -f "\$REPO_ROOT/.env.local" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "\$REPO_ROOT/.env.local"
-  set +a
+  load_dotenv_file "\$REPO_ROOT/.env.local"
 elif [[ -f "\$REPO_ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "\$REPO_ROOT/.env"
-  set +a
+  load_dotenv_file "\$REPO_ROOT/.env"
 fi
 
 set_variable HONUA_DEVOPS_PROVIDER "\${HONUA_DEVOPS_PROVIDER:-$PROVIDER}"
@@ -439,8 +475,8 @@ set_secret_if_present HONUA_DEVOPS_OTEL_API_KEY "\${HONUA_DEVOPS_OTEL_API_KEY:-}
 set_secret_if_present HONUA_DEVOPS_CODEX_API_KEY "\${HONUA_DEVOPS_CODEX_API_KEY:-}"
 set_secret_if_present HONUA_DEVOPS_CLAUDE_API_KEY "\${HONUA_DEVOPS_CLAUDE_API_KEY:-}"
 
-echo "[WARN] configure HONUA_DEVOPS_OPERATOR_GIT_TOKEN if \`$HONUA_DEVOPS_REPOSITORY\` is private." >&2
-echo "[WARN] configure HONUA_DEVOPS_TERRAFORM_GIT_TOKEN if \`$TERRAFORM_REPOSITORY\` requires authenticated clone in Actions." >&2
+echo "[WARN] configure HONUA_DEVOPS_OPERATOR_GIT_TOKEN if $HONUA_DEVOPS_REPOSITORY is private." >&2
+echo "[WARN] configure HONUA_DEVOPS_TERRAFORM_GIT_TOKEN if $TERRAFORM_REPOSITORY requires authenticated clone in Actions." >&2
 EOF
 
 chmod +x "$CONFIG_SCRIPT_PATH"

@@ -767,6 +767,577 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             OrchestrationHost: plan));
     }
 
+    [Description("Plan the full GitOps platform story: repo watching, promotion, drift alerting, CI/CD previews, rollback, and audit evidence.")]
+    public Task<OperationResponse> PlanGitOpsPlatformAsync(
+        string configRepository,
+        string branch,
+        string service,
+        string environmentsCsv,
+        string syncMode,
+        string alertTargetsCsv,
+        string commitSha,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string normalizedRepository = SanitizePayloadValue(configRepository, "config repository");
+        string normalizedBranch = ValidateRevision(Normalize(branch, "main"), "branch");
+        string normalizedService = ValidateServiceName(service);
+        string[] targetEnvironments = ParseEnvironments(environmentsCsv);
+        string normalizedSyncMode = Normalize(syncMode, "webhook").ToLowerInvariant() switch
+        {
+            "webhook" => "webhook",
+            "polling" => "polling",
+            "hybrid" => "hybrid",
+            "webhook+polling" => "hybrid",
+            _ => "webhook"
+        };
+        string[] alertTargets = SplitCsv(alertTargetsCsv, "slack");
+        string normalizedCommitSha = ValidateRevision(Normalize(commitSha, "HEAD"), "commit SHA");
+        string promotionPath = string.Join(" -> ", targetEnvironments);
+        bool productionPromotion = targetEnvironments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        string gate = productionPromotion ? "promotion-approval" : "lower-env-validation";
+        string[] supportedKinds =
+        [
+            "Connection",
+            "ServiceBundle",
+            "Layer",
+            "Style",
+            "ImportJob",
+            "GeoProcessingPipeline",
+            "EtlPipeline",
+            "RoleDefinition",
+            "RateLimitPolicy",
+            "TenantConfig",
+            "ExecutionPolicy",
+            "Promotion"
+        ];
+
+        List<string> actions =
+        [
+            $"Configure `{normalizedRepository}` branch `{normalizedBranch}` as the desired-state source for `{normalizedService}`.",
+            normalizedSyncMode == "polling"
+                ? "Enable polling sync with durable last-seen commit tracking."
+                : normalizedSyncMode == "hybrid"
+                    ? "Enable webhook sync and retain polling as a missed-event backstop."
+                    : "Enable webhook sync on merge to the watched branch.",
+            $"Run `honua apply -f desired-state --dry-run --commit {normalizedCommitSha}` for PR previews before merge.",
+            $"Promote through `{promotionPath}` with health checks, smoke tests, and manual approval before gated environments.",
+            $"Publish drift alerts to {string.Join(", ", alertTargets)} and include visual diff evidence in the admin review path.",
+            "Use rollback by commit SHA: `honua rollback --to <known-good-commit>`.",
+            "Record apply, promote, rollback, and reconcile events to the audit trail with actor, commit, diff summary, and evidence links."
+        ];
+        actions.AddRange(BuildOperatorPolicyActions());
+
+        return Task.FromResult(new OperationResponse(
+            Status: "gitops-platform-ready",
+            Summary: $"GitOps platform plan for `{normalizedService}` from `{normalizedRepository}` at `{normalizedBranch}`.",
+            Findings:
+            [
+                $"Declarative resource kinds: {string.Join(", ", supportedKinds)}.",
+                "Schema contract: versioned apiVersion/kind manifests with YAML or JSON input.",
+                $"Repository watcher: {normalizedSyncMode}; deployed commit: {normalizedCommitSha}.",
+                $"Promotion path: {promotionPath}; gate: {gate}.",
+                "Drift model: runtime export compared with declared manifests, with optional remediation through approved sync.",
+                "CI/CD integration: GitHub Actions and GitLab templates produce dry-run diffs, PR comments, and rollback evidence."
+            ],
+            Actions: actions,
+            ValidationChecks:
+            [
+                "Manifest schema validation passes for every resource before apply.",
+                "Dry-run diff is attached to the PR before merge.",
+                "Commit SHA is recorded on every sync and shown in status output.",
+                "Each promotion gate has health, smoke, and approval evidence.",
+                "Drift alerts include target environment, declared commit, actual revision, and diff summary.",
+                "Rollback drills can restore a known-good commit without manual manifest surgery."
+            ],
+            Risks:
+            [
+                "Webhook-only sync can miss events without replay or polling backstop.",
+                "Environment overrides can hide drift if they are not part of the declared state contract.",
+                "Auto-remediation must stay approval-gated for production drift."
+            ],
+            Evidence: BuildPlannerEvidence(
+                $"gitops-platform:{normalizedService}",
+                "plan-gitops-platform",
+                targetEnvironments,
+                normalizedCommitSha,
+                "gitops-platform-contract",
+                gate,
+                $"repo={normalizedRepository}; branch={normalizedBranch}; sync={normalizedSyncMode}")));
+    }
+
+    [Description("Run edition-aware read-only diagnostics over Honua health, metrics, and error telemetry.")]
+    public async Task<OperationResponse> HonuaDiagnoseAsync(
+        string service,
+        string environment,
+        string timeframe,
+        string symptoms,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedService = ValidateServiceName(service);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        string normalizedSymptoms = SanitizeFreeText(symptoms, "health check requested");
+        string normalizedEdition = NormalizeEdition(edition);
+        BackendCallResult backendResult = await gateway.RequestTroubleshootAsync(
+            normalizedService,
+            normalizedEnvironment,
+            normalizedSymptoms,
+            "health-diagnostics",
+            $"timeframe:{Normalize(timeframe, "recent window")}; edition:{normalizedEdition}",
+            cancellationToken);
+
+        return new OperationResponse(
+            Status: backendResult.IsSuccess ? "diagnosis-ready" : "backend-error",
+            Summary: $"Health diagnosis for `{normalizedService}` in `{normalizedEnvironment}` ({normalizedEdition}).",
+            Findings:
+            [
+                $"Honua API endpoint: {backendResult.Endpoint}",
+                $"Backend result: {backendResult.Detail}",
+                $"Response excerpt: {backendResult.PayloadPreview}",
+                $"Symptoms: {normalizedSymptoms}.",
+                "Community edition allows read-only health diagnostics; write-capable actions remain gated."
+            ],
+            Actions:
+            [
+                "Check readiness, error telemetry, and latency in the same incident window.",
+                "Classify the likely failure domain before proposing remediation.",
+                "Escalate to Pro or Enterprise tools only when diagnostics require tuning, migration, runbook, or remediation actions."
+            ],
+            ValidationChecks:
+            [
+                "Health endpoint returns a stable success response.",
+                "Error rate and P95 latency are below the active SLO threshold."
+            ],
+            Risks:
+            [
+                "Read-only diagnostics can miss root cause when telemetry is incomplete.",
+                "Symptoms without timeframe or affected route can produce broad findings."
+            ],
+            Evidence: BuildPlannerEvidence(
+                $"ai-devops:diagnose:{normalizedService}",
+                "honua_diagnose",
+                [normalizedEnvironment],
+                null,
+                "read-only-diagnostics",
+                "edition-community",
+                backendResult.PayloadPreview,
+                backendResult.Endpoint,
+                backendResult.Detail));
+    }
+
+    [Description("Explain slow query signatures and identify spatial, cache, and pool bottlenecks.")]
+    public async Task<OperationResponse> ExplainSlowQueriesAsync(
+        string service,
+        string environment,
+        string timeframe,
+        string slowQuerySample,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedEdition = NormalizeEdition(edition);
+        if (!EditionAtLeast(normalizedEdition, "pro"))
+        {
+            return BuildEditionGateResponse("honua_explain_slow_queries", normalizedEdition, "pro");
+        }
+
+        string normalizedService = ValidateServiceName(service);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        string sample = SanitizeFreeText(slowQuerySample, "no sample provided");
+        BackendCallResult backendResult = await gateway.QueryLogsAsync(
+            normalizedService,
+            normalizedEnvironment,
+            timeframe,
+            "slow-query-analysis",
+            sample,
+            cancellationToken);
+
+        List<string> findings =
+        [
+            $"OTEL logs endpoint: {backendResult.Endpoint}",
+            $"Backend result: {backendResult.Detail}",
+            $"Response excerpt: {backendResult.PayloadPreview}"
+        ];
+        if (Contains(sample, "seq scan", "full scan"))
+            findings.Add("Sequential scan indicators suggest missing attribute or spatial selectivity.");
+        if (Contains(sample, "st_intersects", "bbox", "geometry"))
+            findings.Add("Spatial predicate present; verify spatial index coverage and bounding-box prefiltering.");
+        if (Contains(sample, "cache miss", "miss ratio"))
+            findings.Add("Cache miss indicators suggest TTL, key cardinality, or seeding review.");
+
+        return new OperationResponse(
+            Status: backendResult.IsSuccess ? "slow-query-explained" : "backend-error",
+            Summary: $"Slow query analysis for `{normalizedService}` in `{normalizedEnvironment}`.",
+            Findings: findings,
+            Actions:
+            [
+                "Compare slow query predicates against available spatial and attribute indexes.",
+                "Add bounding-box prefilters before expensive geometry predicates when possible.",
+                "Tune cache TTL and seeding only after query shape and index coverage are validated."
+            ],
+            ValidationChecks:
+            [
+                "Explain plan uses the expected spatial or compound index.",
+                "P95 query latency improves under representative load."
+            ],
+            Risks:
+            [
+                "Index recommendations based on a single query can hurt write-heavy workloads.",
+                "Cache tuning without query fixes can hide persistent database pressure."
+            ]);
+    }
+
+    [Description("Recommend spatial and attribute indexes for a service layer with edition gating.")]
+    public Task<OperationResponse> RecommendIndexesAsync(
+        string service,
+        string layer,
+        string queryPattern,
+        string currentIndexes,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string normalizedEdition = NormalizeEdition(edition);
+        if (!EditionAtLeast(normalizedEdition, "pro"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("honua_recommend_indexes", normalizedEdition, "pro"));
+        }
+
+        string normalizedService = ValidateServiceName(service);
+        string normalizedLayer = SanitizePayloadValue(layer, "layer");
+        string pattern = SanitizeFreeText(queryPattern, "not provided");
+        string indexes = SanitizeFreeText(currentIndexes, "none provided");
+        List<string> recommendations =
+        [
+            Contains(pattern, "bbox", "intersects", "within", "geometry")
+                ? "Add or verify spatial index coverage for the geometry column used by the primary map/filter predicate."
+                : "Confirm whether the layer needs a spatial index before adding write-cost overhead.",
+            Contains(pattern, "where", "tenant", "status", "category", "date")
+                ? "Add a selective compound attribute index matching tenant/filter/sort order."
+                : "Capture representative filters before adding attribute indexes.",
+            "Measure write amplification and maintenance cost before promoting indexes to production."
+        ];
+
+        return Task.FromResult(new OperationResponse(
+            Status: "index-plan-ready",
+            Summary: $"Index recommendation plan for `{normalizedService}` layer `{normalizedLayer}`.",
+            Findings:
+            [
+                $"Query pattern: {pattern}.",
+                $"Current indexes: {indexes}.",
+                $"Edition: {normalizedEdition}; required: pro."
+            ],
+            Actions: recommendations,
+            ValidationChecks:
+            [
+                "Explain plan selects the expected index for the slow query sample.",
+                "Index build completes in lower environment within the maintenance budget.",
+                "P95 latency improves without unacceptable ingest/write regression."
+            ],
+            Risks:
+            [
+                "Low-cardinality indexes can increase planner noise without improving latency.",
+                "Production index builds can compete with ingest and tile generation workloads."
+            ]));
+    }
+
+    [Description("Forecast capacity from current traffic, growth, and utilization signals.")]
+    public Task<OperationResponse> CapacityForecastAsync(
+        string service,
+        string environment,
+        string metricWindow,
+        double currentDailyRequests,
+        double growthRatePercent,
+        int currentNodes,
+        double cpuUtilizationPercent,
+        double memoryUtilizationPercent,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string normalizedEdition = NormalizeEdition(edition);
+        if (!EditionAtLeast(normalizedEdition, "pro"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("honua_capacity_forecast", normalizedEdition, "pro"));
+        }
+
+        string normalizedService = ValidateServiceName(service);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        int safeNodes = Math.Max(1, currentNodes);
+        double utilization = Math.Clamp(Math.Max(cpuUtilizationPercent, memoryUtilizationPercent) / 100.0, 0.01, 5.0);
+        double growth = Math.Max(0.0, growthRatePercent) / 100.0;
+        double projectedRequests30 = currentDailyRequests * Math.Pow(1 + growth, 30);
+        double daysToScale = growth <= 0 || utilization >= 0.8
+            ? 0
+            : Math.Log(0.8 / utilization) / Math.Log(1 + growth);
+        int recommendedNodes = utilization >= 0.7 || daysToScale <= 60
+            ? safeNodes + 1
+            : safeNodes;
+
+        return Task.FromResult(new OperationResponse(
+            Status: "capacity-forecast-ready",
+            Summary: $"Capacity forecast for `{normalizedService}` in `{normalizedEnvironment}` over `{Normalize(metricWindow, "recent window")}`.",
+            Findings:
+            [
+                $"Current daily requests: {currentDailyRequests:0}.",
+                $"Projected daily requests in 30 days: {projectedRequests30:0}.",
+                $"Current nodes: {safeNodes}; recommended nodes: {recommendedNodes}.",
+                $"Peak utilization signal: {utilization:P0}; days until 80% pressure: {(daysToScale <= 0 ? "now" : daysToScale.ToString("0"))}."
+            ],
+            Actions:
+            [
+                recommendedNodes > safeNodes
+                    ? $"Prepare scale-out from {safeNodes} to {recommendedNodes} node(s) before the next promotion gate."
+                    : "Retain current node count and continue trend monitoring.",
+                "Model cache, database, and ingest pressure separately before committing infrastructure spend.",
+                "Use GitOps promotion to stage capacity changes before production rollout."
+            ],
+            ValidationChecks:
+            [
+                "Load test confirms headroom above 20% at projected 30-day volume.",
+                "Cost delta is reviewed against traffic and SLO impact.",
+                "Autoscaling thresholds align with observed burst windows."
+            ],
+            Risks:
+            [
+                "Linear growth assumptions can understate campaign or tenant onboarding bursts.",
+                "CPU-only planning can miss database, cache, or storage bottlenecks."
+            ]));
+    }
+
+    [Description("Prepare or execute approved operational runbooks with Enterprise and execution-tier gates.")]
+    public Task<OperationResponse> RunbookExecuteAsync(
+        string runbookName,
+        string service,
+        string environment,
+        string parameters,
+        bool confirmed,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string normalizedEdition = NormalizeEdition(edition);
+        if (!EditionAtLeast(normalizedEdition, "enterprise"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("honua_runbook_execute", normalizedEdition, "enterprise"));
+        }
+
+        string normalizedRunbook = SanitizePayloadValue(runbookName, "runbook");
+        string normalizedService = ValidateServiceName(service);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        bool executionAllowed = confirmed &&
+            runtime.ExecutionMode == ExecutionMode.Execute &&
+            runtime.ExecutionTier is ExecutionTier.ExecuteLowerEnv or ExecutionTier.PromoteProd or ExecutionTier.BreakGlass;
+        string status = !confirmed
+            ? "confirmation-required"
+            : executionAllowed ? "runbook-execute-ready" : "runbook-plan-ready";
+
+        return Task.FromResult(new OperationResponse(
+            Status: status,
+            Summary: $"Runbook `{normalizedRunbook}` for `{normalizedService}` in `{normalizedEnvironment}`.",
+            Findings:
+            [
+                $"Edition: {normalizedEdition}; required: enterprise.",
+                $"Execution mode: {runtime.ExecutionMode}; tier: {runtime.ExecutionTier.ToConfigValue()}.",
+                $"Confirmed: {confirmed}.",
+                $"Parameters: {SanitizeFreeText(parameters, "none")}."
+            ],
+            Actions:
+            [
+                executionAllowed
+                    ? "Execute the runbook through the approved operator path and capture command output."
+                    : "Prepare the runbook plan only; do not perform write-capable steps.",
+                "Require customer-visible approval, scoped credentials, and rollback intent before mutating resources.",
+                "Attach validation evidence to the support ticket or incident record."
+            ],
+            ValidationChecks:
+            [
+                "Pre-checks pass before runbook execution.",
+                "Post-checks prove the target service recovered or the change was rolled back.",
+                "Audit event includes operator, approval, command scope, and TTL."
+            ],
+            Risks:
+            [
+                "Natural-language runbook requests can be ambiguous without named parameters.",
+                "Write-capable runbooks must not bypass approval mode or support-session TTL."
+            ],
+            Evidence: BuildPlannerEvidence(
+                $"ai-devops:runbook:{normalizedService}",
+                normalizedRunbook,
+                [normalizedEnvironment],
+                null,
+                "enterprise-runbook",
+                status,
+                SanitizeFreeText(parameters, "none"))));
+    }
+
+    [Description("Generate an incident summary with timeline, impact, response actions, and closure checks.")]
+    public Task<OperationResponse> IncidentSummaryAsync(
+        string service,
+        string environment,
+        string timeRange,
+        string timelineEvents,
+        string affectedServices,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string normalizedEdition = NormalizeEdition(edition);
+        if (!EditionAtLeast(normalizedEdition, "enterprise"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("honua_incident_summary", normalizedEdition, "enterprise"));
+        }
+
+        string normalizedService = ValidateServiceName(service);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        string[] affected = SplitCsv(affectedServices, normalizedService);
+
+        return Task.FromResult(new OperationResponse(
+            Status: "incident-summary-ready",
+            Summary: $"Incident summary for `{normalizedService}` in `{normalizedEnvironment}` during `{Normalize(timeRange, "recent window")}`.",
+            Findings:
+            [
+                $"Affected services: {string.Join(", ", affected)}.",
+                $"Timeline: {SanitizeFreeText(timelineEvents, "timeline not provided")}.",
+                "Impact should be stated in customer-visible terms and linked to SLO/error-budget evidence."
+            ],
+            Actions:
+            [
+                "Record start, detect, mitigate, recover, and close timestamps.",
+                "List root cause separately from contributing factors.",
+                "Create follow-up items for prevention, detection, and runbook updates."
+            ],
+            ValidationChecks:
+            [
+                "Affected services have recovered and alerts are stable.",
+                "Customer-visible impact and remediation summary are reviewed.",
+                "Follow-up owners and due dates are assigned."
+            ],
+            Risks:
+            [
+                "A timeline without evidence links can turn into speculation.",
+                "Closing before recovery verification weakens post-incident learning."
+            ]));
+    }
+
+    [Description("Analyze a source GIS deployment and generate a migration plan with risk scoring.")]
+    public Task<OperationResponse> MigrationAdvisorAsync(
+        string sourcePlatform,
+        string serviceInventory,
+        string dataVolumeSummary,
+        string protocolRequirements,
+        string migrationConstraints,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string normalizedEdition = NormalizeEdition(edition);
+        if (!EditionAtLeast(normalizedEdition, "pro"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("honua_migration_advisor", normalizedEdition, "pro"));
+        }
+
+        string source = SanitizeFreeText(sourcePlatform, "Esri ArcGIS Enterprise");
+        string inventory = SanitizeFreeText(serviceInventory, "inventory not provided");
+        string protocols = SanitizeFreeText(protocolRequirements, "OGC API, tiles, feature access");
+        bool highRisk = Contains(inventory, "custom extension", "geoprocessing", "network analyst") ||
+            Contains(migrationConstraints, "zero downtime", "regulated", "manual");
+
+        return Task.FromResult(new OperationResponse(
+            Status: "migration-plan-ready",
+            Summary: $"Migration advisor plan from `{source}`.",
+            Findings:
+            [
+                $"Service inventory: {inventory}.",
+                $"Data volume: {SanitizeFreeText(dataVolumeSummary, "unknown")}.",
+                $"Protocol requirements: {protocols}.",
+                $"Risk band: {(highRisk ? "elevated" : "standard")}."
+            ],
+            Actions:
+            [
+                "Group services into clean protocol matches, transform-required services, and manual-review services.",
+                "Stage migration by read-only publish, validation, dual-run, cutover, and rollback checkpoint.",
+                "Track completion percentage by service, layer, data volume, and protocol parity."
+            ],
+            ValidationChecks:
+            [
+                "Inventory includes service/layer count, data volume, auth mode, and protocol usage.",
+                "Representative map, feature, and tile requests match expected responses.",
+                "Rollback plan preserves source availability until cutover is accepted."
+            ],
+            Risks:
+            [
+                highRisk
+                    ? "Custom geoprocessing or strict cutover constraints need manual migration design."
+                    : "Uncataloged clients can still break if protocol behavior differs.",
+                "Data-volume estimates without sample migration timings can understate cutover duration."
+            ]));
+    }
+
+    [Description("Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls.")]
+    public Task<OperationResponse> AutoRemediationPlanAsync(
+        string service,
+        string environment,
+        string detectedIssue,
+        string desiredOutcome,
+        bool autoApply,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string normalizedEdition = NormalizeEdition(edition);
+        if (!EditionAtLeast(normalizedEdition, "enterprise"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("honua_auto_remediation_plan", normalizedEdition, "enterprise"));
+        }
+
+        string normalizedService = ValidateServiceName(service);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        bool canApply = autoApply &&
+            runtime.ExecutionMode == ExecutionMode.Execute &&
+            EffectivePolicy.ApprovalMode == ApprovalMode.DirectAllowed &&
+            runtime.ExecutionTier is ExecutionTier.ExecuteLowerEnv or ExecutionTier.BreakGlass;
+        string status = canApply ? "auto-remediation-ready" : "auto-remediation-approval-required";
+
+        return Task.FromResult(new OperationResponse(
+            Status: status,
+            Summary: $"Auto-remediation plan for `{normalizedService}` in `{normalizedEnvironment}`.",
+            Findings:
+            [
+                $"Detected issue: {SanitizeFreeText(detectedIssue, "not provided")}.",
+                $"Desired outcome: {SanitizeFreeText(desiredOutcome, "restore service health")}.",
+                $"Auto-apply requested: {autoApply}; resolved status: {status}.",
+                $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}."
+            ],
+            Actions:
+            [
+                canApply
+                    ? "Apply the narrow remediation through the operator execution path and capture rollback evidence."
+                    : "Generate remediation proposal only; require approval before mutation.",
+                "Prefer reversible actions: restart, scale, cache clear, feature flag rollback, or GitOps rollback.",
+                "Stop automation if validation does not improve health within the observation window."
+            ],
+            ValidationChecks:
+            [
+                "Pre-action evidence proves the issue signature.",
+                "Post-action health, latency, and error-rate checks pass.",
+                "Rollback path is prepared and tested before any production mutation."
+            ],
+            Risks:
+            [
+                "False-positive detection can make automation worse than the original issue.",
+                "Auto-remediation in production must remain tied to explicit policy and audit evidence."
+            ],
+            Evidence: BuildPlannerEvidence(
+                $"ai-devops:auto-remediation:{normalizedService}",
+                "honua_auto_remediation_plan",
+                [normalizedEnvironment],
+                null,
+                "enterprise-auto-remediation",
+                status,
+                SanitizeFreeText(detectedIssue, "not provided"))));
+    }
+
     [Description("Triage a support ticket with read-only diagnosis, guided-fix commands, or operator-scoped escalation.")]
     public async Task<OperationResponse> TriageSupportTicketAsync(
         string ticketId,
@@ -791,6 +1362,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
 
         SupportTicket ticket = new(
             TicketId: normalizedTicketId,
+            Service: "support-triage",
             Severity: parsedSeverity,
             Environment: normalizedEnvironment,
             Symptoms: normalizedSymptoms,
@@ -911,7 +1483,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         }
 
         return new OperationEvidence(
-            Scope: $"support-triage:{ticket.TicketId}",
+            Scope: $"support-triage:{ticket.Service}:{ticket.TicketId}",
             RequestedAction: ticket.RequestedAction,
             EffectiveAction: guidedFix.Mode.ToConfigValue(),
             DryRun: guidedFix.Mode != GuidedFixMode.OperatorScoped,
@@ -1103,6 +1675,9 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 string environment = ticketElement.TryGetProperty("environment", out System.Text.Json.JsonElement envEl)
                     ? envEl.GetString() ?? "unknown"
                     : "unknown";
+                string service = ticketElement.TryGetProperty("service", out System.Text.Json.JsonElement serviceEl)
+                    ? serviceEl.GetString() ?? "support-triage"
+                    : "support-triage";
                 string symptoms = ticketElement.TryGetProperty("symptoms", out System.Text.Json.JsonElement symEl)
                     ? symEl.GetString() ?? string.Empty
                     : string.Empty;
@@ -1121,6 +1696,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
                 SupportTicket ticket = new(
                     TicketId: ticketId,
+                    Service: Normalize(service, "support-triage"),
                     Severity: parsedSeverity,
                     Environment: Normalize(environment, "unknown"),
                     Symptoms: Normalize(symptoms, "not provided"),
@@ -1131,7 +1707,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                     AttachedEvidence: string.Empty);
 
                 BackendCallResult backendResult = await gateway.RequestTroubleshootAsync(
-                    "support-triage",
+                    ticket.Service,
                     ticket.Environment,
                     ticket.Symptoms,
                     ticket.RequestedAction,
@@ -1177,6 +1753,121 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 ValidationChecks: validationChecks,
                 Risks: risks);
         }
+    }
+
+    private OperationResponse BuildEditionGateResponse(string toolName, string currentEdition, string requiredEdition)
+    {
+        return new OperationResponse(
+            Status: "edition-gated",
+            Summary: $"Tool `{toolName}` requires `{requiredEdition}` edition; current edition is `{currentEdition}`.",
+            Findings:
+            [
+                $"Current edition: {currentEdition}.",
+                $"Required edition: {requiredEdition}.",
+                "Community is limited to read-only health diagnostics; Pro adds troubleshooting, tuning, capacity, and migration planning; Enterprise adds runbook execution, incident response, and auto-remediation."
+            ],
+            Actions:
+            [
+                $"Run this workflow in `{requiredEdition}` edition or use a lower-tier read-only diagnostic tool.",
+                "Keep any generated plan read-only until edition and approval gates are satisfied."
+            ],
+            ValidationChecks:
+            [
+                "Edition is recorded in the operation evidence.",
+                "Write-capable workflows have explicit approval and audit context."
+            ],
+            Risks:
+            [
+                "Bypassing edition gates can expose unsupported or unsafe operational actions."
+            ]);
+    }
+
+    private OperationEvidence BuildPlannerEvidence(
+        string scope,
+        string requestedAction,
+        IReadOnlyList<string> targetEnvironments,
+        string? desiredRevision,
+        string policyGate,
+        string gateStatus,
+        string? diffSummary,
+        string backendEndpoint = "local-planner",
+        string backendDetail = "not-sent")
+    {
+        bool writeReady = runtime.ExecutionMode == ExecutionMode.Execute &&
+            gateStatus.Contains("ready", StringComparison.OrdinalIgnoreCase) &&
+            !gateStatus.Contains("approval-required", StringComparison.OrdinalIgnoreCase) &&
+            !gateStatus.Contains("confirmation-required", StringComparison.OrdinalIgnoreCase) &&
+            !gateStatus.Contains("plan", StringComparison.OrdinalIgnoreCase);
+
+        return new OperationEvidence(
+            Scope: scope,
+            RequestedAction: requestedAction,
+            EffectiveAction: writeReady ? requestedAction : "plan-only",
+            DryRun: !writeReady,
+            ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
+            ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
+            TargetEnvironments: targetEnvironments,
+            CurrentRevision: null,
+            DesiredRevision: desiredRevision,
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            DeploymentTargets: runtime.TerraformDeploymentTargets,
+            PolicyGate: policyGate,
+            ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
+            AuditHookTarget: EffectivePolicy.AuditHookTarget,
+            SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
+            SupportSessionTtlMinutes: EffectivePolicy.SupportSession.TtlMinutes,
+            SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
+            BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
+            RequiredChecks:
+            [
+                "edition-gate",
+                "approval-context",
+                "audit-evidence"
+            ],
+            DiffSummary: diffSummary,
+            GateStatus: gateStatus,
+            BackendEndpoint: backendEndpoint,
+            BackendDetail: backendDetail);
+    }
+
+    private static string[] SplitCsv(string value, string fallback)
+    {
+        string[] items = Normalize(value, fallback)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return items.Length == 0 ? [fallback] : items;
+    }
+
+    private static string NormalizeEdition(string edition)
+    {
+        return Normalize(edition, "community").ToLowerInvariant() switch
+        {
+            "community" => "community",
+            "pro" => "pro",
+            "professional" => "pro",
+            "enterprise" => "enterprise",
+            _ => "community"
+        };
+    }
+
+    private static bool EditionAtLeast(string currentEdition, string requiredEdition)
+    {
+        return EditionRank(currentEdition) >= EditionRank(requiredEdition);
+    }
+
+    private static int EditionRank(string edition)
+    {
+        return NormalizeEdition(edition) switch
+        {
+            "enterprise" => 3,
+            "pro" => 2,
+            _ => 1
+        };
     }
 
     private static string Scope(string service, string environment, string timeframe)

@@ -201,3 +201,8 @@ $NOTES
 EOF
 
 echo "Game-day evidence written to: $OUTPUT_DIR"
+
+if [[ "$overall_status" != "pass" ]]; then
+  echo "[ERROR] backup/restore game-day failed RTO or RPO objective. Evidence: $OUTPUT_DIR" >&2
+  exit 2
+fi

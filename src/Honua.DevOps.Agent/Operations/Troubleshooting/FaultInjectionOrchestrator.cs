@@ -13,7 +13,9 @@ internal sealed record FaultInjectionReport(
 {
     internal bool FullCycleSucceeded =>
         InjectionResult.Success &&
-        RestorationResult.Success;
+        InjectionVerification is { Success: true } &&
+        RestorationResult.Success &&
+        RestorationVerification is { Success: true };
 }
 
 internal sealed class FaultInjectionOrchestrator

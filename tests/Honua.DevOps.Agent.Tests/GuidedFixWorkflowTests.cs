@@ -778,6 +778,7 @@ public class GuidedFixWorkflowTests
     {
         return new SupportTicket(
             TicketId: ticketId,
+            Service: "support-triage",
             Severity: SupportSeverityExtensions.Parse(severity),
             Environment: environment,
             Symptoms: symptoms,
