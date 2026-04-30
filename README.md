@@ -205,6 +205,7 @@ Onboarding helper:
 - Deploy planning now emits a typed ServiceBundle reconciliation map for capabilities, export, metadata subset apply, connections, publishing, policy, styles, and imports, plus explicit drift/export state.
 - Deploy planning now also emits a typed in-repo `honua-gitops` engine plan with per-environment diff, drift, gate state, and supported operation transitions.
 - Operator policy is now explicit in runtime output and evidence: approval mode, audit hook target, support-session posture, and break-glass post-review requirements.
+- The Azure-first operator host now has a typed orchestration planner and `plan_azure_operator_workflow` tool that maps analyze, publish, build, and deploy workflows to MCP/gRPC/honua-server contract responsibilities without redefining those surfaces.
 
 ## DevOps Delivery Artifacts
 
@@ -228,6 +229,7 @@ Onboarding helper:
 - Desired-state starter pack: `desired-state/README.md`
 - Desired-state scaffold helper: `docs/desired-state-scaffold.md`
 - Contract boundaries and consumption matrix: `docs/contract-boundaries.md`
+- Azure operator orchestration host: `docs/azure-operator-orchestration-host.md`
 
 Validation:
 
