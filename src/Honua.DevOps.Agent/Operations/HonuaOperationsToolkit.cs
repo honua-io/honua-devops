@@ -968,6 +968,56 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             BackendDetail: "contract-consumption plan only; no backend call performed");
     }
 
+    private static DiagnosisScorecard BuildSupportDiagnosisScorecard(
+        SupportTicket ticket,
+        GuidedFixResult guidedFix,
+        BackendCallResult backendResult)
+    {
+        bool diagnosisMatchedCatalog = guidedFix.MatchedFault is not null;
+        bool remediationSafe = guidedFix.Mode != GuidedFixMode.OperatorScoped || guidedFix.Escalation is not null;
+        bool rollbackGuidancePresent = !ticket.RollbackExpected ||
+            !string.IsNullOrWhiteSpace(guidedFix.Escalation?.RollbackIntent) ||
+            !string.IsNullOrWhiteSpace(guidedFix.MatchedFault?.RollbackPath) ||
+            guidedFix.ValidationSteps.Any(step => step.Contains("rollback", StringComparison.OrdinalIgnoreCase));
+        double evidenceQuality = guidedFix.MatchedFault is not null
+            ? guidedFix.MatchedFault.MatchScore
+            : Math.Max(10, 50 - (guidedFix.MissingEvidence.Count * 10));
+
+        List<string> failureModes = [];
+        if (!backendResult.IsSuccess)
+        {
+            failureModes.Add("backend-troubleshoot-unavailable");
+        }
+
+        if (!diagnosisMatchedCatalog)
+        {
+            failureModes.Add("unmatched-fault-catalog");
+        }
+
+        if (!remediationSafe)
+        {
+            failureModes.Add("unsafe-remediation");
+        }
+
+        if (!rollbackGuidancePresent)
+        {
+            failureModes.Add("missing-or-incorrect-rollback");
+        }
+
+        return new DiagnosisScorecard(
+            ScenarioId: guidedFix.MatchedFault?.ScenarioId ?? $"support-ticket:{ticket.TicketId}",
+            ScenarioName: guidedFix.MatchedFault?.ScenarioName ?? "Support ticket triage",
+            DiagnosisCorrect: backendResult.IsSuccess && diagnosisMatchedCatalog,
+            DiagnosisLatency: "single-pass",
+            EvidenceQuality: Math.Clamp(evidenceQuality, 0, 100),
+            RemediationSafe: remediationSafe,
+            PolicyCompliant: true,
+            RollbackGuidanceCorrect: rollbackGuidancePresent,
+            RecoveryVerified: false,
+            ServiceHealthRestored: false,
+            FailureModes: failureModes);
+    }
+
     [Description("Pull pending support tickets from honua-support, run diagnosis against the fault catalog, and post results back.")]
     public async Task<OperationResponse> ProcessPendingTicketsAsync(CancellationToken cancellationToken = default)
     {
@@ -1095,9 +1145,13 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                     runtime.ExecutionTier,
                     backendResult);
 
+                OperationEvidence evidence = BuildGuidedFixEvidence(ticket, guidedFix, backendResult);
+                DiagnosisScorecard scorecard = BuildSupportDiagnosisScorecard(ticket, guidedFix, backendResult);
                 BackendCallResult postResult = await supportGateway.PostDiagnosisAsync(
                     ticketId,
                     guidedFix,
+                    evidence,
+                    scorecard,
                     cancellationToken);
 
                 processed++;

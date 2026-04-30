@@ -121,6 +121,71 @@ public class SupportGatewayTests
     }
 
     [Fact]
+    public async Task PostDiagnosisAsync_SerializesEvidenceAndScorecard()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        GuidedFixResult diagnosis = new(
+            Mode: GuidedFixMode.GuidedFix,
+            DiagnosisSummary: "Connection pool exhaustion matched the fault catalog.",
+            Confidence: "high",
+            MissingEvidence: [],
+            RecommendedNextAction: "guided-customer-action",
+            GuidedCommands: ["kubectl rollout restart deploy/roads-api"],
+            ValidationSteps: ["Verify /healthz/ready returns 200."],
+            Escalation: null);
+        OperationEvidence evidence = new(
+            Scope: "support-triage:T-777",
+            RequestedAction: "diagnose",
+            EffectiveAction: "guided-fix",
+            DryRun: true,
+            ExecutionMode: "plan",
+            ExecutionTier: "plan",
+            TargetEnvironments: ["prod"],
+            CurrentRevision: null,
+            DesiredRevision: null,
+            GitOpsTool: "honua-gitops",
+            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRef: "main",
+            DeploymentTargets: ["aks"],
+            PolicyGate: "guided-fix",
+            ApprovalMode: "pr-first",
+            AuditHookTarget: "stdout-evidence",
+            SupportSessionAccess: "read-only",
+            SupportSessionTtlMinutes: 60,
+            SupportSessionCustomerVisible: true,
+            BreakGlassPostActionReviewRequired: true,
+            RequiredChecks: ["ticket-context", "diagnosis-evidence"],
+            DiffSummary: null,
+            GateStatus: "guided-customer-action",
+            BackendEndpoint: "http://localhost:8080/api/v1/admin/observability/errors",
+            BackendDetail: "200 OK");
+        DiagnosisScorecard scorecard = new(
+            ScenarioId: "FAULT-014",
+            ScenarioName: "connection-pool exhaustion under synthetic load",
+            DiagnosisCorrect: true,
+            DiagnosisLatency: "single-pass",
+            EvidenceQuality: 95,
+            RemediationSafe: true,
+            PolicyCompliant: true,
+            RollbackGuidanceCorrect: true,
+            RecoveryVerified: false,
+            ServiceHealthRestored: false,
+            FailureModes: []);
+
+        BackendCallResult result = await gateway.PostDiagnosisAsync("T-777", diagnosis, evidence, scorecard);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        using JsonDocument doc = JsonDocument.Parse(captured.Body!);
+        Assert.Equal("support-triage:T-777", doc.RootElement.GetProperty("evidence").GetProperty("scope").GetString());
+        Assert.Equal("FAULT-014", doc.RootElement.GetProperty("diagnosisScorecard").GetProperty("scenarioId").GetString());
+        Assert.Equal("pass", doc.RootElement.GetProperty("diagnosisScorecard").GetProperty("overallResult").GetString());
+    }
+
+    [Fact]
     public async Task TriggerAutoBundleAsync_CallsCorrectEndpoint()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
@@ -305,6 +370,11 @@ public class SupportGatewayTests
         Assert.Equal(2, diagnosisPosts.Count);
         Assert.Contains(diagnosisPosts, r => r.Uri.Contains("/T-100/diagnosis", StringComparison.Ordinal));
         Assert.Contains(diagnosisPosts, r => r.Uri.Contains("/T-101/diagnosis", StringComparison.Ordinal));
+
+        CapturedRequest firstDiagnosisPost = Assert.Single(diagnosisPosts.Where(r => r.Uri.Contains("/T-100/diagnosis", StringComparison.Ordinal)));
+        using JsonDocument diagnosisDoc = JsonDocument.Parse(firstDiagnosisPost.Body!);
+        Assert.Equal("support-triage:T-100", diagnosisDoc.RootElement.GetProperty("evidence").GetProperty("scope").GetString());
+        Assert.True(diagnosisDoc.RootElement.GetProperty("diagnosisScorecard").TryGetProperty("scenarioId", out _));
     }
 
     [Fact]

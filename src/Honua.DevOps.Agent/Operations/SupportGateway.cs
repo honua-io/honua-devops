@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations.GuidedFix;
+using Honua.DevOps.Agent.Operations.Troubleshooting;
 
 namespace Honua.DevOps.Agent.Operations;
 
@@ -77,6 +78,8 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
     internal async Task<BackendCallResult> PostDiagnosisAsync(
         string ticketId,
         GuidedFixResult diagnosis,
+        OperationEvidence? evidence = null,
+        DiagnosisScorecard? diagnosisScorecard = null,
         CancellationToken cancellationToken = default)
     {
         if (configuration.SupportApiBaseUri is null)
@@ -96,6 +99,8 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
             mode = diagnosis.Mode.ToConfigValue(),
             guidedCommands = diagnosis.GuidedCommands,
             validationSteps = diagnosis.ValidationSteps,
+            evidence,
+            diagnosisScorecard,
             escalation = diagnosis.Escalation is null
                 ? null
                 : new

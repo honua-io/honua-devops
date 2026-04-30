@@ -65,6 +65,20 @@ public class BackendConfigurationTests
         Assert.Equal("api/v1/metrics/performance", configuration.HonuaMetricsPerformancePath);
     }
 
+    [Fact]
+    public void Load_ConfiguresHonuaSupportApiWhenProvided()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_SUPPORT_API_BASE_URL", "http://localhost:5100");
+        environment.Set("HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH", "/api/v1/tickets");
+
+        BackendConfiguration configuration = BackendConfiguration.Load();
+
+        Assert.Equal(new Uri("http://localhost:5100"), configuration.SupportApiBaseUri);
+        Assert.Equal("api/v1/tickets", configuration.SupportApiTicketsPath);
+    }
+
     private static void ResetBackendVariables(TestEnvironmentVariableScope environment)
     {
         string[] variableNames =
@@ -96,6 +110,8 @@ public class BackendConfigurationTests
             "HONUA_DEVOPS_HONUA_DEPLOY_PATH",
             "HONUA_DEVOPS_HONUA_REQUIREMENTS_PATH",
             "HONUA_DEVOPS_HONUA_TOPOLOGY_PATH",
+            "HONUA_DEVOPS_SUPPORT_API_BASE_URL",
+            "HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH",
             "HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS"
         ];
 

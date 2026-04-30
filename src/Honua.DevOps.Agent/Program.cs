@@ -22,6 +22,7 @@ try
     OperatorPolicyModel policy = OperatorPolicyModel.Load();
     BackendConfiguration backendConfiguration = BackendConfiguration.Load();
     using BackendGateway backendGateway = new(backendConfiguration);
+    using SupportGateway supportGateway = new(backendConfiguration);
 
     if (options.Preflight)
     {
@@ -34,7 +35,7 @@ try
         return;
     }
 
-    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy);
+    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway);
     ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
     AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
 
