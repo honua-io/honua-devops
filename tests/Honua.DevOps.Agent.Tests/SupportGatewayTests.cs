@@ -87,6 +87,31 @@ public class SupportGatewayTests
     }
 
     [Fact]
+    public async Task PostDiagnosisAsync_EncodesTicketIdAsSinglePathSegment()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        GuidedFixResult diagnosis = new(
+            Mode: GuidedFixMode.ReadOnlyTriage,
+            DiagnosisSummary: "Test diagnosis summary",
+            Confidence: "high",
+            MissingEvidence: [],
+            RecommendedNextAction: "diagnosis-ready",
+            GuidedCommands: [],
+            ValidationSteps: [],
+            Escalation: null);
+
+        BackendCallResult result = await gateway.PostDiagnosisAsync("T-001/../close?x=1#fragment", diagnosis);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        Assert.Contains("T-001%2F..%2Fclose%3Fx%3D1%23fragment/diagnosis", captured.Uri, StringComparison.Ordinal);
+        Assert.DoesNotContain("/close?x=1", captured.Uri, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PostDiagnosisAsync_IncludesEscalationWhenPresent()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
@@ -371,9 +396,15 @@ public class SupportGatewayTests
         Assert.Contains(diagnosisPosts, r => r.Uri.Contains("/T-100/diagnosis", StringComparison.Ordinal));
         Assert.Contains(diagnosisPosts, r => r.Uri.Contains("/T-101/diagnosis", StringComparison.Ordinal));
 
-        CapturedRequest firstDiagnosisPost = Assert.Single(diagnosisPosts.Where(r => r.Uri.Contains("/T-100/diagnosis", StringComparison.Ordinal)));
+        CapturedRequest firstDiagnosisPost = Assert.Single(
+            diagnosisPosts,
+            r => r.Uri.Contains("/T-100/diagnosis", StringComparison.Ordinal));
         using JsonDocument diagnosisDoc = JsonDocument.Parse(firstDiagnosisPost.Body!);
-        Assert.Equal("support-triage:T-100", diagnosisDoc.RootElement.GetProperty("evidence").GetProperty("scope").GetString());
+        Assert.Equal("support-triage:roads-api:T-100", diagnosisDoc.RootElement.GetProperty("evidence").GetProperty("scope").GetString());
+
+        Assert.Contains(backendHandler.CapturedRequests, r =>
+            r.Uri.Contains("service=roads-api", StringComparison.Ordinal) &&
+            r.Uri.Contains("environment=prod", StringComparison.Ordinal));
         Assert.True(diagnosisDoc.RootElement.GetProperty("diagnosisScorecard").TryGetProperty("scenarioId", out _));
     }
 

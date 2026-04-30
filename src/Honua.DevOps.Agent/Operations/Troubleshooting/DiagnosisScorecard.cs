@@ -13,11 +13,11 @@ internal sealed record DiagnosisScorecard(
     bool ServiceHealthRestored,
     IReadOnlyList<string> FailureModes)
 {
-    internal string OverallResult => DiagnosisCorrect && RemediationSafe && PolicyCompliant
+    public string OverallResult => DiagnosisCorrect && RemediationSafe && PolicyCompliant
         ? "pass"
         : "fail";
 
-    internal double CompositeScore
+    public double CompositeScore
     {
         get
         {

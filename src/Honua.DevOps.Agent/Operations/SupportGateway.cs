@@ -67,7 +67,7 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
                 PayloadPreview: "SupportApiBaseUri is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.");
         }
 
-        string relativePath = $"{configuration.SupportApiTicketsPath}/{ticketId}";
+        string relativePath = BuildTicketPath(ticketId);
         return await SendAsync(
             HttpMethod.Get,
             relativePath,
@@ -91,7 +91,7 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
                 PayloadPreview: "SupportApiBaseUri is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.");
         }
 
-        string relativePath = $"{configuration.SupportApiTicketsPath}/{ticketId}/diagnosis";
+        string relativePath = BuildTicketPath(ticketId, "diagnosis");
         object payload = new
         {
             summary = diagnosis.DiagnosisSummary,
@@ -132,7 +132,7 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
                 PayloadPreview: "SupportApiBaseUri is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.");
         }
 
-        string relativePath = $"{configuration.SupportApiTicketsPath}/{ticketId}/auto-bundle";
+        string relativePath = BuildTicketPath(ticketId, "auto-bundle");
         return await SendAsync(
             HttpMethod.Post,
             relativePath,
@@ -154,13 +154,27 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
                 PayloadPreview: "SupportApiBaseUri is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.");
         }
 
-        string relativePath = $"{configuration.SupportApiTicketsPath}/{ticketId}/close";
+        string relativePath = BuildTicketPath(ticketId, "close");
         object payload = new { resolutionSummary };
         return await SendAsync(
             HttpMethod.Post,
             relativePath,
             payload,
             cancellationToken);
+    }
+
+    private string BuildTicketPath(string ticketId, string? childPath = null)
+    {
+        string trimmedTicketId = ticketId.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedTicketId))
+        {
+            throw new ArgumentException("Ticket id is required.", nameof(ticketId));
+        }
+
+        string encodedTicketId = Uri.EscapeDataString(trimmedTicketId);
+        return string.IsNullOrWhiteSpace(childPath)
+            ? $"{configuration.SupportApiTicketsPath}/{encodedTicketId}"
+            : $"{configuration.SupportApiTicketsPath}/{encodedTicketId}/{childPath}";
     }
 
     private async Task<BackendCallResult> SendAsync(

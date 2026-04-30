@@ -37,6 +37,8 @@ open-core runtime promise.
 - Honua support ticket triage through `honua-support` (`process_pending_tickets`)
 - Server upgrade planning with rollback gates (via Honua API)
 - GitOps-driven multi-environment deployment planning (Honua-native GitOps; see `honua-server` #351/#363)
+- Full GitOps platform planning (`plan_gitops_platform`) for repo watching, commit tracking, promotion gates, drift alerts, CI/CD previews, rollback, and audit evidence
+- AI DevOps MCP-style tools (`honua_diagnose`, slow-query explanation, index recommendation, capacity forecast, runbook execution, incident summary, migration advisor, and auto-remediation planning)
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 
@@ -195,6 +197,7 @@ Reference material:
 - `docs/operator-adoption-packaging.md` for install modes, repo layouts, target-specific adoption differences, and reference workflows
 - `docs/operator-policy-and-delegated-ops.md` for approvals, support sessions, and break-glass posture
 - `docs/manual-cloud-runbooks.md` for cloud bootstrap and validation loops
+- `docs/epic-backlog-closure.md` for the #3/#4 GitOps and AI DevOps closure surface
 
 Onboarding helper:
 
@@ -216,6 +219,7 @@ Onboarding helper:
 - The Azure-first operator host now has a typed orchestration planner and `plan_azure_operator_workflow` tool that maps analyze, publish, build, and deploy workflows to MCP/gRPC/honua-server contract responsibilities without redefining those surfaces.
 - Honua support ticket processing now wires `honua-support` into the runtime toolset and posts diagnosis evidence/scorecards back to ticket records.
 - Multi-model operator eval automation now consumes the server-side eval report and can run Claude, Codex, and local Llama lanes through a shared model matrix.
+- Remaining GitOps and AI DevOps epic surfaces are now represented by contract-first tools with edition, approval, audit, rollback, and validation gates.
 
 ## DevOps Delivery Artifacts
 
