@@ -211,7 +211,7 @@ Onboarding helper:
 - The operator now has a shared runtime-adapter lifecycle in code for `validate -> plan/apply infra -> plan/apply release -> verify -> rollback -> drift -> export actual state`.
 - Upgrade and deploy planning now emit an explicit release-orchestration state machine covering preflight, backup, migration, rollout, smoke, SLO watch, promote, and rollback, plus typed promotion and rollback semantics.
 - Deploy planning now emits a typed ServiceBundle reconciliation map for capabilities, export, metadata subset apply, connections, publishing, policy, styles, and imports, plus explicit drift/export state.
-- Deploy planning now also emits a typed in-repo `honua-gitops` engine plan with per-environment diff, drift, gate state, and supported operation transitions.
+- Deploy planning now also emits a typed in-repo `honua-gitops` engine plan with per-environment diff, drift, gate state, explicit from/to state transitions, mutation flags, approval requirements, and supported operations.
 - Operator policy is now explicit in runtime output and evidence: approval mode, audit hook target, support-session posture, and break-glass post-review requirements.
 - The Azure-first operator host now has a typed orchestration planner and `plan_azure_operator_workflow` tool that maps analyze, publish, build, and deploy workflows to MCP/gRPC/honua-server contract responsibilities without redefining those surfaces.
 - Honua support ticket processing now wires `honua-support` into the runtime toolset and posts diagnosis evidence/scorecards back to ticket records.

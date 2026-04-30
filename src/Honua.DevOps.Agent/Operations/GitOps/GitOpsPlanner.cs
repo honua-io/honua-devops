@@ -6,6 +6,21 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 
 internal static class GitOpsPlanner
 {
+    private static readonly IReadOnlyDictionary<string, GitOpsTransitionContract> TransitionContracts =
+        new Dictionary<string, GitOpsTransitionContract>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["plan"] = new("desired-revision", "planned", false),
+            ["diff"] = new("planned", "diff-reviewed", false),
+            ["sync"] = new("diff-reviewed", "applied", true),
+            ["status"] = new("applied", "status-read", false),
+            ["drift"] = new("status-read", "drift-checked", false),
+            ["pause"] = new("reconciling", "paused", true),
+            ["resume"] = new("paused", "reconciling", true),
+            ["approve"] = new("approval-requested", "approved", true),
+            ["promote"] = new("approved", "promoted", true),
+            ["rollback"] = new("applied", "rolled-back", true)
+        };
+
     private static readonly string[] SupportedOperations =
     [
         "plan",
@@ -85,15 +100,23 @@ internal static class GitOpsPlanner
             .ToArray();
 
         GitOpsStateTransitionPlan[] transitions = environmentPlans
-            .SelectMany(environment => environment.Commands.Select(command => new GitOpsStateTransitionPlan(
-                Operation: command.Operation,
-                Environment: environment.Environment,
-                Enabled: !command.RequiresApproval || releaseOrchestration.PromotionMode == "gated-promotion",
-                Summary: command.Summary,
-                SuggestedCommand: command.Command,
-                RequiredChecks: command.RequiresApproval
-                    ? ["approval-record", "lower-env-evidence"]
-                    : ["manifest-diff", "gitops-status"])))
+            .SelectMany(environment => environment.Commands.Select(command =>
+            {
+                GitOpsTransitionContract contract = BuildTransitionContract(command.Operation, dryRun);
+                return new GitOpsStateTransitionPlan(
+                    Operation: command.Operation,
+                    Environment: environment.Environment,
+                    FromState: contract.FromState,
+                    ToState: contract.ToState,
+                    MutatesState: !dryRun && contract.MutatesState,
+                    RequiresApproval: command.RequiresApproval,
+                    Enabled: !command.RequiresApproval || releaseOrchestration.PromotionMode == "gated-promotion",
+                    Summary: command.Summary,
+                    SuggestedCommand: command.Command,
+                    RequiredChecks: command.RequiresApproval
+                        ? ["approval-record", "lower-env-evidence"]
+                        : ["manifest-diff", "gitops-status"]);
+            }))
             .ToArray();
 
         string diffSummary = BuildDiffSummary(environmentPlans, desiredRevision);
@@ -198,6 +221,21 @@ internal static class GitOpsPlanner
         return $"infra-checks={infraChecks}; release-checks={releaseChecks}; service-state-checks={serviceChecks}";
     }
 
+    private static GitOpsTransitionContract BuildTransitionContract(string operation, bool dryRun)
+    {
+        if (!TransitionContracts.TryGetValue(operation, out GitOpsTransitionContract? contract))
+        {
+            return new("unknown", "unknown", false);
+        }
+
+        if (dryRun && operation.Equals("sync", StringComparison.OrdinalIgnoreCase))
+        {
+            return contract with { ToState = "sync-preview" };
+        }
+
+        return contract;
+    }
+
     private static IReadOnlyDictionary<string, string> ExtractActualRevisions(
         JsonDocument? exportPayload,
         string service)
@@ -284,4 +322,9 @@ internal static class GitOpsPlanner
 
         return $"'{value.Replace("'", "'\"'\"'")}'";
     }
+
+    private sealed record GitOpsTransitionContract(
+        string FromState,
+        string ToState,
+        bool MutatesState);
 }

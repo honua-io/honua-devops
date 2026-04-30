@@ -1640,7 +1640,9 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
 
         foreach (GitOpsStateTransitionPlan transition in plan.StateTransitions)
         {
-            yield return $"GitOps transition `{transition.Environment}/{transition.Operation}`: {transition.Summary}";
+            string mutation = transition.MutatesState ? "mutating" : "read-only";
+            string approval = transition.RequiresApproval ? "approval-required" : "no-approval";
+            yield return $"GitOps transition `{transition.Environment}/{transition.Operation}`: {transition.FromState} -> {transition.ToState} ({mutation}, {approval}). {transition.Summary}";
         }
     }
 
