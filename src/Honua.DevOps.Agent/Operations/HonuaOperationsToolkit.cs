@@ -1,7 +1,9 @@
 using System.ComponentModel;
 
 using Honua.DevOps.Agent.Operations.GitOps;
+using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.Troubleshooting;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
@@ -9,7 +11,7 @@ using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.Operato
 
 namespace Honua.DevOps.Agent.Operations;
 
-internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null)
+internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null, SupportGateway? supportGateway = null)
 {
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 
@@ -699,6 +701,334 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 "No-WAF posture increases exposure to application-layer attacks.",
                 "Skipping validated template modules can introduce config drift."
             ]);
+    }
+
+    [Description("Triage a support ticket with read-only diagnosis, guided-fix commands, or operator-scoped escalation.")]
+    public async Task<OperationResponse> TriageSupportTicketAsync(
+        string ticketId,
+        string severity,
+        string environment,
+        string symptoms,
+        string requestedAction,
+        string allowedAccessMode,
+        int ttlMinutes,
+        bool rollbackExpected,
+        string attachedEvidence,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedTicketId = SanitizePayloadValue(ticketId, "ticket ID");
+        SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        string normalizedSymptoms = SanitizeFreeText(symptoms, string.Empty);
+        string normalizedRequestedAction = SanitizeFreeText(requestedAction, "diagnose");
+        string normalizedAccessMode = Normalize(allowedAccessMode, "read-only");
+        int effectiveTtl = ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes;
+        string normalizedEvidence = SanitizeFreeText(attachedEvidence, string.Empty);
+
+        SupportTicket ticket = new(
+            TicketId: normalizedTicketId,
+            Severity: parsedSeverity,
+            Environment: normalizedEnvironment,
+            Symptoms: normalizedSymptoms,
+            RequestedAction: normalizedRequestedAction,
+            AllowedAccessMode: normalizedAccessMode,
+            TtlMinutes: effectiveTtl,
+            RollbackExpected: rollbackExpected,
+            AttachedEvidence: normalizedEvidence);
+
+        BackendCallResult backendResult = await gateway.RequestTroubleshootAsync(
+            "support-triage",
+            normalizedEnvironment,
+            normalizedSymptoms,
+            normalizedRequestedAction,
+            $"ticket:{normalizedTicketId}",
+            cancellationToken);
+
+        GuidedFixResult guidedFix = GuidedFixPlanner.Build(
+            ticket,
+            EffectivePolicy,
+            runtime.ExecutionMode,
+            runtime.ExecutionTier,
+            backendResult);
+
+        List<string> findings =
+        [
+            $"Ticket: {normalizedTicketId} ({parsedSeverity.ToConfigValue()}).",
+            $"Environment: {normalizedEnvironment}.",
+            $"Honua API endpoint: {backendResult.Endpoint}",
+            $"Backend result: {backendResult.Detail}",
+            $"Diagnosis confidence: {guidedFix.Confidence}.",
+            $"Guided-fix mode: {guidedFix.Mode.ToConfigValue()}.",
+            $"Recommended next action: {guidedFix.RecommendedNextAction}.",
+            $"Diagnosis: {guidedFix.DiagnosisSummary}",
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+            $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
+            $"Customer-visible: {EffectivePolicy.SupportSession.CustomerVisible}."
+        ];
+
+        if (guidedFix.MatchedFault is not null)
+        {
+            findings.Add($"Matched fault: {guidedFix.MatchedFault.ScenarioName} ({guidedFix.MatchedFault.FaultCategory}).");
+            findings.Add($"Match score: {guidedFix.MatchedFault.MatchScore:F0}% ({guidedFix.MatchedFault.MatchedIndicators.Count} indicators).");
+            findings.Add($"Remediation scope: {guidedFix.MatchedFault.RemediationScope.ToConfigValue()}.");
+            findings.Add($"Rollback path: {guidedFix.MatchedFault.RollbackPath}.");
+        }
+
+        if (guidedFix.MissingEvidence.Count > 0)
+        {
+            findings.AddRange(guidedFix.MissingEvidence.Select(missing => $"Missing: {missing}"));
+        }
+
+        List<string> actions =
+        [
+            $"Operate in `{guidedFix.Mode.ToConfigValue()}` posture for this ticket.",
+            ..guidedFix.GuidedCommands
+        ];
+
+        if (guidedFix.Escalation is not null)
+        {
+            actions.Add($"Escalation requires approval: {string.Join(", ", guidedFix.Escalation.RequiredApprovalContext)}.");
+            actions.Add($"Escalation access scope: {guidedFix.Escalation.AccessScope} with TTL {guidedFix.Escalation.TtlMinutes}m.");
+            actions.Add($"Rollback intent: {guidedFix.Escalation.RollbackIntent}.");
+        }
+
+        actions.AddRange(BuildOperatorPolicyActions());
+
+        List<string> validationChecks = [..guidedFix.ValidationSteps];
+        validationChecks.AddRange(BuildOperatorPolicyValidationChecks());
+
+        List<string> risks =
+        [
+            "Diagnosis accuracy depends on telemetry completeness and symptom quality.",
+            "Guided commands should be validated by the customer before execution."
+        ];
+        risks.AddRange(BuildOperatorPolicyRisks());
+
+        if (guidedFix.Mode == GuidedFixMode.OperatorScoped)
+        {
+            risks.Add("Operator-scoped access must stay within ticket scope and TTL to avoid silent privilege expansion.");
+        }
+
+        return new OperationResponse(
+            Status: backendResult.IsSuccess
+                ? guidedFix.Mode.ToConfigValue()
+                : "backend-error",
+            Summary: $"Support triage for ticket {normalizedTicketId} ({parsedSeverity.ToConfigValue()}) in `{normalizedEnvironment}`.",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks: validationChecks,
+            Risks: risks,
+            Evidence: BuildGuidedFixEvidence(ticket, guidedFix, backendResult));
+    }
+
+    private OperationEvidence BuildGuidedFixEvidence(
+        SupportTicket ticket,
+        GuidedFixResult guidedFix,
+        BackendCallResult backendResult)
+    {
+        int effectiveSupportSessionTtl = guidedFix.Escalation?.TtlMinutes ??
+            Math.Min(ticket.TtlMinutes, EffectivePolicy.SupportSession.TtlMinutes);
+        List<string> requiredChecks =
+        [
+            "ticket-context",
+            "diagnosis-evidence",
+            "access-mode-record"
+        ];
+        requiredChecks.AddRange(BuildOperatorPolicyValidationChecks());
+
+        if (guidedFix.Mode == GuidedFixMode.OperatorScoped && guidedFix.Escalation is not null)
+        {
+            requiredChecks.AddRange(guidedFix.Escalation.RequiredApprovalContext);
+        }
+
+        if (ticket.RollbackExpected)
+        {
+            requiredChecks.Add("rollback-readiness");
+        }
+
+        return new OperationEvidence(
+            Scope: $"support-triage:{ticket.TicketId}",
+            RequestedAction: ticket.RequestedAction,
+            EffectiveAction: guidedFix.Mode.ToConfigValue(),
+            DryRun: guidedFix.Mode != GuidedFixMode.OperatorScoped,
+            ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
+            ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
+            TargetEnvironments: [ticket.Environment],
+            CurrentRevision: null,
+            DesiredRevision: null,
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            DeploymentTargets: runtime.TerraformDeploymentTargets.ToArray(),
+            PolicyGate: guidedFix.Mode.ToConfigValue(),
+            ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
+            AuditHookTarget: EffectivePolicy.AuditHookTarget,
+            SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
+            SupportSessionTtlMinutes: effectiveSupportSessionTtl,
+            SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
+            BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
+            RequiredChecks: requiredChecks.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            DiffSummary: null,
+            GateStatus: guidedFix.RecommendedNextAction,
+            BackendEndpoint: backendResult.Endpoint,
+            BackendDetail: backendResult.Detail);
+    }
+
+    [Description("Pull pending support tickets from honua-support, run diagnosis against the fault catalog, and post results back.")]
+    public async Task<OperationResponse> ProcessPendingTicketsAsync(CancellationToken cancellationToken = default)
+    {
+        if (supportGateway is null)
+        {
+            return new OperationResponse(
+                Status: "support-api-disabled",
+                Summary: "honua-support integration is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.",
+                Findings: ["SupportGateway is not available. Skipping pending ticket processing."],
+                Actions: [],
+                ValidationChecks: [],
+                Risks: []);
+        }
+
+        using BackendJsonResult listJsonResult = await supportGateway.ListPendingTicketsJsonAsync(cancellationToken);
+        BackendCallResult listResult = listJsonResult.CallResult;
+        if (!listResult.IsSuccess)
+        {
+            return new OperationResponse(
+                Status: "backend-error",
+                Summary: $"Failed to list pending tickets from honua-support: {listResult.Detail}",
+                Findings: [$"Endpoint: {listResult.Endpoint}", $"Detail: {listResult.Detail}", $"Preview: {listResult.PayloadPreview}"],
+                Actions: ["Verify HONUA_DEVOPS_SUPPORT_API_BASE_URL is set to a reachable honua-support instance."],
+                ValidationChecks: [],
+                Risks: ["Pending tickets remain unprocessed while the support API is unreachable."]);
+        }
+
+        if (listJsonResult.Payload is null)
+        {
+            return new OperationResponse(
+                Status: "parse-error",
+                Summary: "Failed to parse ticket list response from honua-support.",
+                Findings: [$"Raw preview: {listResult.PayloadPreview}"],
+                Actions: [],
+                ValidationChecks: [],
+                Risks: ["Pending tickets remain unprocessed due to unparseable API response."]);
+        }
+
+        {
+            System.Text.Json.JsonDocument ticketsDoc = listJsonResult.Payload;
+            List<System.Text.Json.JsonElement> pendingTickets = [];
+            if (ticketsDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (System.Text.Json.JsonElement element in ticketsDoc.RootElement.EnumerateArray())
+                {
+                    string phase = element.TryGetProperty("phase", out System.Text.Json.JsonElement phaseElement)
+                        ? phaseElement.GetString() ?? string.Empty
+                        : string.Empty;
+                    if (phase.Equals("intake", StringComparison.OrdinalIgnoreCase) ||
+                        phase.Equals("triaging", StringComparison.OrdinalIgnoreCase))
+                    {
+                        pendingTickets.Add(element);
+                    }
+                }
+            }
+
+            if (pendingTickets.Count == 0)
+            {
+                return new OperationResponse(
+                    Status: "no-pending-tickets",
+                    Summary: "No pending tickets found in honua-support (phase=intake or phase=triaging).",
+                    Findings: ["All tickets are already past the intake/triaging phase."],
+                    Actions: [],
+                    ValidationChecks: [],
+                    Risks: []);
+            }
+
+            List<string> findings = [];
+            List<string> actions = [];
+            List<string> validationChecks = [];
+            List<string> risks = [];
+            int processed = 0;
+            int diagnosed = 0;
+
+            foreach (System.Text.Json.JsonElement ticketElement in pendingTickets)
+            {
+                string ticketId = ticketElement.TryGetProperty("id", out System.Text.Json.JsonElement idEl)
+                    ? idEl.GetString() ?? "unknown"
+                    : "unknown";
+                string severity = ticketElement.TryGetProperty("severity", out System.Text.Json.JsonElement sevEl)
+                    ? sevEl.GetString() ?? "medium"
+                    : "medium";
+                string environment = ticketElement.TryGetProperty("environment", out System.Text.Json.JsonElement envEl)
+                    ? envEl.GetString() ?? "unknown"
+                    : "unknown";
+                string symptoms = ticketElement.TryGetProperty("symptoms", out System.Text.Json.JsonElement symEl)
+                    ? symEl.GetString() ?? string.Empty
+                    : string.Empty;
+                string requestedAction = ticketElement.TryGetProperty("requestedAction", out System.Text.Json.JsonElement raEl)
+                    ? raEl.GetString() ?? "diagnose"
+                    : "diagnose";
+                string allowedAccessMode = ticketElement.TryGetProperty("allowedAccessMode", out System.Text.Json.JsonElement aamEl)
+                    ? aamEl.GetString() ?? "read-only"
+                    : "read-only";
+                int ttlMinutes = ticketElement.TryGetProperty("ttlMinutes", out System.Text.Json.JsonElement ttlEl)
+                    ? ttlEl.TryGetInt32(out int ttlVal) ? ttlVal : 60
+                    : 60;
+                bool rollbackExpected = ticketElement.TryGetProperty("rollbackExpected", out System.Text.Json.JsonElement rbEl)
+                    && rbEl.ValueKind == System.Text.Json.JsonValueKind.True;
+
+                SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
+                SupportTicket ticket = new(
+                    TicketId: ticketId,
+                    Severity: parsedSeverity,
+                    Environment: Normalize(environment, "unknown"),
+                    Symptoms: Normalize(symptoms, "not provided"),
+                    RequestedAction: Normalize(requestedAction, "diagnose"),
+                    AllowedAccessMode: Normalize(allowedAccessMode, "read-only"),
+                    TtlMinutes: ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes,
+                    RollbackExpected: rollbackExpected,
+                    AttachedEvidence: string.Empty);
+
+                BackendCallResult backendResult = await gateway.RequestTroubleshootAsync(
+                    "support-triage",
+                    ticket.Environment,
+                    ticket.Symptoms,
+                    ticket.RequestedAction,
+                    $"ticket:{ticketId}",
+                    cancellationToken);
+
+                GuidedFixResult guidedFix = GuidedFixPlanner.Build(
+                    ticket,
+                    EffectivePolicy,
+                    runtime.ExecutionMode,
+                    runtime.ExecutionTier,
+                    backendResult);
+
+                BackendCallResult postResult = await supportGateway.PostDiagnosisAsync(
+                    ticketId,
+                    guidedFix,
+                    cancellationToken);
+
+                processed++;
+                if (postResult.IsSuccess)
+                {
+                    diagnosed++;
+                }
+
+                findings.Add($"Ticket {ticketId} ({parsedSeverity.ToConfigValue()}) in `{environment}`: " +
+                             $"diagnosis={guidedFix.Confidence}, mode={guidedFix.Mode.ToConfigValue()}, " +
+                             $"post-result={postResult.Detail}.");
+                actions.AddRange(guidedFix.GuidedCommands.Take(2).Select(command => $"[{ticketId}] {command}"));
+            }
+
+            validationChecks.Add("Verify all diagnosed tickets transitioned to the correct phase in honua-support.");
+            risks.Add("Diagnosis accuracy depends on telemetry completeness and symptom quality.");
+
+            return new OperationResponse(
+                Status: diagnosed == processed ? "tickets-processed" : "partial-failure",
+                Summary: $"Processed {processed} pending ticket(s) from honua-support; {diagnosed} diagnosis result(s) posted successfully.",
+                Findings: findings,
+                Actions: actions,
+                ValidationChecks: validationChecks,
+                Risks: risks);
+        }
     }
 
     private static string Scope(string service, string environment, string timeframe)

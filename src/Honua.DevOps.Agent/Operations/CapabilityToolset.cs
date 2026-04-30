@@ -6,9 +6,9 @@ namespace Honua.DevOps.Agent.Operations;
 
 internal static class CapabilityToolset
 {
-    internal static IList<AITool> Create(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null)
+    internal static IList<AITool> Create(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null, SupportGateway? supportGateway = null)
     {
-        HonuaOperationsToolkit toolkit = new(runtime, gateway, policy);
+        HonuaOperationsToolkit toolkit = new(runtime, gateway, policy, supportGateway);
 
         return
         [
@@ -56,7 +56,16 @@ internal static class CapabilityToolset
                 (string environment, bool enableWaf, bool useNginxProxy, bool enableEdgeRateLimiting, string trafficProfile, string riskTolerance)
                     => toolkit.RecommendDeploymentTopologyAsync(environment, enableWaf, useNginxProxy, enableEdgeRateLimiting, trafficProfile, riskTolerance),
                 "recommend_deployment_topology",
-                "Recommend deployment topology options including WAF, ingress, and edge rate limiting.")
+                "Recommend deployment topology options including WAF, ingress, and edge rate limiting."),
+            CreateTool(
+                (string ticketId, string severity, string environment, string symptoms, string requestedAction, string allowedAccessMode, int ttlMinutes, bool rollbackExpected, string attachedEvidence)
+                    => toolkit.TriageSupportTicketAsync(ticketId, severity, environment, symptoms, requestedAction, allowedAccessMode, ttlMinutes, rollbackExpected, attachedEvidence),
+                "triage_support_ticket",
+                "Triage a support ticket: read-only diagnosis, guided-fix commands for the customer, or approval-gated operator-scoped remediation."),
+            CreateTool(
+                () => toolkit.ProcessPendingTicketsAsync(),
+                "process_pending_tickets",
+                "Pull pending support tickets from honua-support, run diagnosis against the fault catalog, and post results back.")
         ];
     }
 
