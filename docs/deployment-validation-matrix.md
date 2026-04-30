@@ -22,9 +22,9 @@ Legend:
 | Kubernetes (Helm) | JIT | `honua-terraform/scripts/run-k8s-terraform-integration.sh` | Must Pass | Pass |
 | Kubernetes (Helm) | AOT | `honua-terraform/scripts/run-k8s-terraform-integration.sh --aot` | Experimental | Pass or documented caveat |
 
-## Secret Profiles
+## Validation Config Profiles
 
-### Required for baseline AWS + Azure live validation
+### Required GitHub secrets
 
 - `ARM_CLIENT_ID`
 - `ARM_CLIENT_SECRET`
@@ -35,22 +35,33 @@ Legend:
 - `HONUA_ADMIN_PASSWORD`
 - `HONUA_DB_PASSWORD`
 
-### Required for full cross-runtime coverage
+### Required repo variables for the current stack selection
 
-- `HONUA_AWS_SERVERLESS_IMAGE`
+- `HONUA_AWS_ECS_IMAGE` when `HONUA_AWS_VALIDATION_STACK=ecs|both`
+- `HONUA_AWS_SERVERLESS_IMAGE` when `HONUA_AWS_VALIDATION_STACK=serverless|both`
+- `HONUA_ACA_IMAGE` when `HONUA_AZURE_VALIDATION_STACK=aca|both`
+- `HONUA_FUNCTIONS_IMAGE` when `HONUA_AZURE_VALIDATION_STACK=functions|both`
+- `HONUA_K8S_IMAGE` when you run the k8s path
 
-### Optional but recommended for full first-pass coverage
+With the current bootstrap helper, the practical default is:
 
-- `AWS_SESSION_TOKEN`
-- `HONUA_ACA_IMAGE`
+- `HONUA_AWS_VALIDATION_STACK=both`
+- `HONUA_AZURE_VALIDATION_STACK=aca`
+- `HONUA_AWS_ECS_IMAGE=ghcr.io/honua-io/honua-server:latest-aot`
+- `HONUA_AWS_SERVERLESS_IMAGE=<account>.dkr.ecr.<region>.amazonaws.com/honua-server:latest-lambda-aot`
+- `HONUA_ACA_IMAGE=ghcr.io/honua-io/honua-server:latest-aot`
+- `HONUA_K8S_IMAGE=ghcr.io/honua-io/honua-server:latest-aot`
+
+### Optional repo variables for broader coverage
+
 - `HONUA_ACA_PREVIOUS_IMAGE`
-- `HONUA_FUNCTIONS_IMAGE`
 - `HONUA_FUNCTIONS_PREVIOUS_IMAGE`
-- `HONUA_AWS_ECS_IMAGE`
 - `HONUA_AWS_ECS_PREVIOUS_IMAGE`
 - `HONUA_AWS_SERVERLESS_PREVIOUS_IMAGE`
-- `HONUA_K8S_IMAGE`
 - `HONUA_K8S_PREVIOUS_IMAGE`
+- `HONUA_AWS_ECS_CANARY_IMAGE`
+- `HONUA_AWS_VALIDATION_REGION`
+- `HONUA_AZURE_VALIDATION_REGION`
 
 ## Smoke Contract
 
@@ -69,3 +80,22 @@ HONUA_SMOKE_BASE_URL="https://your-endpoint" \
 HONUA_SMOKE_API_KEY="$HONUA_ADMIN_API_KEY" \
 ./scripts/smoke-contract.sh
 ```
+
+Contract verification:
+
+```bash
+./scripts/smoke-contract-smoke.sh
+```
+
+## Reuse
+
+This smoke contract is the shared endpoint-level validation step for the April deployment campaign.
+
+- `docs/manual-cloud-runbooks.md` uses it as the common apply -> smoke -> destroy validation step.
+- Later operator rollout and desired-state flows should reuse the same contract rather than inventing a second smoke path.
+
+## Current Verification Status
+
+- The smoke contract is validated locally and in CI with `scripts/smoke-contract-smoke.sh`.
+- The matrix above is the source of truth for the live AWS/Azure/Kubernetes validation campaign.
+- Real cloud execution evidence still needs to be recorded per runtime/profile outside this repo before calling the launch matrix complete.
