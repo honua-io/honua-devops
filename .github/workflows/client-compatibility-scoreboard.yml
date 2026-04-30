@@ -48,13 +48,13 @@ jobs:
           path: compatibility/scoreboard
 
       - name: Upload GitHub Pages artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && vars.HONUA_DEPLOY_PAGES == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: compatibility/scoreboard
 
   deploy-pages:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && vars.HONUA_DEPLOY_PAGES == 'true'
     needs:
       - build-scoreboard
     runs-on: ubuntu-latest
