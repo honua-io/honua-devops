@@ -106,6 +106,22 @@ public class FaultInjectionTests
         Assert.Equal($"/scripts/fault-injection/{expectedFileName}", scriptPath);
     }
 
+    [Theory]
+    [InlineData("FAULT-001")]
+    [InlineData("FAULT-009")]
+    [InlineData("FAULT-010")]
+    [InlineData("FAULT-015")]
+    [InlineData("FAULT-016")]
+    public void SeededRealCloudScenarios_HaveFullCycleScripts(string scenarioId)
+    {
+        string scriptsRoot = ResolveFaultInjectionScriptsRoot();
+        foreach (string action in new[] { "inject", "verify-injected", "restore", "verify-restored" })
+        {
+            string path = Path.Combine(scriptsRoot, $"{scenarioId}-{action}.sh");
+            Assert.True(File.Exists(path), $"Missing fault-injection script: `{path}`.");
+        }
+    }
+
     [Fact]
     public void ScriptBasedFaultInjector_SetsPropertiesCorrectly()
     {
@@ -412,5 +428,13 @@ public class FaultInjectionTests
             Credentials: new Dictionary<string, string> { ["AWS_PROFILE"] = "test" },
             DryRun: dryRun,
             Timeout: TimeSpan.FromMinutes(5));
+    }
+
+    private static string ResolveFaultInjectionScriptsRoot()
+    {
+        string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        string scriptsRoot = Path.Combine(repoRoot, "scripts", "fault-injection");
+        Assert.True(Directory.Exists(scriptsRoot), $"Fault-injection scripts root not found: `{scriptsRoot}`.");
+        return scriptsRoot;
     }
 }

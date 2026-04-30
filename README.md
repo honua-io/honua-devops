@@ -237,6 +237,7 @@ Onboarding helper:
 - Operator policy and delegated ops: `docs/operator-policy-and-delegated-ops.md`
 - Operator adoption packaging: `docs/operator-adoption-packaging.md`
 - Guided-fix workflow: `docs/guided-fix-workflow.md`
+- Troubleshooting integration tests: `docs/troubleshooting-integration-tests.md`
 - Desired-state starter pack: `desired-state/README.md`
 - Desired-state scaffold helper: `docs/desired-state-scaffold.md`
 - Contract boundaries and consumption matrix: `docs/contract-boundaries.md`

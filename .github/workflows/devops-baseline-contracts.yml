@@ -19,6 +19,7 @@ jobs:
           bash -n scripts/check-terraform-secrets.sh
           bash -n scripts/smoke-contract.sh
           bash -n scripts/smoke-contract-smoke.sh
+          bash -n scripts/fault-injection/*.sh
 
       - name: Smoke contract self-test
         run: ./scripts/smoke-contract-smoke.sh
