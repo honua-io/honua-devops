@@ -1,4 +1,5 @@
 using Honua.DevOps.Agent.Operations.GitOps;
+using Honua.DevOps.Agent.Operations.OrchestrationHost;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
 
@@ -14,4 +15,5 @@ internal sealed record OperationResponse(
     OperationEvidence? Evidence = null,
     GitOpsPlan? GitOpsPlan = null,
     ReleaseOrchestrationPlan? ReleaseOrchestration = null,
-    ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null);
+    ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null,
+    OrchestrationHostPlan? OrchestrationHost = null);

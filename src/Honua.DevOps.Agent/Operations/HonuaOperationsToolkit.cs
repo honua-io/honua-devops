@@ -3,6 +3,7 @@ using System.ComponentModel;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.OrchestrationHost;
 using Honua.DevOps.Agent.Operations.Troubleshooting;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
@@ -703,6 +704,69 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             ]);
     }
 
+    [Description("Plan the Azure-first Microsoft Agent Framework host path for analyze, publish, build, or deploy operator workflows.")]
+    public Task<OperationResponse> PlanAzureOperatorWorkflowAsync(
+        string workflowFamily,
+        string environment,
+        string operatorGoal,
+        string packageReference,
+        string deploymentTarget,
+        bool publishExternally)
+    {
+        OperatorWorkflowFamily parsedFamily = OperatorWorkflowFamilyExtensions.Parse(workflowFamily);
+        string defaultEnvironment = runtime.AllowedEnvironments.FirstOrDefault() ?? "dev";
+        string normalizedEnvironment = ParseEnvironments(Normalize(environment, defaultEnvironment)).First();
+        string normalizedGoal = SanitizeFreeText(operatorGoal, "operator workflow");
+        string normalizedPackageReference = SanitizeFreeText(packageReference, string.Empty);
+        string normalizedDeploymentTarget = SanitizeFreeText(deploymentTarget, string.Empty);
+
+        OrchestrationHostPlan plan = AzureOrchestrationHostPlanner.Build(
+            parsedFamily,
+            normalizedEnvironment,
+            normalizedGoal,
+            normalizedPackageReference,
+            normalizedDeploymentTarget,
+            publishExternally,
+            runtime,
+            EffectivePolicy);
+
+        List<string> findings =
+        [
+            $"Host target: {plan.HostTarget}.",
+            $"Workflow family: {plan.WorkflowFamily.ToConfigValue()}.",
+            $"Environment: {plan.Environment}.",
+            $"Gate status: {plan.GateStatus}.",
+            $"Contract surfaces: {string.Join(" | ", plan.ContractSurfaces)}"
+        ];
+        findings.AddRange(plan.AzureIntegrationPoints.Select(point => $"Azure integration: {point}"));
+
+        List<string> actions = plan.Stages
+            .Select(stage =>
+                $"{stage.Stage.ToConfigValue()}: {stage.AzureHostResponsibility}")
+            .ToList();
+
+        List<string> validationChecks = plan.RequiredChecks
+            .Concat(plan.EvaluationHooks)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        List<string> risks =
+        [
+            ..plan.BoundaryRules,
+            "The host plan is a dry-run contract-consumption scaffold until concrete MCP and gRPC clients are wired."
+        ];
+
+        return Task.FromResult(new OperationResponse(
+            Status: "orchestration-plan-ready",
+            Summary: $"Azure operator workflow host plan for `{parsedFamily.ToConfigValue()}` in `{normalizedEnvironment}`.",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks: validationChecks,
+            Risks: risks,
+            Evidence: BuildOrchestrationHostEvidence(plan),
+            OrchestrationHost: plan));
+    }
+
     [Description("Triage a support ticket with read-only diagnosis, guided-fix commands, or operator-scoped escalation.")]
     public async Task<OperationResponse> TriageSupportTicketAsync(
         string ticketId,
@@ -794,7 +858,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
 
         actions.AddRange(BuildOperatorPolicyActions());
 
-        List<string> validationChecks = [..guidedFix.ValidationSteps];
+        List<string> validationChecks = [.. guidedFix.ValidationSteps];
         validationChecks.AddRange(BuildOperatorPolicyValidationChecks());
 
         List<string> risks =
@@ -872,6 +936,36 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             GateStatus: guidedFix.RecommendedNextAction,
             BackendEndpoint: backendResult.Endpoint,
             BackendDetail: backendResult.Detail);
+    }
+
+    private OperationEvidence BuildOrchestrationHostEvidence(OrchestrationHostPlan plan)
+    {
+        return new OperationEvidence(
+            Scope: $"azure-orchestration-host:{plan.WorkflowFamily.ToConfigValue()}:{plan.Environment}",
+            RequestedAction: plan.OperatorGoal,
+            EffectiveAction: "plan-azure-operator-workflow",
+            DryRun: true,
+            ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
+            ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
+            TargetEnvironments: [plan.Environment],
+            CurrentRevision: null,
+            DesiredRevision: plan.PackageReference,
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            DeploymentTargets: runtime.TerraformDeploymentTargets.ToArray(),
+            PolicyGate: plan.GateStatus,
+            ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
+            AuditHookTarget: EffectivePolicy.AuditHookTarget,
+            SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
+            SupportSessionTtlMinutes: EffectivePolicy.SupportSession.TtlMinutes,
+            SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
+            BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
+            RequiredChecks: plan.RequiredChecks,
+            DiffSummary: $"orchestration stages: {string.Join(" -> ", plan.Stages.Select(stage => stage.Stage.ToConfigValue()))}",
+            GateStatus: plan.GateStatus,
+            BackendEndpoint: "local://azure-orchestration-host",
+            BackendDetail: "contract-consumption plan only; no backend call performed");
     }
 
     [Description("Pull pending support tickets from honua-support, run diagnosis against the fault catalog, and post results back.")]

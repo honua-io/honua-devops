@@ -42,6 +42,7 @@ cross-referenced to the existing document that defines each:
 - Operator policy (approval, support, break-glass): `docs/operator-policy-and-delegated-ops.md`
 - GitOps engine planning: `docs/honua-gitops-engine.md`
 - ServiceBundle reconciliation: `docs/service-bundle-reconciliation.md`
+- Azure operator orchestration host: `docs/azure-operator-orchestration-host.md`
 - AI agent prompts and tool definitions
 - Customer control-repo starter pack: `desired-state/`
 
@@ -57,6 +58,9 @@ Once `geospatial-grpc-6` lands:
 Consuming generated gRPC client stubs from upstream protos is consumption,
 not redefinition. This section documents intended patterns; details may
 shift when the upstream contract closes.
+The Azure host planner records these intended gRPC responsibilities as
+contract-consumption stages; it does not introduce local client stubs or
+replacement service contracts.
 
 ## Future Consumption: geospatial-mcp
 
@@ -69,6 +73,8 @@ Once `geospatial-mcp-2` lands:
 
 This section documents intended patterns; details may shift when the
 upstream contract closes.
+The Azure host planner records these intended MCP responsibilities as
+contract-consumption stages; it does not create a parallel tool taxonomy.
 
 ## Non-Goals
 

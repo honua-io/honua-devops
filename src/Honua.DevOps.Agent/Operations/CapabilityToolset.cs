@@ -58,6 +58,11 @@ internal static class CapabilityToolset
                 "recommend_deployment_topology",
                 "Recommend deployment topology options including WAF, ingress, and edge rate limiting."),
             CreateTool(
+                (string workflowFamily, string environment, string operatorGoal, string packageReference, string deploymentTarget, bool publishExternally)
+                    => toolkit.PlanAzureOperatorWorkflowAsync(workflowFamily, environment, operatorGoal, packageReference, deploymentTarget, publishExternally),
+                "plan_azure_operator_workflow",
+                "Plan the Azure-first Microsoft Agent Framework host path for analyze, publish, build, or deploy operator workflows."),
+            CreateTool(
                 (string ticketId, string severity, string environment, string symptoms, string requestedAction, string allowedAccessMode, int ttlMinutes, bool rollbackExpected, string attachedEvidence)
                     => toolkit.TriageSupportTicketAsync(ticketId, severity, environment, symptoms, requestedAction, allowedAccessMode, ttlMinutes, rollbackExpected, attachedEvidence),
                 "triage_support_ticket",
