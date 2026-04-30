@@ -215,6 +215,7 @@ Onboarding helper:
 - Operator policy is now explicit in runtime output and evidence: approval mode, audit hook target, support-session posture, and break-glass post-review requirements.
 - The Azure-first operator host now has a typed orchestration planner and `plan_azure_operator_workflow` tool that maps analyze, publish, build, and deploy workflows to MCP/gRPC/honua-server contract responsibilities without redefining those surfaces.
 - Honua support ticket processing now wires `honua-support` into the runtime toolset and posts diagnosis evidence/scorecards back to ticket records.
+- Multi-model operator eval automation now consumes the server-side eval report and can run Claude, Codex, and local Llama lanes through a shared model matrix.
 
 ## DevOps Delivery Artifacts
 
@@ -240,6 +241,7 @@ Onboarding helper:
 - Desired-state scaffold helper: `docs/desired-state-scaffold.md`
 - Contract boundaries and consumption matrix: `docs/contract-boundaries.md`
 - Azure operator orchestration host: `docs/azure-operator-orchestration-host.md`
+- Multi-model operator evals: `docs/multi-model-operator-evals.md`
 
 Validation:
 
@@ -270,6 +272,8 @@ Helper scripts:
 - `scripts/validate-slo-assets.sh`
 - `scripts/generate-client-compat-scoreboard.py`
 - `scripts/smoke-client-compat-scoreboard.sh`
+- `scripts/run-multi-model-operator-evals.py`
+- `scripts/smoke-multi-model-operator-evals.sh`
 - `scripts/run-backup-restore-gameday.sh`
 - `scripts/smoke-backup-restore-gameday.sh`
 - `scripts/rotate-operator-secrets.sh`

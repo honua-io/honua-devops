@@ -1,0 +1,22 @@
+{
+  "id": "analysis-buffer-places",
+  "name": "Buffer places and summarize overlap",
+  "mode": "Analysis",
+  "fixtureProfile": "ogc",
+  "intent": {
+    "intentId": "intent-analysis-buffer-places",
+    "goal": "Buffer the seed 'places' layer by 500m and report overlap with roads.",
+    "mode": "analysis",
+    "requestedOutputs": ["FeatureLayer", "Report"],
+    "inputs": ["places", "roads"],
+    "assumptionPolicy": "AskWhenMaterial"
+  },
+  "expectedOutcome": {
+    "isExecutable": true,
+    "requiresApproval": false,
+    "estimatedArtifactKinds": ["FeatureLayer", "Report"],
+    "terminalWorkflowStatus": "Completed",
+    "expectsMapPackage": false,
+    "expectsAppPackage": false
+  }
+}

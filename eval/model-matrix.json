@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1",
+  "serverReport": {
+    "defaultPath": "../honua-server/tests/TestResults/eval-report.json",
+    "scenarioDir": "../honua-server/tests/dotnet/eval/scenarios",
+    "allowedScenarioStatuses": ["Passed", "PassedWithSkips"]
+  },
+  "scoreDimensions": [
+    "clarificationQuality",
+    "planValidity",
+    "executionSuccess",
+    "resultCorrectness",
+    "packageUsefulness"
+  ],
+  "lanes": [
+    {
+      "id": "claude",
+      "displayName": "Claude",
+      "role": "release-gate",
+      "provider": "claude",
+      "enabledEnv": "HONUA_EVAL_CLAUDE_ENABLED",
+      "commandEnv": "HONUA_EVAL_CLAUDE_COMMAND",
+      "modelEnv": "HONUA_DEVOPS_CLAUDE_MODEL",
+      "secretEnv": "HONUA_DEVOPS_CLAUDE_API_KEY",
+      "requiredForRelease": true
+    },
+    {
+      "id": "codex",
+      "displayName": "Codex",
+      "role": "release-gate",
+      "provider": "codex",
+      "enabledEnv": "HONUA_EVAL_CODEX_ENABLED",
+      "commandEnv": "HONUA_EVAL_CODEX_COMMAND",
+      "modelEnv": "HONUA_DEVOPS_CODEX_MODEL",
+      "secretEnv": "HONUA_DEVOPS_CODEX_API_KEY",
+      "requiredForRelease": true
+    },
+    {
+      "id": "local-llama",
+      "displayName": "Local Llama",
+      "role": "portability",
+      "provider": "openai-compatible-local",
+      "enabledEnv": "HONUA_EVAL_LOCAL_LLAMA_ENABLED",
+      "commandEnv": "HONUA_EVAL_LOCAL_LLAMA_COMMAND",
+      "modelEnv": "HONUA_DEVOPS_LOCAL_LLAMA_MODEL",
+      "endpointEnv": "HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT",
+      "requiredForRelease": false
+    }
+  ]
+}

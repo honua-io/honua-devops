@@ -1,0 +1,26 @@
+name: Multi-Model Operator Evals
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  multi-model-eval-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: |
+          python3 -m py_compile scripts/run-multi-model-operator-evals.py
+          bash -n scripts/smoke-multi-model-operator-evals.sh
+
+      - name: Smoke multi-model eval contract
+        run: ./scripts/smoke-multi-model-operator-evals.sh
