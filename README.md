@@ -2,6 +2,8 @@
 
 AI DevOps operator and solution architect for Honua.
 
+Current operator capabilities are summarized in [docs/features/README.md](docs/features/README.md).
+
 This repository is the execution vehicle for the operator control system tracked in [honua-devops#11](https://github.com/honua-io/honua-devops/issues/11):
 
 - Operate Honua like a senior platform operator (install, configure, optimize, monitor, troubleshoot, upgrade).
