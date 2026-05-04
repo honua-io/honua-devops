@@ -168,6 +168,100 @@ public class HonuaOperationsToolkitDeployTests
     }
 
     [Fact]
+    public async Task DeployServiceWithGitOpsAsync_CallsRealHonuaDeployControlWhenTargetConfigured()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(CreateRuntime(deployTargetId: "prod-api"), gateway);
+
+        OperationResponse response = await toolkit.DeployServiceWithGitOpsAsync(
+            service: "roads-api",
+            environmentsCsv: "dev",
+            revision: "release/2026.03",
+            action: "plan",
+            changeSummary: "plan with real deploy-control target",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("plan-only", response.Status);
+        Assert.Contains(handler.CapturedRequests, request =>
+            request.Method == "GET" &&
+            request.Uri.Contains("/api/v1/admin/deploy/preflight?includeDiagnostics=true", StringComparison.Ordinal));
+        Assert.Contains(handler.CapturedRequests, request =>
+            request.Method == "POST" &&
+            request.Uri.Contains("/api/v1/admin/deploy/plan", StringComparison.Ordinal));
+        Assert.Contains(handler.CapturedRequests, request =>
+            request.Method == "GET" &&
+            request.Uri.Contains("/api/v1/admin/manifest", StringComparison.Ordinal));
+        Assert.Contains(handler.CapturedRequests, request =>
+            request.Method == "GET" &&
+            request.Uri.Contains("/api/v1/admin/capabilities", StringComparison.Ordinal));
+        Assert.Contains(handler.CapturedRequests, request =>
+            request.Method == "POST" &&
+            request.Uri.Contains("/api/v1/admin/manifest/apply", StringComparison.Ordinal));
+
+        CapturedRequest planRequest = Assert.Single(
+            handler.CapturedRequests,
+            request => request.Method == "POST" &&
+                       request.Uri.Contains("/api/v1/admin/deploy/plan", StringComparison.Ordinal));
+        using JsonDocument planJson = JsonDocument.Parse(planRequest.Body!);
+        Assert.Equal("prod-api", planJson.RootElement.GetProperty("targetId").GetString());
+        Assert.Equal("release/2026.03", planJson.RootElement.GetProperty("desiredRevision").GetString());
+        Assert.Equal("roads-api", planJson.RootElement.GetProperty("parameters").GetProperty("service").GetString());
+
+        Assert.NotNull(response.BackendSteps);
+        Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-preflight" && !step.MutatesState);
+        Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-plan" && !step.MutatesState);
+        Assert.Contains(response.BackendSteps!, step => step.Name == "manifest-apply" && !step.MutatesState);
+    }
+
+    [Fact]
+    public async Task DeployServiceWithGitOpsAsync_CreatesRealHonuaDeployOperationWhenExecutionEnabled()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(
+                mode: ExecutionMode.Execute,
+                executionTier: ExecutionTier.PromoteProd,
+                deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.DeployServiceWithGitOpsAsync(
+            service: "roads-api",
+            environmentsCsv: "staging,prod",
+            revision: "release/2026.03",
+            action: "promote",
+            changeSummary: "promote through deploy-control",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("execute-enabled", response.Status);
+
+        CapturedRequest operationRequest = Assert.Single(
+            handler.CapturedRequests,
+            request => request.Method == "POST" &&
+                       request.Uri.Contains("/api/v1/admin/deploy/operations", StringComparison.Ordinal));
+        using JsonDocument operationJson = JsonDocument.Parse(operationRequest.Body!);
+        Assert.Equal("prod-api", operationJson.RootElement.GetProperty("targetId").GetString());
+        Assert.Equal("release/2026.03", operationJson.RootElement.GetProperty("desiredRevision").GetString());
+        Assert.True(operationJson.RootElement.GetProperty("submitImmediately").GetBoolean());
+        Assert.Equal("high", operationJson.RootElement.GetProperty("priority").GetString());
+        Assert.Equal("promote through deploy-control", operationJson.RootElement.GetProperty("reason").GetString());
+
+        Assert.NotNull(response.BackendSteps);
+        Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-operation" && step.MutatesState);
+    }
+
+    [Fact]
     public async Task PlanGitOpsEngineAsync_UsesSnapshotsOnlyAndEmitsTypedPlan()
     {
         TestHttpMessageHandler handler = new(request =>
@@ -402,7 +496,8 @@ public class HonuaOperationsToolkitDeployTests
     private static OperationRuntime CreateRuntime(
         string gitOpsTool = "honua-gitops",
         ExecutionMode mode = ExecutionMode.Plan,
-        ExecutionTier executionTier = ExecutionTier.Plan)
+        ExecutionTier executionTier = ExecutionTier.Plan,
+        string? deployTargetId = null)
     {
         return new OperationRuntime(
             mode,
@@ -412,7 +507,8 @@ public class HonuaOperationsToolkitDeployTests
             TerraformRepository: "https://github.com/honua-io/honua-terraform",
             TerraformRef: "main",
             TerraformLocalPath: "/tmp/honua-terraform",
-            TerraformDeploymentTargets: ["eks", "aks"]);
+            TerraformDeploymentTargets: ["eks", "aks"],
+            DeployTargetId: deployTargetId);
     }
 
     private static BackendGateway CreateGateway(Func<HttpRequestMessage, HttpResponseMessage> responder)

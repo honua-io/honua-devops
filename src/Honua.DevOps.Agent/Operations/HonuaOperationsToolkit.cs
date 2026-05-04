@@ -357,6 +357,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             runtime.ExecutionMode,
             runtime.ExecutionTier,
             runtime.AllowedEnvironments,
+            runtime.DeployTargetId,
             cancellationToken);
         ReleaseOrchestrationPlan releaseOrchestration = ReleaseOrchestrationPlanner.Build(
             adapterWorkflows,
@@ -422,6 +423,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
                 $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
                 $"GitOps actual state source: {gitOpsPlan.ActualStateSource}.",
+                $"Deploy-control target: {Normalize(runtime.DeployTargetId, "not configured")}.",
                 $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
                 $"Audit hook target: {EffectivePolicy.AuditHookTarget}.",
                 $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
@@ -461,7 +463,8 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 backendResult.CombinedResult),
             GitOpsPlan: gitOpsPlan,
             ReleaseOrchestration: releaseOrchestration,
-            ServiceBundleReconciliation: serviceBundleReconciliation);
+            ServiceBundleReconciliation: serviceBundleReconciliation,
+            BackendSteps: BuildGitOpsBackendSteps(backendResult, authorization.DryRun));
     }
 
     [Description("Plan the internal honua-gitops engine state transitions, diff, and drift without applying desired state.")]
@@ -1106,7 +1109,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
     }
 
     [Description("Prepare or execute approved operational runbooks with Enterprise and execution-tier gates.")]
-    public Task<OperationResponse> RunbookExecuteAsync(
+    public async Task<OperationResponse> RunbookExecuteAsync(
         string runbookName,
         string service,
         string environment,
@@ -1115,11 +1118,10 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         string edition,
         CancellationToken cancellationToken = default)
     {
-        _ = cancellationToken;
         string normalizedEdition = NormalizeEdition(edition);
         if (!EditionAtLeast(normalizedEdition, "enterprise"))
         {
-            return Task.FromResult(BuildEditionGateResponse("honua_runbook_execute", normalizedEdition, "enterprise"));
+            return BuildEditionGateResponse("honua_runbook_execute", normalizedEdition, "enterprise");
         }
 
         string normalizedRunbook = SanitizePayloadValue(runbookName, "runbook");
@@ -1128,24 +1130,47 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         bool executionAllowed = confirmed &&
             runtime.ExecutionMode == ExecutionMode.Execute &&
             runtime.ExecutionTier is ExecutionTier.ExecuteLowerEnv or ExecutionTier.PromoteProd or ExecutionTier.BreakGlass;
+        bool readOnlyRunbook = IsReadOnlyHonuaRunbook(normalizedRunbook);
+        bool writeHonuaRunbook = IsWriteHonuaRunbook(normalizedRunbook);
+        BackendCallResult? executionResult = null;
         string status = !confirmed
             ? "confirmation-required"
-            : executionAllowed ? "runbook-execute-ready" : "runbook-plan-ready";
+            : executionAllowed || readOnlyRunbook ? "runbook-execute-ready" : "runbook-plan-ready";
 
-        return Task.FromResult(new OperationResponse(
+        if (confirmed && (readOnlyRunbook || (executionAllowed && writeHonuaRunbook)))
+        {
+            executionResult = await ExecuteHonuaRunbookAsync(
+                normalizedRunbook,
+                parameters,
+                executionAllowed,
+                cancellationToken);
+            status = executionResult.IsSuccess ? "runbook-executed" : "backend-error";
+        }
+
+        List<string> findings =
+        [
+            $"Edition: {normalizedEdition}; required: enterprise.",
+            $"Execution mode: {runtime.ExecutionMode}; tier: {runtime.ExecutionTier.ToConfigValue()}.",
+            $"Confirmed: {confirmed}.",
+            $"Parameters: {SanitizeFreeText(parameters, "none")}."
+        ];
+        if (executionResult is not null)
+        {
+            findings.Add($"Honua runbook endpoint: {executionResult.Endpoint}");
+            findings.Add($"Honua runbook result: {executionResult.Detail}");
+            findings.Add($"Honua runbook response: {executionResult.PayloadPreview}");
+        }
+
+        return new OperationResponse(
             Status: status,
             Summary: $"Runbook `{normalizedRunbook}` for `{normalizedService}` in `{normalizedEnvironment}`.",
-            Findings:
-            [
-                $"Edition: {normalizedEdition}; required: enterprise.",
-                $"Execution mode: {runtime.ExecutionMode}; tier: {runtime.ExecutionTier.ToConfigValue()}.",
-                $"Confirmed: {confirmed}.",
-                $"Parameters: {SanitizeFreeText(parameters, "none")}."
-            ],
+            Findings: findings,
             Actions:
             [
-                executionAllowed
-                    ? "Execute the runbook through the approved operator path and capture command output."
+                executionResult is not null
+                    ? "Persist the runbook response with the incident or support ticket evidence."
+                    : executionAllowed
+                        ? "Execute the runbook through the approved operator path and capture command output."
                     : "Prepare the runbook plan only; do not perform write-capable steps.",
                 "Require customer-visible approval, scoped credentials, and rollback intent before mutating resources.",
                 "Attach validation evidence to the support ticket or incident record."
@@ -1168,7 +1193,110 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 null,
                 "enterprise-runbook",
                 status,
-                SanitizeFreeText(parameters, "none"))));
+                SanitizeFreeText(parameters, "none")),
+            BackendSteps: executionResult is null
+                ? null
+                : [ToBackendStep($"runbook:{normalizedRunbook}", executionResult, mutatesState: !readOnlyRunbook)]);
+    }
+
+    private async Task<BackendCallResult> ExecuteHonuaRunbookAsync(
+        string normalizedRunbook,
+        string parameters,
+        bool writeExecutionAllowed,
+        CancellationToken cancellationToken)
+    {
+        return normalizedRunbook.Trim().ToLowerInvariant() switch
+        {
+            "deploy-preflight" or "preflight" =>
+                await gateway.RequestDeployPreflightAsync(includeDiagnostics: true, cancellationToken),
+            "manifest-drift" or "drift" =>
+                await gateway.RequestManifestDriftAsync(verbose: true, cancellationToken),
+            "manifest-versions" or "manifest-history" =>
+                await gateway.RequestManifestVersionsAsync(ParsePositiveIntParameter(parameters, "limit", 10), cancellationToken),
+            "deploy-submit" when writeExecutionAllowed =>
+                await gateway.SubmitDeployOperationAsync(
+                    ExtractRequiredParameter(parameters, "operationId"),
+                    SanitizeFreeText(parameters, "approved runbook submit"),
+                    cancellationToken),
+            "deploy-rollback" or "rollback" when writeExecutionAllowed =>
+                await gateway.RollbackDeployOperationAsync(
+                    ExtractRequiredParameter(parameters, "operationId"),
+                    SanitizeFreeText(parameters, "approved runbook rollback"),
+                    cancellationToken),
+            _ => new BackendCallResult(
+                IsSuccess: false,
+                Endpoint: "local://honua-devops/runbook-router",
+                Detail: "unsupported-runbook",
+                PayloadPreview: "Supported runbooks: deploy-preflight, manifest-drift, manifest-versions, deploy-submit, deploy-rollback.")
+        };
+    }
+
+    private static bool IsReadOnlyHonuaRunbook(string runbookName)
+    {
+        return runbookName.Trim().ToLowerInvariant() is
+            "deploy-preflight" or
+            "preflight" or
+            "manifest-drift" or
+            "drift" or
+            "manifest-versions" or
+            "manifest-history";
+    }
+
+    private static bool IsWriteHonuaRunbook(string runbookName)
+    {
+        return runbookName.Trim().ToLowerInvariant() is
+            "deploy-submit" or
+            "deploy-rollback" or
+            "rollback";
+    }
+
+    private static string ExtractRequiredParameter(string parameters, string key)
+    {
+        string? value = TryExtractParameter(parameters, key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"Runbook parameter `{key}` is required.");
+        }
+
+        return value;
+    }
+
+    private static int ParsePositiveIntParameter(string parameters, string key, int fallback)
+    {
+        string? value = TryExtractParameter(parameters, key);
+        return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : fallback;
+    }
+
+    private static string? TryExtractParameter(string parameters, string key)
+    {
+        if (string.IsNullOrWhiteSpace(parameters))
+        {
+            return null;
+        }
+
+        string[] tokens = parameters.Split(
+            [' ', '\n', '\r', '\t', ',', ';'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (string token in tokens)
+        {
+            int separatorIndex = token.IndexOf('=');
+            if (separatorIndex <= 0 || separatorIndex == token.Length - 1)
+            {
+                continue;
+            }
+
+            string tokenKey = token[..separatorIndex].Trim().Trim('"', '\'');
+            if (!tokenKey.Equals(key, StringComparison.OrdinalIgnoreCase) &&
+                !tokenKey.Replace("-", string.Empty, StringComparison.OrdinalIgnoreCase)
+                    .Equals(key.Replace("-", string.Empty, StringComparison.OrdinalIgnoreCase), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return token[(separatorIndex + 1)..].Trim().Trim('"', '\'');
+        }
+
+        return null;
     }
 
     [Description("Generate an incident summary with timeline, impact, response actions, and closure checks.")]
@@ -1275,7 +1403,7 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
     }
 
     [Description("Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls.")]
-    public Task<OperationResponse> AutoRemediationPlanAsync(
+    public async Task<OperationResponse> AutoRemediationPlanAsync(
         string service,
         string environment,
         string detectedIssue,
@@ -1284,11 +1412,10 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         string edition,
         CancellationToken cancellationToken = default)
     {
-        _ = cancellationToken;
         string normalizedEdition = NormalizeEdition(edition);
         if (!EditionAtLeast(normalizedEdition, "enterprise"))
         {
-            return Task.FromResult(BuildEditionGateResponse("honua_auto_remediation_plan", normalizedEdition, "enterprise"));
+            return BuildEditionGateResponse("honua_auto_remediation_plan", normalizedEdition, "enterprise");
         }
 
         string normalizedService = ValidateServiceName(service);
@@ -1298,20 +1425,56 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             EffectivePolicy.ApprovalMode == ApprovalMode.DirectAllowed &&
             runtime.ExecutionTier is ExecutionTier.ExecuteLowerEnv or ExecutionTier.BreakGlass;
         string status = canApply ? "auto-remediation-ready" : "auto-remediation-approval-required";
+        string sanitizedIssue = SanitizeFreeText(detectedIssue, "not provided");
+        string sanitizedOutcome = SanitizeFreeText(desiredOutcome, "restore service health");
+        string? operationId = TryExtractParameter($"{detectedIssue} {desiredOutcome}", "operationId") ??
+                              TryExtractParameter($"{detectedIssue} {desiredOutcome}", "operation-id");
+        BackendCallResult? remediationResult = null;
 
-        return Task.FromResult(new OperationResponse(
+        if (canApply)
+        {
+            if (!string.IsNullOrWhiteSpace(operationId))
+            {
+                remediationResult = await gateway.RollbackDeployOperationAsync(
+                    operationId,
+                    $"auto-remediation:{normalizedService}:{sanitizedIssue}",
+                    cancellationToken);
+                status = remediationResult.IsSuccess ? "auto-remediation-applied" : "backend-error";
+            }
+            else if (Contains(sanitizedIssue, "drift") || Contains(sanitizedOutcome, "drift"))
+            {
+                remediationResult = await gateway.RequestManifestDriftAsync(verbose: true, cancellationToken);
+                status = remediationResult.IsSuccess ? "auto-remediation-observed" : "backend-error";
+            }
+            else
+            {
+                status = "auto-remediation-ready";
+            }
+        }
+
+        List<string> findings =
+        [
+            $"Detected issue: {sanitizedIssue}.",
+            $"Desired outcome: {sanitizedOutcome}.",
+            $"Auto-apply requested: {autoApply}; resolved status: {status}.",
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}."
+        ];
+        if (remediationResult is not null)
+        {
+            findings.Add($"Honua remediation endpoint: {remediationResult.Endpoint}");
+            findings.Add($"Honua remediation result: {remediationResult.Detail}");
+            findings.Add($"Honua remediation response: {remediationResult.PayloadPreview}");
+        }
+
+        return new OperationResponse(
             Status: status,
             Summary: $"Auto-remediation plan for `{normalizedService}` in `{normalizedEnvironment}`.",
-            Findings:
-            [
-                $"Detected issue: {SanitizeFreeText(detectedIssue, "not provided")}.",
-                $"Desired outcome: {SanitizeFreeText(desiredOutcome, "restore service health")}.",
-                $"Auto-apply requested: {autoApply}; resolved status: {status}.",
-                $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}."
-            ],
+            Findings: findings,
             Actions:
             [
-                canApply
+                remediationResult is not null
+                    ? "Record the Honua remediation response and keep observing health until the issue signature clears."
+                    : canApply
                     ? "Apply the narrow remediation through the operator execution path and capture rollback evidence."
                     : "Generate remediation proposal only; require approval before mutation.",
                 "Prefer reversible actions: restart, scale, cache clear, feature flag rollback, or GitOps rollback.",
@@ -1335,7 +1498,10 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                 null,
                 "enterprise-auto-remediation",
                 status,
-                SanitizeFreeText(detectedIssue, "not provided"))));
+                sanitizedIssue),
+            BackendSteps: remediationResult is null
+                ? null
+                : [ToBackendStep("auto-remediation", remediationResult, mutatesState: !string.IsNullOrWhiteSpace(operationId))]);
     }
 
     [Description("Triage a support ticket with read-only diagnosis, guided-fix commands, or operator-scoped escalation.")]
@@ -1692,6 +1858,9 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                     : 60;
                 bool rollbackExpected = ticketElement.TryGetProperty("rollbackExpected", out System.Text.Json.JsonElement rbEl)
                     && rbEl.ValueKind == System.Text.Json.JsonValueKind.True;
+                string? instanceUrl = ticketElement.TryGetProperty("instanceUrl", out System.Text.Json.JsonElement instanceEl)
+                    ? instanceEl.GetString()
+                    : null;
 
                 SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
                 SupportTicket ticket = new(
@@ -1705,6 +1874,16 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
                     TtlMinutes: ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes,
                     RollbackExpected: rollbackExpected,
                     AttachedEvidence: string.Empty);
+
+                BackendCallResult? autoBundleResult = null;
+                if (!string.IsNullOrWhiteSpace(instanceUrl))
+                {
+                    autoBundleResult = await supportGateway.TriggerAutoBundleAsync(
+                        ticketId,
+                        instanceUrl,
+                        gateway.Configuration.HonuaApiKey,
+                        cancellationToken);
+                }
 
                 BackendCallResult backendResult = await gateway.RequestTroubleshootAsync(
                     ticket.Service,
@@ -1738,11 +1917,13 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
 
                 findings.Add($"Ticket {ticketId} ({parsedSeverity.ToConfigValue()}) in `{environment}`: " +
                              $"diagnosis={guidedFix.Confidence}, mode={guidedFix.Mode.ToConfigValue()}, " +
-                             $"post-result={postResult.Detail}.");
+                             $"post-result={postResult.Detail}, " +
+                             $"auto-bundle={autoBundleResult?.Detail ?? "not-requested"}.");
                 actions.AddRange(guidedFix.GuidedCommands.Take(2).Select(command => $"[{ticketId}] {command}"));
             }
 
             validationChecks.Add("Verify all diagnosed tickets transitioned to the correct phase in honua-support.");
+            validationChecks.Add("When tickets include instanceUrl, verify honua-support auto-bundle captured real Honua health, metrics, and manifest telemetry.");
             risks.Add("Diagnosis accuracy depends on telemetry completeness and symptom quality.");
 
             return new OperationResponse(
@@ -2335,6 +2516,56 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
             string approval = transition.RequiresApproval ? "approval-required" : "no-approval";
             yield return $"GitOps transition `{transition.Environment}/{transition.Operation}`: {transition.FromState} -> {transition.ToState} ({mutation}, {approval}). {transition.Summary}";
         }
+    }
+
+    private static IReadOnlyList<OperationBackendStep> BuildGitOpsBackendSteps(
+        GitOpsDeployBackendResult backendResult,
+        bool dryRun)
+    {
+        List<OperationBackendStep> steps =
+        [
+            ToBackendStep("manifest-export", backendResult.ExportResult, mutatesState: false),
+            ToBackendStep("capabilities", backendResult.CapabilitiesResult, mutatesState: false),
+            ToBackendStep("manifest-apply", backendResult.ApplyResult, mutatesState: !dryRun)
+        ];
+
+        if (backendResult.DeployPreflightResult is not null)
+        {
+            steps.Add(ToBackendStep("deploy-preflight", backendResult.DeployPreflightResult, mutatesState: false));
+        }
+
+        if (backendResult.DeployPlanResult is not null)
+        {
+            steps.Add(ToBackendStep("deploy-plan", backendResult.DeployPlanResult, mutatesState: false));
+        }
+
+        if (backendResult.DeployOperationResult is not null)
+        {
+            steps.Add(ToBackendStep("deploy-operation", backendResult.DeployOperationResult, mutatesState: !dryRun));
+        }
+
+        if (backendResult.DeployOperationStatusResult is not null)
+        {
+            steps.Add(ToBackendStep("deploy-operation-status", backendResult.DeployOperationStatusResult, mutatesState: false));
+        }
+
+        if (backendResult.ManifestDriftResult is not null)
+        {
+            steps.Add(ToBackendStep("manifest-drift", backendResult.ManifestDriftResult, mutatesState: false));
+        }
+
+        return steps;
+    }
+
+    private static OperationBackendStep ToBackendStep(string name, BackendCallResult result, bool mutatesState)
+    {
+        return new OperationBackendStep(
+            Name: name,
+            Endpoint: result.Endpoint,
+            Success: result.IsSuccess,
+            Detail: result.Detail,
+            PayloadPreview: result.PayloadPreview,
+            MutatesState: mutatesState);
     }
 
     private OperationEvidence BuildDeploymentEvidence(

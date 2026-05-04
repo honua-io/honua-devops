@@ -76,6 +76,7 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `main`)
 - `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
 - `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-terraform`)
+- `HONUA_DEVOPS_DEPLOY_TARGET_ID` (optional Honua deploy-control target; enables real `/api/v1/admin/deploy/*` preflight, plan, and operation calls)
 
 ## Backend Integration
 
@@ -120,6 +121,11 @@ Honua endpoint contract overrides (defaults map to implemented `honua-server` ro
 - `HONUA_DEVOPS_HONUA_ADMIN_CAPABILITIES_PATH` (`/api/v1/admin/capabilities`)
 - `HONUA_DEVOPS_HONUA_MANIFEST_EXPORT_PATH` (`/api/v1/admin/manifest`)
 - `HONUA_DEVOPS_HONUA_MANIFEST_APPLY_PATH` (`/api/v1/admin/manifest/apply`)
+- `HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH` (`/api/v1/admin/deploy/preflight`)
+- `HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH` (`/api/v1/admin/deploy/plan`)
+- `HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH` (`/api/v1/admin/deploy/operations`)
+- `HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH` (`/api/v1/admin/manifest/drift`)
+- `HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH` (`/api/v1/admin/manifest/versions`)
 
 Legacy aliases still accepted for compatibility:
 
@@ -132,6 +138,18 @@ Legacy aliases still accepted for compatibility:
 - `HONUA_DEVOPS_HONUA_TOPOLOGY_PATH`
 
 - `HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS`
+
+Live Honua integration tests are opt-in:
+
+```bash
+HONUA_DEVOPS_LIVE_INTEGRATION=true \
+HONUA_DEVOPS_HONUA_API_BASE_URL=http://localhost:8080 \
+HONUA_DEVOPS_HONUA_API_KEY="$HONUA_ADMIN_PASSWORD" \
+dotnet test tests/Honua.DevOps.Agent.Tests/Honua.DevOps.Agent.Tests.csproj \
+  --filter LiveHonuaIntegrationTests
+```
+
+Set `HONUA_DEVOPS_DEPLOY_TARGET_ID` to also exercise the real deploy-control plan contract. The current live tests do not create, submit, or roll back deploy operations.
 
 ## Run
 

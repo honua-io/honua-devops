@@ -79,6 +79,26 @@ public class BackendConfigurationTests
         Assert.Equal("api/v1/tickets", configuration.SupportApiTicketsPath);
     }
 
+    [Fact]
+    public void Load_ConfiguresRealHonuaDeployControlPaths()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH", "/api/v1/admin/deploy/preflight");
+        environment.Set("HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH", "/api/v1/admin/deploy/plan");
+        environment.Set("HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH", "/api/v1/admin/deploy/operations");
+        environment.Set("HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH", "/api/v1/admin/manifest/drift");
+        environment.Set("HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH", "/api/v1/admin/manifest/versions");
+
+        BackendConfiguration configuration = BackendConfiguration.Load();
+
+        Assert.Equal("api/v1/admin/deploy/preflight", configuration.HonuaDeployPreflightPath);
+        Assert.Equal("api/v1/admin/deploy/plan", configuration.HonuaDeployPlanPath);
+        Assert.Equal("api/v1/admin/deploy/operations", configuration.HonuaDeployOperationsPath);
+        Assert.Equal("api/v1/admin/manifest/drift", configuration.HonuaManifestDriftPath);
+        Assert.Equal("api/v1/admin/manifest/versions", configuration.HonuaManifestVersionsPath);
+    }
+
     private static void ResetBackendVariables(TestEnvironmentVariableScope environment)
     {
         string[] variableNames =
@@ -104,6 +124,11 @@ public class BackendConfigurationTests
             "HONUA_DEVOPS_HONUA_ADMIN_CAPABILITIES_PATH",
             "HONUA_DEVOPS_HONUA_MANIFEST_EXPORT_PATH",
             "HONUA_DEVOPS_HONUA_MANIFEST_APPLY_PATH",
+            "HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH",
+            "HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH",
+            "HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH",
+            "HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH",
+            "HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH",
             "HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH",
             "HONUA_DEVOPS_HONUA_TUNE_PATH",
             "HONUA_DEVOPS_HONUA_UPGRADE_PATH",

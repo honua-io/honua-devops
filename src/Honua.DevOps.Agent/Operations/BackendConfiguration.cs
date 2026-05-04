@@ -25,7 +25,12 @@ internal sealed record BackendConfiguration(
     string HonuaManifestApplyPath,
     TimeSpan RequestTimeout,
     Uri? SupportApiBaseUri = null,
-    string SupportApiTicketsPath = "api/v1/tickets")
+    string SupportApiTicketsPath = "api/v1/tickets",
+    string HonuaDeployPreflightPath = "api/v1/admin/deploy/preflight",
+    string HonuaDeployPlanPath = "api/v1/admin/deploy/plan",
+    string HonuaDeployOperationsPath = "api/v1/admin/deploy/operations",
+    string HonuaManifestDriftPath = "api/v1/admin/manifest/drift",
+    string HonuaManifestVersionsPath = "api/v1/admin/manifest/versions")
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
     private const string OTelBaseUrlVariable = "HONUA_DEVOPS_OTEL_BASE_URL";
@@ -52,6 +57,11 @@ internal sealed record BackendConfiguration(
     private const string HonuaAdminCapabilitiesPathVariable = "HONUA_DEVOPS_HONUA_ADMIN_CAPABILITIES_PATH";
     private const string HonuaManifestExportPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_EXPORT_PATH";
     private const string HonuaManifestApplyPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_APPLY_PATH";
+    private const string HonuaDeployPreflightPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH";
+    private const string HonuaDeployPlanPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH";
+    private const string HonuaDeployOperationsPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH";
+    private const string HonuaManifestDriftPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH";
+    private const string HonuaManifestVersionsPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH";
 
     // Backwards-compatible aliases from the original /ops route placeholders.
     private const string LegacyTroubleshootPathVariable = "HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH";
@@ -147,6 +157,26 @@ internal sealed record BackendConfiguration(
             HonuaManifestApplyPathVariable,
             LegacyDeployPathVariable,
             "/api/v1/admin/manifest/apply");
+        string honuaDeployPreflightPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaDeployPreflightPathVariable),
+            "/api/v1/admin/deploy/preflight",
+            HonuaDeployPreflightPathVariable);
+        string honuaDeployPlanPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaDeployPlanPathVariable),
+            "/api/v1/admin/deploy/plan",
+            HonuaDeployPlanPathVariable);
+        string honuaDeployOperationsPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaDeployOperationsPathVariable),
+            "/api/v1/admin/deploy/operations",
+            HonuaDeployOperationsPathVariable);
+        string honuaManifestDriftPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaManifestDriftPathVariable),
+            "/api/v1/admin/manifest/drift",
+            HonuaManifestDriftPathVariable);
+        string honuaManifestVersionsPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaManifestVersionsPathVariable),
+            "/api/v1/admin/manifest/versions",
+            HonuaManifestVersionsPathVariable);
 
         TimeSpan timeout = ParseTimeout(Environment.GetEnvironmentVariable(TimeoutSecondsVariable));
 
@@ -181,7 +211,12 @@ internal sealed record BackendConfiguration(
             HonuaManifestApplyPath: honuaManifestApplyPath,
             RequestTimeout: timeout,
             SupportApiBaseUri: supportApiBaseUri,
-            SupportApiTicketsPath: supportApiTicketsPath);
+            SupportApiTicketsPath: supportApiTicketsPath,
+            HonuaDeployPreflightPath: honuaDeployPreflightPath,
+            HonuaDeployPlanPath: honuaDeployPlanPath,
+            HonuaDeployOperationsPath: honuaDeployOperationsPath,
+            HonuaManifestDriftPath: honuaManifestDriftPath,
+            HonuaManifestVersionsPath: honuaManifestVersionsPath);
     }
 
     private static string ParseRelativePathWithLegacy(string variableName, string legacyVariableName, string fallback)

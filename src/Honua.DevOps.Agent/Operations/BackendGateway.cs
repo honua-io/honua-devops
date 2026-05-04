@@ -155,8 +155,32 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         ExecutionMode executionMode,
         ExecutionTier executionTier,
         string[] allowedEnvironments,
+        string? deployTargetId,
         CancellationToken cancellationToken)
     {
+        BackendCallResult? deployPreflightResult = null;
+        BackendCallResult? deployPlanResult = null;
+        BackendCallResult? deployOperationResult = null;
+        if (!string.IsNullOrWhiteSpace(deployTargetId))
+        {
+            deployPreflightResult = await RequestDeployPreflightAsync(
+                includeDiagnostics: true,
+                cancellationToken);
+            deployPlanResult = await PlanDeployOperationAsync(
+                deployTargetId,
+                revision,
+                currentRevision: null,
+                new Dictionary<string, string>
+                {
+                    ["service"] = service,
+                    ["environments"] = string.Join(",", environments),
+                    ["action"] = action,
+                    ["gitOpsTool"] = gitOpsTool,
+                    ["dryRun"] = dryRun ? "true" : "false"
+                },
+                cancellationToken);
+        }
+
         ManifestApplyRequest requestBody = DesiredStateManifestBuilder.BuildGitOpsDeployRequest(
             service,
             environments,
@@ -183,9 +207,53 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             requestBody,
             cancellationToken);
 
+        if (!dryRun && !string.IsNullOrWhiteSpace(deployTargetId))
+        {
+            deployOperationResult = await CreateDeployOperationAsync(
+                deployTargetId,
+                revision,
+                currentRevision: null,
+                reason: changeSummary,
+                submitImmediately: true,
+                idempotencyKey: $"honua-devops:{service}:{string.Join("-", environments)}:{revision}:{action}",
+                correlationId: $"honua-devops:{NormalizeResourceToken(service, "service")}",
+                priority: environments.Any(environment => environment.Equals("prod", StringComparison.OrdinalIgnoreCase))
+                    ? "high"
+                    : "normal",
+                parameters: new Dictionary<string, string>
+                {
+                    ["service"] = service,
+                    ["environments"] = string.Join(",", environments),
+                    ["action"] = action,
+                    ["manifestApply"] = applyResult.IsSuccess ? "success" : "failed"
+                },
+                cancellationToken);
+        }
+
+        List<BackendCallResult> combinedCalls =
+        [
+            manifestSnapshot.CallResult,
+            capabilitiesSnapshot.CallResult,
+            applyResult
+        ];
+        if (deployPreflightResult is not null)
+        {
+            combinedCalls.Add(deployPreflightResult);
+        }
+
+        if (deployPlanResult is not null)
+        {
+            combinedCalls.Add(deployPlanResult);
+        }
+
+        if (deployOperationResult is not null)
+        {
+            combinedCalls.Add(deployOperationResult);
+        }
+
         BackendCallResult combinedResult = CombineResults(
             "gitops-deploy",
-            [manifestSnapshot.CallResult, capabilitiesSnapshot.CallResult, applyResult]);
+            combinedCalls);
         return new GitOpsDeployBackendResult(
             ApplyResult: applyResult,
             ExportResult: manifestSnapshot.CallResult,
@@ -196,7 +264,10 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
                 : JsonDocument.Parse(manifestSnapshot.Payload.RootElement.GetRawText()),
             CapabilitiesPayload: capabilitiesSnapshot.Payload is null
                 ? null
-                : JsonDocument.Parse(capabilitiesSnapshot.Payload.RootElement.GetRawText()));
+                : JsonDocument.Parse(capabilitiesSnapshot.Payload.RootElement.GetRawText()),
+            DeployPreflightResult: deployPreflightResult,
+            DeployPlanResult: deployPlanResult,
+            DeployOperationResult: deployOperationResult);
     }
 
     internal async Task<GitOpsDeployBackendResult> PlanGitOpsRunAsync(CancellationToken cancellationToken)
@@ -248,6 +319,109 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
     internal Task<BackendJsonResult> GetCapabilitySnapshotAsync(CancellationToken cancellationToken)
     {
         return GetJsonFromHonuaAsync(configuration.HonuaAdminCapabilitiesPath, cancellationToken);
+    }
+
+    internal Task<BackendCallResult> RequestDeployPreflightAsync(bool includeDiagnostics, CancellationToken cancellationToken)
+    {
+        string path = includeDiagnostics
+            ? AddQueryParameters(configuration.HonuaDeployPreflightPath, ("includeDiagnostics", "true"))
+            : configuration.HonuaDeployPreflightPath;
+
+        return GetFromHonuaAsync(path, cancellationToken);
+    }
+
+    internal Task<BackendCallResult> PlanDeployOperationAsync(
+        string targetId,
+        string desiredRevision,
+        string? currentRevision,
+        IReadOnlyDictionary<string, string>? parameters,
+        CancellationToken cancellationToken)
+    {
+        return PostToHonuaAsync(
+            configuration.HonuaDeployPlanPath,
+            new
+            {
+                targetId,
+                desiredRevision,
+                currentRevision,
+                parameters
+            },
+            cancellationToken);
+    }
+
+    internal Task<BackendCallResult> CreateDeployOperationAsync(
+        string targetId,
+        string desiredRevision,
+        string? currentRevision,
+        string reason,
+        bool submitImmediately,
+        string idempotencyKey,
+        string correlationId,
+        string priority,
+        IReadOnlyDictionary<string, string>? parameters,
+        CancellationToken cancellationToken)
+    {
+        return PostToHonuaAsync(
+            configuration.HonuaDeployOperationsPath,
+            new
+            {
+                targetId,
+                desiredRevision,
+                currentRevision,
+                reason,
+                idempotencyKey,
+                correlationId,
+                priority,
+                submitImmediately,
+                parameters
+            },
+            cancellationToken);
+    }
+
+    internal Task<BackendCallResult> GetDeployOperationAsync(string operationId, CancellationToken cancellationToken)
+    {
+        return GetFromHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}",
+            cancellationToken);
+    }
+
+    internal Task<BackendCallResult> SubmitDeployOperationAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        return PostToHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/submit",
+            new { reason },
+            cancellationToken);
+    }
+
+    internal Task<BackendCallResult> RollbackDeployOperationAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        return PostToHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
+            new { reason },
+            cancellationToken);
+    }
+
+    internal Task<BackendCallResult> RequestManifestDriftAsync(bool verbose, CancellationToken cancellationToken)
+    {
+        string path = verbose
+            ? AddQueryParameters(configuration.HonuaManifestDriftPath, ("verbose", "true"))
+            : configuration.HonuaManifestDriftPath;
+
+        return GetFromHonuaAsync(path, cancellationToken);
+    }
+
+    internal Task<BackendCallResult> RequestManifestVersionsAsync(int limit, CancellationToken cancellationToken)
+    {
+        int clampedLimit = Math.Clamp(limit, 1, 100);
+        return GetFromHonuaAsync(
+            AddQueryParameters(configuration.HonuaManifestVersionsPath, ("limit", clampedLimit.ToString())),
+            cancellationToken);
     }
 
     internal async Task<BackendCallResult> RequestRequirementsAnalysisAsync(

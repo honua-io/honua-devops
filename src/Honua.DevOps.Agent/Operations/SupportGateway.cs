@@ -121,6 +121,8 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
 
     internal async Task<BackendCallResult> TriggerAutoBundleAsync(
         string ticketId,
+        string? instanceUrl = null,
+        string? apiKey = null,
         CancellationToken cancellationToken = default)
     {
         if (configuration.SupportApiBaseUri is null)
@@ -136,7 +138,7 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
         return await SendAsync(
             HttpMethod.Post,
             relativePath,
-            payload: new { },
+            payload: new { instanceUrl, apiKey },
             cancellationToken);
     }
 
