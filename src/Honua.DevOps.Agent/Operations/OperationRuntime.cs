@@ -8,7 +8,8 @@ internal sealed record OperationRuntime(
     string TerraformRepository,
     string TerraformRef,
     string TerraformLocalPath,
-    string[] TerraformDeploymentTargets)
+    string[] TerraformDeploymentTargets,
+    string? DeployTargetId = null)
 {
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
 
@@ -20,6 +21,7 @@ internal sealed record OperationRuntime(
     private const string TerraformRefVariable = "HONUA_DEVOPS_TERRAFORM_REF";
     private const string TerraformTargetsVariable = "HONUA_DEVOPS_TERRAFORM_TARGETS";
     private const string TerraformLocalPathVariable = "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH";
+    private const string DeployTargetIdVariable = "HONUA_DEVOPS_DEPLOY_TARGET_ID";
 
     internal static OperationRuntime Load()
     {
@@ -56,6 +58,9 @@ internal sealed record OperationRuntime(
         string[] terraformTargets = ParseTerraformTargets(
             Environment.GetEnvironmentVariable(TerraformTargetsVariable),
             terraformLocalPath);
+        string? deployTargetId = NormalizeOptionalIdentifier(
+            Environment.GetEnvironmentVariable(DeployTargetIdVariable),
+            DeployTargetIdVariable);
 
         return new OperationRuntime(
             mode,
@@ -65,7 +70,8 @@ internal sealed record OperationRuntime(
             terraformRepository,
             terraformRef,
             terraformLocalPath,
-            terraformTargets);
+            terraformTargets,
+            deployTargetId);
     }
 
     private static ExecutionMode ParseExecutionMode(string? value)
@@ -237,5 +243,35 @@ internal sealed record OperationRuntime(
         return value.All(character =>
             char.IsLetterOrDigit(character) ||
             character is '-' or '_');
+    }
+
+    private static string? NormalizeOptionalIdentifier(string? value, string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        string trimmed = value.Trim();
+        if (trimmed.Length > 128)
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variableName}` must be 128 characters or fewer.");
+        }
+
+        if (!char.IsLetterOrDigit(trimmed[0]))
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variableName}` must start with a letter or digit.");
+        }
+
+        if (trimmed.Any(character =>
+                !(char.IsLetterOrDigit(character) || character is '-' or '_' or '.' or ':' or '/')))
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variableName}` contains invalid characters.");
+        }
+
+        return trimmed;
     }
 }

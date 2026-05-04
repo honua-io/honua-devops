@@ -217,12 +217,18 @@ public class SupportGatewayTests
         using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
         using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
 
-        BackendCallResult result = await gateway.TriggerAutoBundleAsync("T-005");
+        BackendCallResult result = await gateway.TriggerAutoBundleAsync(
+            "T-005",
+            "http://localhost:8080",
+            "admin-key");
 
         Assert.True(result.IsSuccess);
         CapturedRequest captured = Assert.Single(handler.CapturedRequests);
         Assert.Equal("POST", captured.Method);
         Assert.Contains("/api/v1/tickets/T-005/auto-bundle", captured.Uri, StringComparison.Ordinal);
+        using JsonDocument requestJson = JsonDocument.Parse(captured.Body!);
+        Assert.Equal("http://localhost:8080", requestJson.RootElement.GetProperty("instanceUrl").GetString());
+        Assert.Equal("admin-key", requestJson.RootElement.GetProperty("apiKey").GetString());
     }
 
     [Fact]
@@ -330,7 +336,8 @@ public class SupportGatewayTests
                 requestedAction = "diagnose",
                 allowedAccessMode = "read-only",
                 ttlMinutes = 60,
-                rollbackExpected = false
+                rollbackExpected = false,
+                instanceUrl = "http://localhost:8080"
             },
             new
             {
@@ -388,13 +395,19 @@ public class SupportGatewayTests
         Assert.Contains(response.Findings, finding => finding.Contains("T-101", StringComparison.Ordinal));
         Assert.DoesNotContain(response.Findings, finding => finding.Contains("T-102", StringComparison.Ordinal));
 
-        // Verify diagnosis was posted for T-100 and T-101
+        // Verify diagnosis was posted for T-100 and T-101, and auto-bundle was requested for the real Honua URL.
         List<CapturedRequest> diagnosisPosts = supportHandler.CapturedRequests
-            .Where(r => r.Method == "POST")
+            .Where(r => r.Method == "POST" && r.Uri.Contains("/diagnosis", StringComparison.Ordinal))
             .ToList();
         Assert.Equal(2, diagnosisPosts.Count);
         Assert.Contains(diagnosisPosts, r => r.Uri.Contains("/T-100/diagnosis", StringComparison.Ordinal));
         Assert.Contains(diagnosisPosts, r => r.Uri.Contains("/T-101/diagnosis", StringComparison.Ordinal));
+
+        CapturedRequest autoBundlePost = Assert.Single(
+            supportHandler.CapturedRequests,
+            r => r.Method == "POST" && r.Uri.Contains("/T-100/auto-bundle", StringComparison.Ordinal));
+        using JsonDocument autoBundleJson = JsonDocument.Parse(autoBundlePost.Body!);
+        Assert.Equal("http://localhost:8080", autoBundleJson.RootElement.GetProperty("instanceUrl").GetString());
 
         CapturedRequest firstDiagnosisPost = Assert.Single(
             diagnosisPosts,

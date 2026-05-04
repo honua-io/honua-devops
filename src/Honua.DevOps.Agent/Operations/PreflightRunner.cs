@@ -27,6 +27,7 @@ internal static class PreflightRunner
         Console.WriteLine($"Terraform repo/ref: {runtime.TerraformRepository}@{runtime.TerraformRef}");
         Console.WriteLine($"Terraform local path: {runtime.TerraformLocalPath}");
         Console.WriteLine($"Terraform targets: {string.Join(", ", runtime.TerraformDeploymentTargets)}");
+        Console.WriteLine($"Deploy-control target: {runtime.DeployTargetId ?? "not configured"}");
         IReadOnlyList<IRuntimeAdapter> adapters = RuntimeAdapterRegistry.ResolveMany(runtime.TerraformDeploymentTargets);
         Console.WriteLine($"Runtime adapters: {string.Join(" | ", adapters.Select(adapter => adapter.Capability.ToSummary()))}");
         RuntimeAdapterRequest adapterRequest = new(
@@ -56,6 +57,16 @@ internal static class PreflightRunner
         BackendCallResult otelProbe = await backendGateway.ProbeOtelAsync(cancellationToken);
         PrintCheck(otelProbe.IsSuccess, "OTEL probe", $"{otelProbe.Detail} ({otelProbe.Endpoint})");
 
+        BackendCallResult? deployPreflight = null;
+        if (!string.IsNullOrWhiteSpace(runtime.DeployTargetId))
+        {
+            deployPreflight = await backendGateway.RequestDeployPreflightAsync(includeDiagnostics: true, cancellationToken);
+            PrintCheck(
+                deployPreflight.IsSuccess,
+                "Honua deploy preflight",
+                $"{deployPreflight.Detail} ({deployPreflight.Endpoint})");
+        }
+
         bool targetsOk = runtime.TerraformDeploymentTargets.Length > 0;
         PrintCheck(
             targetsOk,
@@ -67,7 +78,8 @@ internal static class PreflightRunner
             "Runtime adapter catalog",
             adaptersOk ? "all targets resolved to adapter capabilities" : "one or more targets failed adapter resolution");
 
-        bool success = terraformPathOk && honuaProbe.IsSuccess && otelProbe.IsSuccess && targetsOk && adaptersOk;
+        bool deployPreflightOk = deployPreflight?.IsSuccess ?? true;
+        bool success = terraformPathOk && honuaProbe.IsSuccess && otelProbe.IsSuccess && deployPreflightOk && targetsOk && adaptersOk;
         if (success)
         {
             Console.WriteLine("Preflight passed.");

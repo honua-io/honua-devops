@@ -16,4 +16,5 @@ internal sealed record OperationResponse(
     GitOpsPlan? GitOpsPlan = null,
     ReleaseOrchestrationPlan? ReleaseOrchestration = null,
     ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null,
-    OrchestrationHostPlan? OrchestrationHost = null);
+    OrchestrationHostPlan? OrchestrationHost = null,
+    IReadOnlyList<OperationBackendStep>? BackendSteps = null);

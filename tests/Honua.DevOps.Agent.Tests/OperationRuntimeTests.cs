@@ -78,6 +78,30 @@ public class OperationRuntimeTests
         Assert.Contains("invalid environment names", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Load_ParsesDeployTargetIdForRealHonuaDeployControl()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+        environment.Set("HONUA_DEVOPS_DEPLOY_TARGET_ID", "prod-api:primary");
+
+        OperationRuntime runtime = OperationRuntime.Load();
+
+        Assert.Equal("prod-api:primary", runtime.DeployTargetId);
+    }
+
+    [Fact]
+    public void Load_RejectsUnsafeDeployTargetId()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+        environment.Set("HONUA_DEVOPS_DEPLOY_TARGET_ID", "prod-api;rm");
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(OperationRuntime.Load);
+
+        Assert.Contains("HONUA_DEVOPS_DEPLOY_TARGET_ID", exception.Message, StringComparison.Ordinal);
+    }
+
     private static void ResetRuntimeVariables(TestEnvironmentVariableScope environment)
     {
         string[] variableNames =
@@ -89,7 +113,8 @@ public class OperationRuntimeTests
             "HONUA_DEVOPS_TERRAFORM_REPO",
             "HONUA_DEVOPS_TERRAFORM_REF",
             "HONUA_DEVOPS_TERRAFORM_TARGETS",
-            "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"
+            "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH",
+            "HONUA_DEVOPS_DEPLOY_TARGET_ID"
         ];
 
         foreach (string variableName in variableNames)

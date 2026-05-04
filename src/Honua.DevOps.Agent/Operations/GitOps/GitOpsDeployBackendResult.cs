@@ -8,7 +8,12 @@ internal sealed record GitOpsDeployBackendResult(
     BackendCallResult CapabilitiesResult,
     BackendCallResult CombinedResult,
     JsonDocument? ExportPayload,
-    JsonDocument? CapabilitiesPayload) : IDisposable
+    JsonDocument? CapabilitiesPayload,
+    BackendCallResult? DeployPreflightResult = null,
+    BackendCallResult? DeployPlanResult = null,
+    BackendCallResult? DeployOperationResult = null,
+    BackendCallResult? DeployOperationStatusResult = null,
+    BackendCallResult? ManifestDriftResult = null) : IDisposable
 {
     public void Dispose()
     {
