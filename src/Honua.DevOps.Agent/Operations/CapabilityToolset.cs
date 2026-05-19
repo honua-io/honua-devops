@@ -6,12 +6,21 @@ namespace Honua.DevOps.Agent.Operations;
 
 internal static class CapabilityToolset
 {
-    internal static IList<AITool> Create(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null, SupportGateway? supportGateway = null)
+    internal static IList<AITool> Create(
+        OperationRuntime runtime,
+        BackendGateway gateway,
+        OperatorPolicyModel? policy = null,
+        SupportGateway? supportGateway = null,
+        string? defaultEdition = null)
     {
-        HonuaOperationsToolkit toolkit = new(runtime, gateway, policy, supportGateway);
+        HonuaOperationsToolkit toolkit = new(runtime, gateway, policy, supportGateway, defaultEdition);
 
         return
         [
+            CreateTool(
+                () => toolkit.DescribeEnvironmentAsync(),
+                "describe_environment",
+                "Discover the connected Honua environment: readiness, edition, manifest scope, deploy targets, and allowed environments. Call first when the operator's request lacks an explicit service, environment, or edition."),
             CreateTool(
                 (string service, string environment, string timeframe, string symptoms, string logSample)
                     => toolkit.AnalyzeLogsAsync(service, environment, timeframe, symptoms, logSample),

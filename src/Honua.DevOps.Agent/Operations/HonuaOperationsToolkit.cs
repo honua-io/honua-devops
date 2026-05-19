@@ -12,9 +12,81 @@ using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.Operato
 
 namespace Honua.DevOps.Agent.Operations;
 
-internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGateway gateway, OperatorPolicyModel? policy = null, SupportGateway? supportGateway = null)
+internal sealed class HonuaOperationsToolkit(
+    OperationRuntime runtime,
+    BackendGateway gateway,
+    OperatorPolicyModel? policy = null,
+    SupportGateway? supportGateway = null,
+    string? defaultEdition = null)
 {
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
+
+    internal string SessionEdition => string.IsNullOrWhiteSpace(defaultEdition) ? "community" : defaultEdition!.Trim().ToLowerInvariant();
+
+    [Description("Describe the connected Honua environment: readiness, edition and feature capabilities, manifest scope, deploy targets, and approved environments. Call this first whenever the operator's request lacks an explicit service, environment, or edition so subsequent tool calls are grounded in real state.")]
+    public async Task<OperationResponse> DescribeEnvironmentAsync(CancellationToken cancellationToken = default)
+    {
+        BackendCallResult readiness = await gateway.ProbeHonuaAsync(cancellationToken);
+        using BackendJsonResult capabilities = await gateway.GetCapabilitySnapshotAsync(cancellationToken);
+        using BackendJsonResult manifest = await gateway.ExportManifestSnapshotAsync(cancellationToken);
+
+        string detectedEdition = TryReadEditionFromCapabilities(capabilities) ?? SessionEdition;
+
+        List<string> findings =
+        [
+            $"Readiness probe: {readiness.Detail} ({readiness.Endpoint}).",
+            $"Capabilities snapshot: {capabilities.CallResult.Detail} ({capabilities.CallResult.Endpoint}).",
+            $"Manifest snapshot: {manifest.CallResult.Detail} ({manifest.CallResult.Endpoint}).",
+            $"Detected edition: {detectedEdition} (session default: {SessionEdition}).",
+            $"Allowed environments: {string.Join(", ", runtime.AllowedEnvironments)}.",
+            $"GitOps tool: {runtime.GitOpsTool}.",
+            $"Execution mode/tier: {runtime.ExecutionMode.ToString().ToLowerInvariant()}/{runtime.ExecutionTier.ToConfigValue()}.",
+            $"Deploy target id: {(string.IsNullOrWhiteSpace(runtime.DeployTargetId) ? "unset" : runtime.DeployTargetId!)}.",
+            $"Terraform local path: {(string.IsNullOrWhiteSpace(runtime.TerraformLocalPath) ? "unset" : runtime.TerraformLocalPath!)} (targets: {string.Join(", ", runtime.TerraformDeploymentTargets)}).",
+            $"Capabilities excerpt: {capabilities.CallResult.PayloadPreview}",
+            $"Manifest excerpt: {manifest.CallResult.PayloadPreview}"
+        ];
+
+        bool allOk = readiness.IsSuccess && capabilities.CallResult.IsSuccess && manifest.CallResult.IsSuccess;
+
+        return new OperationResponse(
+            Status: allOk ? "environment-described" : "environment-degraded",
+            Summary: $"Honua environment description (edition={detectedEdition}, ready={readiness.IsSuccess}).",
+            Findings: findings,
+            Actions:
+            [
+                "Use the detected edition when invoking edition-gated tools; do not guess.",
+                "Reference allowed environments and deploy target id from this snapshot before scheduling deploys.",
+                "If readiness or capabilities failed, fix configuration (HONUA_DEVOPS_HONUA_API_BASE_URL / HONUA_DEVOPS_HONUA_API_KEY) before any mutating call."
+            ],
+            ValidationChecks:
+            [
+                "Readiness probe returns success.",
+                "Capabilities snapshot exposes an edition value.",
+                "Manifest export returns a non-empty payload."
+            ],
+            Risks:
+            [
+                "Acting without grounding in this snapshot risks calling against the wrong edition or environment.",
+                "Stale capability data may mask runtime drift; re-run describe before mutating operations."
+            ],
+            BackendSteps:
+            [
+                ToBackendStep("describe:readiness", readiness, mutatesState: false),
+                ToBackendStep("describe:capabilities", capabilities.CallResult, mutatesState: false),
+                ToBackendStep("describe:manifest", manifest.CallResult, mutatesState: false)
+            ]);
+    }
+
+    private static string? TryReadEditionFromCapabilities(BackendJsonResult capabilities)
+    {
+        if (!capabilities.CallResult.IsSuccess || capabilities.Payload is null)
+        {
+            return null;
+        }
+
+        return BackendGateway.ExtractEditionFromCapabilities(capabilities.Payload);
+    }
 
     [Description("Analyze logs through OTEL endpoint and produce findings, remediation steps, and validation checks.")]
     public async Task<OperationResponse> AnalyzeLogsAsync(
@@ -2024,24 +2096,26 @@ internal sealed class HonuaOperationsToolkit(OperationRuntime runtime, BackendGa
         return items.Length == 0 ? [fallback] : items;
     }
 
-    private static string NormalizeEdition(string edition)
+    private string NormalizeEdition(string edition)
     {
-        return Normalize(edition, "community").ToLowerInvariant() switch
+        string fallback = SessionEdition;
+        string resolved = Normalize(edition, fallback).ToLowerInvariant();
+        return resolved switch
         {
             "community" => "community",
             "pro" => "pro",
             "professional" => "pro",
             "enterprise" => "enterprise",
-            _ => "community"
+            _ => fallback
         };
     }
 
-    private static bool EditionAtLeast(string currentEdition, string requiredEdition)
+    private bool EditionAtLeast(string currentEdition, string requiredEdition)
     {
         return EditionRank(currentEdition) >= EditionRank(requiredEdition);
     }
 
-    private static int EditionRank(string edition)
+    private int EditionRank(string edition)
     {
         return NormalizeEdition(edition) switch
         {
