@@ -497,6 +497,61 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             cancellationToken);
     }
 
+    internal static string? ExtractEditionFromCapabilities(JsonDocument capabilities)
+    {
+        if (capabilities is null)
+        {
+            return null;
+        }
+
+        return FindEditionToken(capabilities.RootElement);
+    }
+
+    private static string? FindEditionToken(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, "edition", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(property.Name, "licenseEdition", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(property.Name, "licenseTier", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (property.Value.ValueKind == JsonValueKind.String)
+                        {
+                            string? value = property.Value.GetString();
+                            if (!string.IsNullOrWhiteSpace(value))
+                            {
+                                return value.Trim();
+                            }
+                        }
+                    }
+
+                    string? nested = FindEditionToken(property.Value);
+                    if (nested is not null)
+                    {
+                        return nested;
+                    }
+                }
+                return null;
+
+            case JsonValueKind.Array:
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    string? nested = FindEditionToken(item);
+                    if (nested is not null)
+                    {
+                        return nested;
+                    }
+                }
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
     private Task<BackendCallResult> GetFromHonuaAsync(string relativePath, CancellationToken cancellationToken)
     {
         return SendAsync(
