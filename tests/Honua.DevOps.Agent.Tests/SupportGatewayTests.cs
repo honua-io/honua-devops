@@ -53,6 +53,28 @@ public class SupportGatewayTests
     }
 
     [Fact]
+    public async Task ListPendingTicketsAsync_UsesBearerTokenWhenConfigured()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        TestHttpMessageHandler handler = new(request =>
+        {
+            capturedRequest = request;
+            return TestHttpMessageHandler.JsonOk(Array.Empty<object>());
+        });
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using SupportGateway gateway = new(
+            CreateBackendConfiguration(supportApiBearerToken: "support-operator-token"),
+            httpClient);
+
+        await gateway.ListPendingTicketsAsync();
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("Bearer", capturedRequest!.Headers.Authorization?.Scheme);
+        Assert.Equal("support-operator-token", capturedRequest.Headers.Authorization?.Parameter);
+        Assert.False(capturedRequest.Headers.Contains("X-Operator-Role"));
+    }
+
+    [Fact]
     public async Task PostDiagnosisAsync_SendsCorrectJsonPayload()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
@@ -476,7 +498,9 @@ public class SupportGatewayTests
             TerraformDeploymentTargets: ["eks", "aks"]);
     }
 
-    private static BackendConfiguration CreateBackendConfiguration(bool disableSupport = false)
+    private static BackendConfiguration CreateBackendConfiguration(
+        bool disableSupport = false,
+        string? supportApiBearerToken = null)
     {
         return new BackendConfiguration(
             HonuaApiBaseUri: new Uri("http://localhost:8080"),
@@ -501,6 +525,7 @@ public class SupportGatewayTests
             HonuaManifestApplyPath: "api/v1/admin/manifest/apply",
             RequestTimeout: TimeSpan.FromSeconds(5),
             SupportApiBaseUri: disableSupport ? null : new Uri("http://localhost:5100"),
-            SupportApiTicketsPath: "api/v1/tickets");
+            SupportApiTicketsPath: "api/v1/tickets",
+            SupportApiBearerToken: supportApiBearerToken);
     }
 }

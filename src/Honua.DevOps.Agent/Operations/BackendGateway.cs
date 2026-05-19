@@ -516,7 +516,7 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
                 {
                     if (string.Equals(property.Name, "edition", StringComparison.OrdinalIgnoreCase)
                         || string.Equals(property.Name, "licenseEdition", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(property.Name, "tier", StringComparison.OrdinalIgnoreCase))
+                        || string.Equals(property.Name, "licenseTier", StringComparison.OrdinalIgnoreCase))
                     {
                         if (property.Value.ValueKind == JsonValueKind.String)
                         {

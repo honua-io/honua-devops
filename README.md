@@ -2,6 +2,8 @@
 
 AI DevOps operator and solution architect for Honua.
 
+Current operator capabilities are summarized in [docs/features/README.md](docs/features/README.md).
+
 This repository is the execution vehicle for the operator control system tracked in [honua-devops#11](https://github.com/honua-io/honua-devops/issues/11):
 
 - Operate Honua like a senior platform operator (install, configure, optimize, monitor, troubleshoot, upgrade).
@@ -90,11 +92,13 @@ Optional auth:
 
 - `HONUA_DEVOPS_HONUA_API_KEY` (sent as `X-API-Key` for Honua admin/metrics contracts)
 - `HONUA_DEVOPS_OTEL_API_KEY` (sent as `Authorization: Bearer ...` for OTEL queries)
+- `HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN` (sent as `Authorization: Bearer ...` for authenticated `honua-support` deployments)
 
 Support ticket integration:
 
 - `HONUA_DEVOPS_SUPPORT_API_BASE_URL` enables `process_pending_tickets`
 - `HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH` defaults to `/api/v1/tickets`
+- `HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN` should be set to an operator support token outside local development.
 - Diagnosis posts include guided-fix output plus `OperationEvidence` and `DiagnosisScorecard` payloads for ticket audit and score tracking.
 
 Health probes:

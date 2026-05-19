@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -192,7 +193,7 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
             request.Content = JsonContent.Create(payload);
         }
 
-        request.Headers.TryAddWithoutValidation(OperatorRoleHeader, "true");
+        ApplySupportAuthentication(request);
 
         try
         {
@@ -233,7 +234,7 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
             request.Content = JsonContent.Create(payload);
         }
 
-        request.Headers.TryAddWithoutValidation(OperatorRoleHeader, "true");
+        ApplySupportAuthentication(request);
 
         try
         {
@@ -287,6 +288,17 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
         {
             return null;
         }
+    }
+
+    private void ApplySupportAuthentication(HttpRequestMessage request)
+    {
+        if (!string.IsNullOrWhiteSpace(configuration.SupportApiBearerToken))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", configuration.SupportApiBearerToken);
+            return;
+        }
+
+        request.Headers.TryAddWithoutValidation(OperatorRoleHeader, "true");
     }
 
     private static async Task<string> ReadBodyPreviewAsync(HttpContent content, CancellationToken cancellationToken)

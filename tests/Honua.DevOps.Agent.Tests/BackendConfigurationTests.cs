@@ -72,11 +72,13 @@ public class BackendConfigurationTests
         ResetBackendVariables(environment);
         environment.Set("HONUA_DEVOPS_SUPPORT_API_BASE_URL", "http://localhost:5100");
         environment.Set("HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH", "/api/v1/tickets");
+        environment.Set("HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN", "support-operator-token");
 
         BackendConfiguration configuration = BackendConfiguration.Load();
 
         Assert.Equal(new Uri("http://localhost:5100"), configuration.SupportApiBaseUri);
         Assert.Equal("api/v1/tickets", configuration.SupportApiTicketsPath);
+        Assert.Equal("support-operator-token", configuration.SupportApiBearerToken);
     }
 
     [Fact]
@@ -137,6 +139,7 @@ public class BackendConfigurationTests
             "HONUA_DEVOPS_HONUA_TOPOLOGY_PATH",
             "HONUA_DEVOPS_SUPPORT_API_BASE_URL",
             "HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH",
+            "HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN",
             "HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS"
         ];
 

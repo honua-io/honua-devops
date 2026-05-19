@@ -26,6 +26,7 @@ internal sealed record BackendConfiguration(
     TimeSpan RequestTimeout,
     Uri? SupportApiBaseUri = null,
     string SupportApiTicketsPath = "api/v1/tickets",
+    string? SupportApiBearerToken = null,
     string HonuaDeployPreflightPath = "api/v1/admin/deploy/preflight",
     string HonuaDeployPlanPath = "api/v1/admin/deploy/plan",
     string HonuaDeployOperationsPath = "api/v1/admin/deploy/operations",
@@ -73,6 +74,7 @@ internal sealed record BackendConfiguration(
 
     private const string SupportApiBaseUrlVariable = "HONUA_DEVOPS_SUPPORT_API_BASE_URL";
     private const string SupportApiTicketsPathVariable = "HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH";
+    private const string SupportApiBearerTokenVariable = "HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN";
 
     private const string TimeoutSecondsVariable = "HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS";
 
@@ -187,6 +189,7 @@ internal sealed record BackendConfiguration(
             Environment.GetEnvironmentVariable(SupportApiTicketsPathVariable),
             "api/v1/tickets",
             SupportApiTicketsPathVariable);
+        string? supportApiBearerToken = Normalize(Environment.GetEnvironmentVariable(SupportApiBearerTokenVariable));
 
         return new BackendConfiguration(
             HonuaApiBaseUri: honuaApiBaseUri,
@@ -212,6 +215,7 @@ internal sealed record BackendConfiguration(
             RequestTimeout: timeout,
             SupportApiBaseUri: supportApiBaseUri,
             SupportApiTicketsPath: supportApiTicketsPath,
+            SupportApiBearerToken: supportApiBearerToken,
             HonuaDeployPreflightPath: honuaDeployPreflightPath,
             HonuaDeployPlanPath: honuaDeployPlanPath,
             HonuaDeployOperationsPath: honuaDeployOperationsPath,

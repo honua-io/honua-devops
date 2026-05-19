@@ -86,6 +86,11 @@ Examples:
                 $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, or {HelpFlag}.");
         }
 
+        if (help || listTools)
+        {
+            return new CliOptions(ProviderKind.Codex, prompt, preflight, help, listTools);
+        }
+
         string selectedProvider = providerValue ??
                                   Environment.GetEnvironmentVariable(ProviderEnvironmentVariable) ??
                                   ProviderKind.Codex.ToString();
