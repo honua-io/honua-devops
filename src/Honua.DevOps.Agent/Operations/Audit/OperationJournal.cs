@@ -2,6 +2,23 @@ using System.Text.Json;
 
 namespace Honua.DevOps.Agent.Operations.Audit;
 
+internal sealed record RecentOperation(
+    string OperationId,
+    string Timestamp,
+    string Tool,
+    string Status,
+    string Summary,
+    bool Mutated,
+    string? ExecutionTier);
+
+internal sealed record OperationSearchResult(
+    string Status,
+    string JournalPath,
+    int Matched,
+    int Scanned,
+    IReadOnlyList<RecentOperation> Operations,
+    string? Notice);
+
 internal static class OperationJournal
 {
     private const string FilePrefix = "file://";
@@ -59,6 +76,108 @@ internal static class OperationJournal
             writer.WriteLine(SummarizeLine(line));
         }
         return 0;
+    }
+
+    internal static OperationSearchResult Find(
+        string auditHookTarget,
+        string? toolFilter,
+        bool? mutatedOnly,
+        string? statusContains,
+        int limit)
+    {
+        if (limit < 1)
+        {
+            limit = 1;
+        }
+
+        if (!TryResolveJournalPath(auditHookTarget, out string path, out string? reason))
+        {
+            return new OperationSearchResult("audit-journal-unavailable", string.Empty, 0, 0, [], reason);
+        }
+
+        if (!File.Exists(path))
+        {
+            return new OperationSearchResult("audit-journal-empty", path, 0, 0, [], $"No audit journal at `{path}` yet.");
+        }
+
+        Queue<RecentOperation> window = new(limit);
+        int scanned = 0;
+        int matched = 0;
+        string? toolNeedle = string.IsNullOrWhiteSpace(toolFilter) ? null : toolFilter.Trim();
+        string? statusNeedle = string.IsNullOrWhiteSpace(statusContains) ? null : statusContains.Trim();
+
+        foreach (string line in File.ReadLines(path))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            scanned++;
+            RecentOperation? parsed = TryParseRecord(line);
+            if (parsed is null)
+            {
+                continue;
+            }
+
+            if (toolNeedle is not null && !parsed.Tool.Equals(toolNeedle, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (mutatedOnly == true && !parsed.Mutated)
+            {
+                continue;
+            }
+
+            if (statusNeedle is not null && parsed.Status.IndexOf(statusNeedle, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                continue;
+            }
+
+            matched++;
+            if (window.Count == limit)
+            {
+                window.Dequeue();
+            }
+            window.Enqueue(parsed);
+        }
+
+        List<RecentOperation> tail = [.. window];
+        tail.Reverse();
+        return new OperationSearchResult(
+            tail.Count == 0 ? "no-matching-operations" : "operations-found",
+            path,
+            matched,
+            scanned,
+            tail,
+            tail.Count == 0 ? "No operations matched the filters." : null);
+    }
+
+    private static RecentOperation? TryParseRecord(string line)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(line);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            return new RecentOperation(
+                OperationId: root.TryGetProperty("OperationId", out JsonElement opId) && opId.ValueKind == JsonValueKind.String ? opId.GetString() ?? string.Empty : string.Empty,
+                Timestamp: root.TryGetProperty("Timestamp", out JsonElement ts) && ts.ValueKind == JsonValueKind.String ? ts.GetString() ?? string.Empty : string.Empty,
+                Tool: root.TryGetProperty("ToolName", out JsonElement tool) && tool.ValueKind == JsonValueKind.String ? tool.GetString() ?? string.Empty : string.Empty,
+                Status: root.TryGetProperty("Status", out JsonElement st) && st.ValueKind == JsonValueKind.String ? st.GetString() ?? string.Empty : string.Empty,
+                Summary: root.TryGetProperty("Summary", out JsonElement sm) && sm.ValueKind == JsonValueKind.String ? sm.GetString() ?? string.Empty : string.Empty,
+                Mutated: root.TryGetProperty("Mutated", out JsonElement mu) && mu.ValueKind == JsonValueKind.True,
+                ExecutionTier: root.TryGetProperty("ExecutionTier", out JsonElement tier) && tier.ValueKind == JsonValueKind.String ? tier.GetString() : null);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     internal static int ShowOperation(string auditHookTarget, string operationId, TextWriter writer)

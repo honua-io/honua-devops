@@ -1,6 +1,5 @@
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
-using Honua.DevOps.Agent.Operations.OrchestrationHost;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
 
@@ -19,7 +18,6 @@ internal sealed class OperationResponseBuilder
     private GitOpsPlan? _gitOpsPlan;
     private ReleaseOrchestrationPlan? _releaseOrchestration;
     private ServiceBundleReconciliationPlan? _serviceBundleReconciliation;
-    private OrchestrationHostPlan? _orchestrationHost;
 
     internal OperationResponseBuilder Status(string value)
     {
@@ -148,12 +146,6 @@ internal sealed class OperationResponseBuilder
         return this;
     }
 
-    internal OperationResponseBuilder WithOrchestrationHost(OrchestrationHostPlan plan)
-    {
-        _orchestrationHost = plan;
-        return this;
-    }
-
     internal OperationResponseBuilder AddBackendStep(OperationBackendStep step)
     {
         _backendSteps ??= [];
@@ -191,7 +183,6 @@ internal sealed class OperationResponseBuilder
             GitOpsPlan: _gitOpsPlan,
             ReleaseOrchestration: _releaseOrchestration,
             ServiceBundleReconciliation: _serviceBundleReconciliation,
-            OrchestrationHost: _orchestrationHost,
             BackendSteps: _backendSteps);
     }
 }

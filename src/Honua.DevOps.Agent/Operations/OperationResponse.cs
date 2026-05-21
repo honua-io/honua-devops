@@ -1,6 +1,5 @@
 using System.Text.Json.Serialization;
 using Honua.DevOps.Agent.Operations.GitOps;
-using Honua.DevOps.Agent.Operations.OrchestrationHost;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
 
@@ -21,5 +20,4 @@ internal sealed record OperationResponse(
     [property: JsonIgnore] GitOpsPlan? GitOpsPlan = null,
     [property: JsonIgnore] ReleaseOrchestrationPlan? ReleaseOrchestration = null,
     [property: JsonIgnore] ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null,
-    [property: JsonIgnore] OrchestrationHostPlan? OrchestrationHost = null,
     [property: JsonIgnore] IReadOnlyList<OperationBackendStep>? BackendSteps = null);

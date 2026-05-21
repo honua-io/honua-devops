@@ -22,6 +22,11 @@ internal static class CapabilityToolset
                 "describe_environment",
                 "Discover the connected Honua environment: readiness, edition, manifest scope, deploy targets, and allowed environments. Call first when the operator's request lacks an explicit service, environment, or edition."),
             CreateTool(
+                (string toolFilter, bool mutatedOnly, string statusContains, int limit)
+                    => toolkit.FindRecentOperationsAsync(toolFilter, mutatedOnly, statusContains, limit),
+                "find_recent_operations",
+                "Search the audit journal for recent operations across sessions. Returns operationId, timestamp, tool, status, mutated flag, and summary. Use to look up a prior operationId for rollback, recall what ran yesterday, or audit mutating calls. Filters: toolFilter (exact tool name, empty for any), mutatedOnly (true skips reads), statusContains (substring), limit (1-200, default 20)."),
+            CreateTool(
                 (string service, string environment, string timeframe, string symptoms, string logSample)
                     => toolkit.AnalyzeLogsAsync(service, environment, timeframe, symptoms, logSample),
                 "analyze_logs",
