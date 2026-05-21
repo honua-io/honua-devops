@@ -1,21 +1,25 @@
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text;
-using System.Text.Json;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.Troubleshooting;
 
 namespace Honua.DevOps.Agent.Operations;
 
-internal sealed class SupportGateway(BackendConfiguration configuration, HttpClient? httpClient = null) : IDisposable
+internal sealed class SupportGateway : IDisposable
 {
     private const string OperatorRoleHeader = "X-Operator-Role";
 
-    private readonly HttpClient _httpClient = httpClient ?? new HttpClient
+    private readonly BackendConfiguration configuration;
+    private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
+    private readonly HttpJsonTransport _transport;
+
+    internal SupportGateway(BackendConfiguration configuration, HttpClient? httpClient = null)
     {
-        Timeout = configuration.RequestTimeout
-    };
-    private readonly bool _ownsHttpClient = httpClient is null;
+        this.configuration = configuration;
+        _httpClient = httpClient ?? HttpClientFactory.Create(configuration.RequestTimeout);
+        _ownsHttpClient = httpClient is null;
+        _transport = new HttpJsonTransport(_httpClient);
+    }
 
     internal BackendConfiguration Configuration => configuration;
 
@@ -135,12 +139,69 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
                 PayloadPreview: "SupportApiBaseUri is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.");
         }
 
+        if (!configuration.SupportAutoBundleEnabled)
+        {
+            return new BackendCallResult(
+                IsSuccess: false,
+                Endpoint: "none",
+                Detail: "auto-bundle-disabled",
+                PayloadPreview: "Auto-bundle is disabled. Set HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ENABLED=true to opt in.");
+        }
+
+        if (!TryValidateInstanceHost(instanceUrl, configuration.SupportAutoBundleAllowedHosts, out string hostRejection))
+        {
+            return new BackendCallResult(
+                IsSuccess: false,
+                Endpoint: "none",
+                Detail: "auto-bundle-host-rejected",
+                PayloadPreview: hostRejection);
+        }
+
         string relativePath = BuildTicketPath(ticketId, "auto-bundle");
         return await SendAsync(
             HttpMethod.Post,
             relativePath,
             payload: new { instanceUrl, apiKey },
             cancellationToken);
+    }
+
+    private static bool TryValidateInstanceHost(
+        string? instanceUrl,
+        IReadOnlyList<string>? allowedHosts,
+        out string rejection)
+    {
+        rejection = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(instanceUrl))
+        {
+            rejection = "Auto-bundle requires a non-empty instanceUrl.";
+            return false;
+        }
+
+        if (!Uri.TryCreate(instanceUrl.Trim(), UriKind.Absolute, out Uri? parsed) ||
+            (!parsed.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+             !parsed.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            rejection = "Auto-bundle instanceUrl must be an absolute http(s) URL.";
+            return false;
+        }
+
+        if (allowedHosts is null || allowedHosts.Count == 0)
+        {
+            rejection =
+                "Auto-bundle host allowlist is empty. Set HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ALLOWED_HOSTS to a comma-separated list of permitted hosts.";
+            return false;
+        }
+
+        string host = parsed.Host.ToLowerInvariant();
+        if (!allowedHosts.Any(allowed => string.Equals(allowed, host, StringComparison.Ordinal)))
+        {
+            rejection =
+                $"Auto-bundle instanceUrl host `{host}` is not in HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ALLOWED_HOSTS.";
+            return false;
+        }
+
+        return true;
     }
 
     internal async Task<BackendCallResult> CloseTicketAsync(
@@ -180,114 +241,24 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
             : $"{configuration.SupportApiTicketsPath}/{encodedTicketId}/{childPath}";
     }
 
-    private async Task<BackendCallResult> SendAsync(
+    private Task<BackendCallResult> SendAsync(
         HttpMethod method,
         string relativePath,
         object? payload,
         CancellationToken cancellationToken)
     {
         Uri endpoint = BackendGateway.BuildEndpoint(configuration.SupportApiBaseUri!, relativePath);
-        using HttpRequestMessage request = new(method, endpoint);
-        if (payload is not null)
-        {
-            request.Content = JsonContent.Create(payload);
-        }
-
-        ApplySupportAuthentication(request);
-
-        try
-        {
-            using HttpResponseMessage response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            bool isSuccess = response.IsSuccessStatusCode;
-            string detail = $"{(int)response.StatusCode} {response.ReasonPhrase}";
-            string preview = await ReadBodyPreviewAsync(response.Content, cancellationToken);
-
-            return new BackendCallResult(isSuccess, endpoint.ToString(), detail, preview);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            return new BackendCallResult(
-                IsSuccess: false,
-                Endpoint: endpoint.ToString(),
-                Detail: $"request-failed: {exception.GetType().Name}",
-                PayloadPreview: exception.Message);
-        }
+        return _transport.SendAsync(method, endpoint, payload, ApplySupportAuthentication, cancellationToken);
     }
 
-    private async Task<BackendJsonResult> SendJsonAsync(
+    private Task<BackendJsonResult> SendJsonAsync(
         HttpMethod method,
         string relativePath,
         object? payload,
         CancellationToken cancellationToken)
     {
         Uri endpoint = BackendGateway.BuildEndpoint(configuration.SupportApiBaseUri!, relativePath);
-        using HttpRequestMessage request = new(method, endpoint);
-        if (payload is not null)
-        {
-            request.Content = JsonContent.Create(payload);
-        }
-
-        ApplySupportAuthentication(request);
-
-        try
-        {
-            using HttpResponseMessage response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            string body = response.Content is null
-                ? string.Empty
-                : await response.Content.ReadAsStringAsync(cancellationToken);
-            bool isSuccess = response.IsSuccessStatusCode;
-            string detail = $"{(int)response.StatusCode} {response.ReasonPhrase}";
-            JsonDocument? payloadDocument = TryParseJsonDocument(body);
-
-            return new BackendJsonResult(
-                new BackendCallResult(
-                    isSuccess,
-                    endpoint.ToString(),
-                    detail,
-                    SummarizeBody(body)),
-                payloadDocument);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            return new BackendJsonResult(
-                new BackendCallResult(
-                    IsSuccess: false,
-                    Endpoint: endpoint.ToString(),
-                    Detail: $"request-failed: {exception.GetType().Name}",
-                    PayloadPreview: exception.Message),
-                null);
-        }
-    }
-
-    private static JsonDocument? TryParseJsonDocument(string body)
-    {
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonDocument.Parse(body);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        return _transport.SendJsonAsync(method, endpoint, payload, ApplySupportAuthentication, cancellationToken);
     }
 
     private void ApplySupportAuthentication(HttpRequestMessage request)
@@ -299,63 +270,6 @@ internal sealed class SupportGateway(BackendConfiguration configuration, HttpCli
         }
 
         request.Headers.TryAddWithoutValidation(OperatorRoleHeader, "true");
-    }
-
-    private static async Task<string> ReadBodyPreviewAsync(HttpContent content, CancellationToken cancellationToken)
-    {
-        await using Stream stream = await content.ReadAsStreamAsync(cancellationToken);
-        using StreamReader reader = new(
-            stream,
-            Encoding.UTF8,
-            detectEncodingFromByteOrderMarks: true,
-            bufferSize: 1024);
-
-        const int maxLength = 400;
-        char[] buffer = new char[maxLength + 1];
-        int totalRead = 0;
-
-        while (totalRead < buffer.Length)
-        {
-            int read = await reader.ReadAsync(
-                buffer.AsMemory(totalRead, buffer.Length - totalRead),
-                cancellationToken);
-            if (read == 0)
-            {
-                break;
-            }
-
-            totalRead += read;
-        }
-
-        if (totalRead == 0)
-        {
-            return "empty response body";
-        }
-
-        bool truncated = totalRead > maxLength;
-        string body = new(buffer, 0, Math.Min(totalRead, maxLength));
-        return SummarizeBody(body, truncated);
-    }
-
-    private static string SummarizeBody(string body, bool alreadyTruncated = false)
-    {
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return "empty response body";
-        }
-
-        string compact = body.ReplaceLineEndings(" ").Trim();
-        const int maxLength = 400;
-        if (compact.Length <= maxLength && !alreadyTruncated)
-        {
-            return compact;
-        }
-
-        string preview = compact.Length > maxLength
-            ? compact[..maxLength]
-            : compact;
-
-        return $"{preview}...";
     }
 
     public void Dispose()

@@ -16,15 +16,34 @@ internal sealed class ScriptBasedFaultInjector : IFaultInjector
         if (string.IsNullOrWhiteSpace(scriptsBasePath))
             throw new ArgumentException("ScriptsBasePath is required.", nameof(scriptsBasePath));
 
+        ValidateScenarioId(scenarioId);
+
         ScenarioId = scenarioId;
         TargetCloud = targetCloud;
-        _scriptsBasePath = scriptsBasePath;
+        _scriptsBasePath = Path.GetFullPath(scriptsBasePath);
         Status = FaultInjectorStatus.Ready;
     }
 
     public string ScenarioId { get; }
     public string TargetCloud { get; }
     public FaultInjectorStatus Status { get; private set; }
+
+    private static void ValidateScenarioId(string value)
+    {
+        if (value.Length > 64)
+            throw new ArgumentException("`scenarioId` must be 64 characters or fewer.", nameof(value));
+
+        foreach (char character in value)
+        {
+            bool allowed = char.IsLetterOrDigit(character) || character is '-' or '_';
+            if (!allowed)
+            {
+                throw new ArgumentException(
+                    $"`scenarioId` must contain only letters, digits, `-`, and `_`. Rejected value: `{value}`.",
+                    nameof(value));
+            }
+        }
+    }
 
     public Task<FaultInjectionResult> InjectAsync(FaultInjectionContext context, CancellationToken cancellationToken = default)
     {
@@ -48,7 +67,17 @@ internal sealed class ScriptBasedFaultInjector : IFaultInjector
 
     internal string GetScriptPath(string action)
     {
-        return Path.Combine(_scriptsBasePath, $"{ScenarioId}-{action}.sh");
+        string candidate = Path.GetFullPath(Path.Combine(_scriptsBasePath, $"{ScenarioId}-{action}.sh"));
+        string baseWithSeparator = _scriptsBasePath.EndsWith(Path.DirectorySeparatorChar)
+            ? _scriptsBasePath
+            : _scriptsBasePath + Path.DirectorySeparatorChar;
+        if (!candidate.StartsWith(baseWithSeparator, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Resolved fault script path `{candidate}` escapes the configured scripts base directory.");
+        }
+
+        return candidate;
     }
 
     private async Task<FaultInjectionResult> ExecuteScriptAsync(

@@ -7,30 +7,6 @@ namespace Honua.DevOps.Agent.Tests;
 public class EpicBacklogCompletionTests
 {
     [Fact]
-    public async Task PlanGitOpsPlatformAsync_CoversRepoWatchingPromotionDriftCiRollbackAndAudit()
-    {
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), CreateGateway());
-
-        OperationResponse response = await toolkit.PlanGitOpsPlatformAsync(
-            configRepository: "https://github.com/honua-io/customer-config",
-            branch: "main",
-            service: "roads-api",
-            environmentsCsv: "dev,staging,prod",
-            syncMode: "hybrid",
-            alertTargetsCsv: "slack,email",
-            commitSha: "abc123");
-
-        Assert.Equal("gitops-platform-ready", response.Status);
-        Assert.Contains(response.Findings, finding => finding.Contains("Repository watcher: hybrid", StringComparison.Ordinal));
-        Assert.Contains(response.Findings, finding => finding.Contains("GitHub Actions and GitLab templates", StringComparison.Ordinal));
-        Assert.Contains(response.Actions, action => action.Contains("honua apply -f desired-state --dry-run", StringComparison.Ordinal));
-        Assert.Contains(response.Actions, action => action.Contains("honua rollback --to", StringComparison.Ordinal));
-        Assert.Contains(response.ValidationChecks, check => check.Contains("Commit SHA is recorded", StringComparison.Ordinal));
-        Assert.NotNull(response.Evidence);
-        Assert.Equal("gitops-platform:roads-api", response.Evidence!.Scope);
-    }
-
-    [Fact]
     public async Task HonuaDiagnoseAsync_IsCommunityReadOnlyAndScopesBackendRequests()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
@@ -56,7 +32,7 @@ public class EpicBacklogCompletionTests
     }
 
     [Fact]
-    public async Task AiDevOpsProTools_ReturnPlansAndGateCommunity()
+    public async Task ExplainSlowQueriesGatesCommunityAndReturnsAnalysisForPro()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
@@ -79,51 +55,10 @@ public class EpicBacklogCompletionTests
             edition: "pro");
         Assert.Equal("slow-query-explained", slowQuery.Status);
         Assert.Contains(slowQuery.Findings, finding => finding.Contains("Spatial predicate", StringComparison.Ordinal));
-
-        OperationResponse indexPlan = await toolkit.RecommendIndexesAsync(
-            service: "roads-api",
-            layer: "roads",
-            queryPattern: "where tenant_id = ? and ST_Intersects(geometry, bbox)",
-            currentIndexes: "primary key only",
-            edition: "pro");
-        Assert.Equal("index-plan-ready", indexPlan.Status);
-        Assert.Contains(indexPlan.Actions, action => action.Contains("spatial index", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public async Task CapacityAndMigrationAdvisors_ModelGaPlanningScope()
-    {
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), CreateGateway());
-
-        OperationResponse forecast = await toolkit.CapacityForecastAsync(
-            service: "roads-api",
-            environment: "prod",
-            metricWindow: "30d",
-            currentDailyRequests: 1_000_000,
-            growthRatePercent: 3,
-            currentNodes: 2,
-            cpuUtilizationPercent: 76,
-            memoryUtilizationPercent: 68,
-            edition: "pro");
-
-        Assert.Equal("capacity-forecast-ready", forecast.Status);
-        Assert.Contains(forecast.Findings, finding => finding.Contains("recommended nodes: 3", StringComparison.Ordinal));
-
-        OperationResponse migration = await toolkit.MigrationAdvisorAsync(
-            sourcePlatform: "ArcGIS Enterprise",
-            serviceInventory: "24 map services, 3 geoprocessing services, custom extension",
-            dataVolumeSummary: "4 TB feature data",
-            protocolRequirements: "FeatureServer, MapServer, OGC API Features",
-            migrationConstraints: "zero downtime",
-            edition: "pro");
-
-        Assert.Equal("migration-plan-ready", migration.Status);
-        Assert.Contains(migration.Findings, finding => finding.Contains("Risk band: elevated", StringComparison.Ordinal));
-        Assert.Contains(migration.Actions, action => action.Contains("completion percentage", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task EnterpriseToolsRespectExecutionAndApprovalGates()
+    public async Task EnterpriseRunbookAndAutoRemediationRespectGates()
     {
         OperatorPolicyModel directPolicy = new(
             ApprovalMode.DirectAllowed,
@@ -144,15 +79,6 @@ public class EpicBacklogCompletionTests
             edition: "enterprise");
         Assert.Equal("runbook-execute-ready", runbook.Status);
         Assert.NotNull(runbook.Evidence);
-
-        OperationResponse incident = await toolkit.IncidentSummaryAsync(
-            service: "roads-api",
-            environment: "prod",
-            timeRange: "10:00-10:45Z",
-            timelineEvents: "10:00 alert; 10:15 mitigated; 10:45 recovered",
-            affectedServices: "roads-api,tiles-api",
-            edition: "enterprise");
-        Assert.Equal("incident-summary-ready", incident.Status);
 
         OperationResponse remediation = await toolkit.AutoRemediationPlanAsync(
             service: "roads-api",

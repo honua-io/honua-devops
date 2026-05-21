@@ -233,11 +233,14 @@ public class SupportGatewayTests
     }
 
     [Fact]
-    public async Task TriggerAutoBundleAsync_CallsCorrectEndpoint()
+    public async Task TriggerAutoBundleAsync_CallsCorrectEndpointWhenOptedIn()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
-        using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        BackendConfiguration config = CreateBackendConfiguration(
+            autoBundleEnabled: true,
+            autoBundleAllowedHosts: ["localhost"]);
+        using SupportGateway gateway = new(config, httpClient);
 
         BackendCallResult result = await gateway.TriggerAutoBundleAsync(
             "T-005",
@@ -251,6 +254,60 @@ public class SupportGatewayTests
         using JsonDocument requestJson = JsonDocument.Parse(captured.Body!);
         Assert.Equal("http://localhost:8080", requestJson.RootElement.GetProperty("instanceUrl").GetString());
         Assert.Equal("admin-key", requestJson.RootElement.GetProperty("apiKey").GetString());
+    }
+
+    [Fact]
+    public async Task TriggerAutoBundleAsync_RefusesWhenDisabledByDefault()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        BackendCallResult result = await gateway.TriggerAutoBundleAsync(
+            "T-005",
+            "http://localhost:8080",
+            "admin-key");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("auto-bundle-disabled", result.Detail);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task TriggerAutoBundleAsync_RefusesWhenInstanceHostNotAllowed()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        BackendConfiguration config = CreateBackendConfiguration(
+            autoBundleEnabled: true,
+            autoBundleAllowedHosts: ["customer-a.example.com"]);
+        using SupportGateway gateway = new(config, httpClient);
+
+        BackendCallResult result = await gateway.TriggerAutoBundleAsync(
+            "T-005",
+            "http://attacker.example.com:8080",
+            "admin-key");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("auto-bundle-host-rejected", result.Detail);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task TriggerAutoBundleAsync_RefusesWhenAllowedHostsEmpty()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        BackendConfiguration config = CreateBackendConfiguration(autoBundleEnabled: true);
+        using SupportGateway gateway = new(config, httpClient);
+
+        BackendCallResult result = await gateway.TriggerAutoBundleAsync(
+            "T-005",
+            "http://localhost:8080",
+            "admin-key");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("auto-bundle-host-rejected", result.Detail);
     }
 
     [Fact]
@@ -397,7 +454,11 @@ public class SupportGatewayTests
             return TestHttpMessageHandler.JsonOk(new { status = "ok" });
         });
         using HttpClient supportHttpClient = new(supportHandler) { Timeout = TimeSpan.FromSeconds(5) };
-        using SupportGateway supportGw = new(CreateBackendConfiguration(), supportHttpClient);
+        BackendConfiguration supportConfig = CreateBackendConfiguration(
+            autoBundleEnabled: true,
+            autoBundleAllowedHosts: ["localhost"],
+            autoBundleApiKey: "dedicated-bundle-key");
+        using SupportGateway supportGw = new(supportConfig, supportHttpClient);
 
         // Backend gateway handler: troubleshoot returns ok
         TestHttpMessageHandler backendHandler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
@@ -430,6 +491,7 @@ public class SupportGatewayTests
             r => r.Method == "POST" && r.Uri.Contains("/T-100/auto-bundle", StringComparison.Ordinal));
         using JsonDocument autoBundleJson = JsonDocument.Parse(autoBundlePost.Body!);
         Assert.Equal("http://localhost:8080", autoBundleJson.RootElement.GetProperty("instanceUrl").GetString());
+        Assert.Equal("dedicated-bundle-key", autoBundleJson.RootElement.GetProperty("apiKey").GetString());
 
         CapturedRequest firstDiagnosisPost = Assert.Single(
             diagnosisPosts,
@@ -500,7 +562,10 @@ public class SupportGatewayTests
 
     private static BackendConfiguration CreateBackendConfiguration(
         bool disableSupport = false,
-        string? supportApiBearerToken = null)
+        string? supportApiBearerToken = null,
+        bool autoBundleEnabled = false,
+        IReadOnlyList<string>? autoBundleAllowedHosts = null,
+        string? autoBundleApiKey = null)
     {
         return new BackendConfiguration(
             HonuaApiBaseUri: new Uri("http://localhost:8080"),
@@ -526,6 +591,9 @@ public class SupportGatewayTests
             RequestTimeout: TimeSpan.FromSeconds(5),
             SupportApiBaseUri: disableSupport ? null : new Uri("http://localhost:5100"),
             SupportApiTicketsPath: "api/v1/tickets",
-            SupportApiBearerToken: supportApiBearerToken);
+            SupportApiBearerToken: supportApiBearerToken,
+            SupportAutoBundleEnabled: autoBundleEnabled,
+            SupportAutoBundleAllowedHosts: autoBundleAllowedHosts,
+            SupportAutoBundleApiKey: autoBundleApiKey);
     }
 }
