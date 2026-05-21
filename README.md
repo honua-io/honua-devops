@@ -39,8 +39,7 @@ open-core runtime promise.
 - Honua support ticket triage through `honua-support` (`process_pending_tickets`)
 - Server upgrade planning with rollback gates (via Honua API)
 - GitOps-driven multi-environment deployment planning (Honua-native GitOps; see `honua-server` #351/#363)
-- Full GitOps platform planning (`plan_gitops_platform`) for repo watching, commit tracking, promotion gates, drift alerts, CI/CD previews, rollback, and audit evidence
-- AI DevOps MCP-style tools (`honua_diagnose`, slow-query explanation, index recommendation, capacity forecast, runbook execution, incident summary, migration advisor, and auto-remediation planning)
+- AI DevOps tools (`honua_diagnose`, slow-query explanation, runbook execution, and auto-remediation planning) — edition-gated for community/pro/enterprise
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 
@@ -67,7 +66,7 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_EXECUTION_MODE` (`plan` default, or `execute`)
 - `HONUA_DEVOPS_EXECUTION_TIER` (`plan` default for plan mode; `execute-lower-env` default for execute mode)
 - `HONUA_DEVOPS_APPROVAL_MODE` (`pr-first` default; also supports `direct-allowed`, `break-glass-only`)
-- `HONUA_DEVOPS_AUDIT_HOOK_TARGET` (`stdout-evidence` default)
+- `HONUA_DEVOPS_AUDIT_HOOK_TARGET` (`stdout-evidence` default; also supports `none`/`disabled` to drop records and `file://path/to/audit.jsonl` to append JSONL records to a file). Each tool call emits one JSONL record with the operation id, tool name, redacted arguments, status, mutation flag, execution mode/tier, approval mode, provider, and any backend steps the response carried.
 - `HONUA_DEVOPS_SUPPORT_SESSION_ACCESS` (`disabled` default; also supports `read-only`, `operator-scoped`)
 - `HONUA_DEVOPS_SUPPORT_SESSION_TTL_MINUTES` (`60` default)
 - `HONUA_DEVOPS_SUPPORT_SESSION_CUSTOMER_VISIBLE` (`true` default)
@@ -100,6 +99,10 @@ Support ticket integration:
 - `HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH` defaults to `/api/v1/tickets`
 - `HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN` should be set to an operator support token outside local development.
 - Diagnosis posts include guided-fix output plus `OperationEvidence` and `DiagnosisScorecard` payloads for ticket audit and score tracking.
+- Auto-bundle (forwarding a Honua API key to the support backend so it can pull live telemetry from a customer instance) is **disabled by default**. To opt in:
+  - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ENABLED=true`
+  - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ALLOWED_HOSTS=` comma-separated list of permitted `instanceUrl` hosts; auto-bundle requests with hosts outside this list are rejected before any HTTP call
+  - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_API_KEY` should be a dedicated key scoped for the auto-bundle backend; the primary `HONUA_DEVOPS_HONUA_API_KEY` is never forwarded.
 
 Health probes:
 
@@ -190,6 +193,13 @@ Preflight checks (backend connectivity + terraform target discovery):
 dotnet run --project src/Honua.DevOps.Agent -- --preflight
 ```
 
+Inspect the operation journal (requires `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///path/to/audit.jsonl`):
+
+```bash
+dotnet run --project src/Honua.DevOps.Agent -- --list-operations --limit 50
+dotnet run --project src/Honua.DevOps.Agent -- --show-operation <operationId>
+```
+
 Single-shot prompt:
 
 ```bash
@@ -238,7 +248,7 @@ Onboarding helper:
 - Deploy planning now emits a typed ServiceBundle reconciliation map for capabilities, export, metadata subset apply, connections, publishing, policy, styles, and imports, plus explicit drift/export state.
 - Deploy planning now also emits a typed in-repo `honua-gitops` engine plan with per-environment diff, drift, gate state, explicit from/to state transitions, mutation flags, approval requirements, and supported operations.
 - Operator policy is now explicit in runtime output and evidence: approval mode, audit hook target, support-session posture, and break-glass post-review requirements.
-- The Azure-first operator host now has a typed orchestration planner and `plan_azure_operator_workflow` tool that maps analyze, publish, build, and deploy workflows to MCP/gRPC/honua-server contract responsibilities without redefining those surfaces.
+- The Azure-first operator host has a typed orchestration planner that maps analyze, publish, build, and deploy workflows to MCP/gRPC/honua-server contract responsibilities. (No callable tool; consumed by the deploy-time toolkit.)
 - Honua support ticket processing now wires `honua-support` into the runtime toolset and posts diagnosis evidence/scorecards back to ticket records.
 - Multi-model operator eval automation now consumes the server-side eval report and can run Claude, Codex, and local Llama lanes through a shared model matrix.
 - Remaining GitOps and AI DevOps epic surfaces are now represented by contract-first tools with edition, approval, audit, rollback, and validation gates.

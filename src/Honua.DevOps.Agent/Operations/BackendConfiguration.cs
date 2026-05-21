@@ -31,7 +31,10 @@ internal sealed record BackendConfiguration(
     string HonuaDeployPlanPath = "api/v1/admin/deploy/plan",
     string HonuaDeployOperationsPath = "api/v1/admin/deploy/operations",
     string HonuaManifestDriftPath = "api/v1/admin/manifest/drift",
-    string HonuaManifestVersionsPath = "api/v1/admin/manifest/versions")
+    string HonuaManifestVersionsPath = "api/v1/admin/manifest/versions",
+    bool SupportAutoBundleEnabled = false,
+    IReadOnlyList<string>? SupportAutoBundleAllowedHosts = null,
+    string? SupportAutoBundleApiKey = null)
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
     private const string OTelBaseUrlVariable = "HONUA_DEVOPS_OTEL_BASE_URL";
@@ -75,6 +78,9 @@ internal sealed record BackendConfiguration(
     private const string SupportApiBaseUrlVariable = "HONUA_DEVOPS_SUPPORT_API_BASE_URL";
     private const string SupportApiTicketsPathVariable = "HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH";
     private const string SupportApiBearerTokenVariable = "HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN";
+    private const string SupportAutoBundleEnabledVariable = "HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ENABLED";
+    private const string SupportAutoBundleAllowedHostsVariable = "HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ALLOWED_HOSTS";
+    private const string SupportAutoBundleApiKeyVariable = "HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_API_KEY";
 
     private const string TimeoutSecondsVariable = "HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS";
 
@@ -190,6 +196,13 @@ internal sealed record BackendConfiguration(
             "api/v1/tickets",
             SupportApiTicketsPathVariable);
         string? supportApiBearerToken = Normalize(Environment.GetEnvironmentVariable(SupportApiBearerTokenVariable));
+        bool supportAutoBundleEnabled = ParseBoolean(
+            Environment.GetEnvironmentVariable(SupportAutoBundleEnabledVariable),
+            fallback: false,
+            SupportAutoBundleEnabledVariable);
+        IReadOnlyList<string> supportAutoBundleAllowedHosts = ParseAllowedHosts(
+            Environment.GetEnvironmentVariable(SupportAutoBundleAllowedHostsVariable));
+        string? supportAutoBundleApiKey = Normalize(Environment.GetEnvironmentVariable(SupportAutoBundleApiKeyVariable));
 
         return new BackendConfiguration(
             HonuaApiBaseUri: honuaApiBaseUri,
@@ -220,7 +233,40 @@ internal sealed record BackendConfiguration(
             HonuaDeployPlanPath: honuaDeployPlanPath,
             HonuaDeployOperationsPath: honuaDeployOperationsPath,
             HonuaManifestDriftPath: honuaManifestDriftPath,
-            HonuaManifestVersionsPath: honuaManifestVersionsPath);
+            HonuaManifestVersionsPath: honuaManifestVersionsPath,
+            SupportAutoBundleEnabled: supportAutoBundleEnabled,
+            SupportAutoBundleAllowedHosts: supportAutoBundleAllowedHosts,
+            SupportAutoBundleApiKey: supportAutoBundleApiKey);
+    }
+
+    private static bool ParseBoolean(string? value, bool fallback, string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        if (bool.TryParse(value.Trim(), out bool parsed))
+        {
+            return parsed;
+        }
+
+        throw new InvalidOperationException(
+            $"Environment variable `{variableName}` must be `true` or `false`.");
+    }
+
+    private static IReadOnlyList<string> ParseAllowedHosts(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Array.Empty<string>();
+        }
+
+        return value
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(host => host.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static string ParseRelativePathWithLegacy(string variableName, string legacyVariableName, string fallback)

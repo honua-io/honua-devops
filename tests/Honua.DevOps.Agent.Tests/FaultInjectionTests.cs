@@ -149,6 +149,19 @@ public class FaultInjectionTests
         Assert.Throws<ArgumentException>(() => new ScriptBasedFaultInjector("FAULT-001", "aws", ""));
     }
 
+    [Theory]
+    [InlineData("../etc/passwd")]
+    [InlineData("FAULT/001")]
+    [InlineData("FAULT\\001")]
+    [InlineData("FAULT 001")]
+    [InlineData("FAULT;rm")]
+    [InlineData("..")]
+    public void ScriptBasedFaultInjector_RejectsTraversalScenarioIds(string scenarioId)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new ScriptBasedFaultInjector(scenarioId, "aws", "/scripts"));
+    }
+
     // ---------------------------------------------------------------
     // ScriptBasedFaultInjector dry-run mode
     // ---------------------------------------------------------------

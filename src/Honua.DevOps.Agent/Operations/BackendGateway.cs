@@ -7,16 +7,23 @@ using Honua.DevOps.Agent.Operations.GitOps;
 
 namespace Honua.DevOps.Agent.Operations;
 
-internal sealed class BackendGateway(BackendConfiguration configuration, HttpClient? httpClient = null) : IDisposable
+internal sealed class BackendGateway : IDisposable
 {
     private const string HonuaApiKeyHeader = "X-API-Key";
     private const string HonuaMetadataApiVersion = "honua.io/v1alpha1";
 
-    private readonly HttpClient _httpClient = httpClient ?? new HttpClient
+    private readonly BackendConfiguration configuration;
+    private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
+    private readonly HttpJsonTransport _transport;
+
+    internal BackendGateway(BackendConfiguration configuration, HttpClient? httpClient = null)
     {
-        Timeout = configuration.RequestTimeout
-    };
-    private readonly bool _ownsHttpClient = httpClient is null;
+        this.configuration = configuration;
+        _httpClient = httpClient ?? HttpClientFactory.Create(configuration.RequestTimeout);
+        _ownsHttpClient = httpClient is null;
+        _transport = new HttpJsonTransport(_httpClient);
+    }
 
     internal BackendConfiguration Configuration => configuration;
 
@@ -80,12 +87,10 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             ("suspectedComponent", suspectedComponent),
             ("businessImpact", businessImpact)
         ];
-        BackendCallResult[] calls =
-        [
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaAdminErrorsPath, queryContext), cancellationToken),
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsHealthPath, queryContext), cancellationToken),
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken)
-        ];
+        BackendCallResult[] calls = await Task.WhenAll(
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaAdminErrorsPath, queryContext), cancellationToken),
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsHealthPath, queryContext), cancellationToken),
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken));
 
         return CombineResults(operation, calls);
     }
@@ -108,14 +113,12 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             ("bottleneck", bottleneck),
             ("targetSlo", targetSlo)
         ];
-        BackendCallResult[] calls =
-        [
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken),
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsDatabasePath, queryContext), cancellationToken),
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsCachePath, queryContext), cancellationToken),
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsMemoryPath, queryContext), cancellationToken),
-            await GetFromHonuaAsync(AddQueryParameters(configuration.HonuaQueryCacheStatisticsPath, queryContext), cancellationToken)
-        ];
+        BackendCallResult[] calls = await Task.WhenAll(
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken),
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsDatabasePath, queryContext), cancellationToken),
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsCachePath, queryContext), cancellationToken),
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsMemoryPath, queryContext), cancellationToken),
+            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaQueryCacheStatisticsPath, queryContext), cancellationToken));
 
         return CombineResults(operation, calls);
     }
@@ -131,12 +134,10 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         _ = maintenanceWindow;
         _ = constraints;
         string operation = $"upgrade:{NormalizeResourceToken(environment, "env")}:{currentVersion}->{targetVersion}";
-        BackendCallResult[] calls =
-        [
-            await GetFromHonuaAsync(configuration.HonuaAdminVersionPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaAdminCapabilitiesPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaReadinessPath, cancellationToken)
-        ];
+        BackendCallResult[] calls = await Task.WhenAll(
+            GetFromHonuaAsync(configuration.HonuaAdminVersionPath, cancellationToken),
+            GetFromHonuaAsync(configuration.HonuaAdminCapabilitiesPath, cancellationToken),
+            GetFromHonuaAsync(configuration.HonuaReadinessPath, cancellationToken));
 
         return CombineResults(operation, calls);
     }
@@ -443,12 +444,10 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         _ = terraformRef;
         string operation =
             $"requirements-analysis:{NormalizeResourceToken(preferredCloud, "cloud")}:{deploymentTargets.Length}-targets";
-        BackendCallResult[] calls =
-        [
-            await GetFromHonuaAsync(configuration.HonuaAdminCapabilitiesPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaManifestExportPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsPerformancePath, cancellationToken)
-        ];
+        BackendCallResult[] calls = await Task.WhenAll(
+            GetFromHonuaAsync(configuration.HonuaAdminCapabilitiesPath, cancellationToken),
+            GetFromHonuaAsync(configuration.HonuaManifestExportPath, cancellationToken),
+            GetFromHonuaAsync(configuration.HonuaMetricsPerformancePath, cancellationToken));
 
         return CombineResults(operation, calls);
     }
@@ -470,12 +469,10 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         _ = terraformRef;
         string operation =
             $"topology-recommendation:{NormalizeResourceToken(environment, "env")}:waf={enableWaf}:nginx={useNginxProxy}:edge-rl={enableEdgeRateLimiting}";
-        BackendCallResult[] calls =
-        [
-            await GetFromHonuaAsync(configuration.HonuaAdminTelemetryPath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsPerformancePath, cancellationToken),
-            await GetFromHonuaAsync(configuration.HonuaMetricsCachePath, cancellationToken)
-        ];
+        BackendCallResult[] calls = await Task.WhenAll(
+            GetFromHonuaAsync(configuration.HonuaAdminTelemetryPath, cancellationToken),
+            GetFromHonuaAsync(configuration.HonuaMetricsPerformancePath, cancellationToken),
+            GetFromHonuaAsync(configuration.HonuaMetricsCachePath, cancellationToken));
 
         return CombineResults(operation, calls);
     }
@@ -600,7 +597,7 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             cancellationToken);
     }
 
-    private async Task<BackendCallResult> SendAsync(
+    private Task<BackendCallResult> SendAsync(
         Uri baseUri,
         HttpMethod method,
         string relativePath,
@@ -610,41 +607,15 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         CancellationToken cancellationToken)
     {
         Uri endpoint = BuildEndpoint(baseUri, relativePath);
-        using HttpRequestMessage request = new(method, endpoint);
-        if (payload is not null)
-        {
-            request.Content = JsonContent.Create(payload);
-        }
-
-        ApplyApiKey(request, apiKey, apiKeyTransport);
-
-        try
-        {
-            using HttpResponseMessage response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            bool isSuccess = response.IsSuccessStatusCode;
-            string detail = $"{(int)response.StatusCode} {response.ReasonPhrase}";
-            string preview = await ReadBodyPreviewAsync(response.Content, cancellationToken);
-
-            return new BackendCallResult(isSuccess, endpoint.ToString(), detail, preview);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            return new BackendCallResult(
-                IsSuccess: false,
-                Endpoint: endpoint.ToString(),
-                Detail: $"request-failed: {exception.GetType().Name}",
-                PayloadPreview: exception.Message);
-        }
+        return _transport.SendAsync(
+            method,
+            endpoint,
+            payload,
+            request => ApplyApiKey(request, apiKey, apiKeyTransport),
+            cancellationToken);
     }
 
-    private async Task<BackendJsonResult> SendJsonAsync(
+    private Task<BackendJsonResult> SendJsonAsync(
         Uri baseUri,
         HttpMethod method,
         string relativePath,
@@ -654,49 +625,12 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         CancellationToken cancellationToken)
     {
         Uri endpoint = BuildEndpoint(baseUri, relativePath);
-        using HttpRequestMessage request = new(method, endpoint);
-        if (payload is not null)
-        {
-            request.Content = JsonContent.Create(payload);
-        }
-
-        ApplyApiKey(request, apiKey, apiKeyTransport);
-
-        try
-        {
-            using HttpResponseMessage response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            string body = response.Content is null
-                ? string.Empty
-                : await response.Content.ReadAsStringAsync(cancellationToken);
-            bool isSuccess = response.IsSuccessStatusCode;
-            string detail = $"{(int)response.StatusCode} {response.ReasonPhrase}";
-            JsonDocument? payloadDocument = TryParseJsonDocument(body);
-
-            return new BackendJsonResult(
-                new BackendCallResult(
-                    isSuccess,
-                    endpoint.ToString(),
-                    detail,
-                    SummarizeBody(body)),
-                payloadDocument);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            return new BackendJsonResult(
-                new BackendCallResult(
-                    IsSuccess: false,
-                    Endpoint: endpoint.ToString(),
-                    Detail: $"request-failed: {exception.GetType().Name}",
-                    PayloadPreview: exception.Message),
-                null);
-        }
+        return _transport.SendJsonAsync(
+            method,
+            endpoint,
+            payload,
+            request => ApplyApiKey(request, apiKey, apiKeyTransport),
+            cancellationToken);
     }
 
     private static void ApplyApiKey(HttpRequestMessage request, string? apiKey, ApiKeyTransport apiKeyTransport)
@@ -742,24 +676,7 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
             IsSuccess: successCount == calls.Count,
             Endpoint: endpoints,
             Detail: detail,
-            PayloadPreview: SummarizeBody(preview));
-    }
-
-    private static JsonDocument? TryParseJsonDocument(string body)
-    {
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonDocument.Parse(body);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+            PayloadPreview: HttpJsonTransport.SummarizeBody(preview));
     }
 
     private static string NormalizeResourceToken(string? value, string fallback)
@@ -841,63 +758,6 @@ internal sealed class BackendGateway(BackendConfiguration configuration, HttpCli
         }
 
         return endpoint;
-    }
-
-    private static async Task<string> ReadBodyPreviewAsync(HttpContent content, CancellationToken cancellationToken)
-    {
-        await using Stream stream = await content.ReadAsStreamAsync(cancellationToken);
-        using StreamReader reader = new(
-            stream,
-            Encoding.UTF8,
-            detectEncodingFromByteOrderMarks: true,
-            bufferSize: 1024);
-
-        const int maxLength = 400;
-        char[] buffer = new char[maxLength + 1];
-        int totalRead = 0;
-
-        while (totalRead < buffer.Length)
-        {
-            int read = await reader.ReadAsync(
-                buffer.AsMemory(totalRead, buffer.Length - totalRead),
-                cancellationToken);
-            if (read == 0)
-            {
-                break;
-            }
-
-            totalRead += read;
-        }
-
-        if (totalRead == 0)
-        {
-            return "empty response body";
-        }
-
-        bool truncated = totalRead > maxLength;
-        string body = new(buffer, 0, Math.Min(totalRead, maxLength));
-        return SummarizeBody(body, truncated);
-    }
-
-    private static string SummarizeBody(string body, bool alreadyTruncated = false)
-    {
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return "empty response body";
-        }
-
-        string compact = body.ReplaceLineEndings(" ").Trim();
-        const int maxLength = 400;
-        if (compact.Length <= maxLength && !alreadyTruncated)
-        {
-            return compact;
-        }
-
-        string preview = compact.Length > maxLength
-            ? compact[..maxLength]
-            : compact;
-
-        return $"{preview}...";
     }
 
     public void Dispose()
