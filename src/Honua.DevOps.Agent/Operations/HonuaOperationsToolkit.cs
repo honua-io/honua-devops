@@ -26,9 +26,13 @@ internal sealed class HonuaOperationsToolkit(
     [Description("Describe the connected Honua environment: readiness, edition and feature capabilities, manifest scope, deploy targets, and approved environments. Call this first whenever the operator's request lacks an explicit service, environment, or edition so subsequent tool calls are grounded in real state.")]
     public async Task<OperationResponse> DescribeEnvironmentAsync(CancellationToken cancellationToken = default)
     {
-        BackendCallResult readiness = await gateway.ProbeHonuaAsync(cancellationToken);
-        using BackendJsonResult capabilities = await gateway.GetCapabilitySnapshotAsync(cancellationToken);
-        using BackendJsonResult manifest = await gateway.ExportManifestSnapshotAsync(cancellationToken);
+        Task<BackendCallResult> readinessTask = gateway.ProbeHonuaAsync(cancellationToken);
+        Task<BackendJsonResult> capabilitiesTask = gateway.GetCapabilitySnapshotAsync(cancellationToken);
+        Task<BackendJsonResult> manifestTask = gateway.ExportManifestSnapshotAsync(cancellationToken);
+        await Task.WhenAll(readinessTask, capabilitiesTask, manifestTask);
+        BackendCallResult readiness = readinessTask.Result;
+        using BackendJsonResult capabilities = capabilitiesTask.Result;
+        using BackendJsonResult manifest = manifestTask.Result;
 
         string detectedEdition = TryReadEditionFromCapabilities(capabilities) ?? SessionEdition;
 
@@ -106,48 +110,41 @@ internal sealed class HonuaOperationsToolkit(
             cancellationToken);
 
         string scope = Scope(service, environment, timeframe);
-        List<string> findings =
-        [
-            $"OTEL logs endpoint: {backendResult.Endpoint}",
-            $"Backend result: {backendResult.Detail}",
-            $"Response excerpt: {backendResult.PayloadPreview}"
-        ];
+        OperationResponseBuilder builder = new OperationResponseBuilder()
+            .Status(backendResult.IsSuccess ? "analysis-ready" : "backend-error")
+            .Summary($"Log analysis request for {scope}.")
+            .WithBackend(backendResult, "OTEL logs");
 
         if (Contains(logSample, "timeout", "timed out"))
         {
-            findings.Add("Timeout indicators present in provided sample.");
+            builder.AddFinding("Timeout indicators present in provided sample.");
         }
 
         if (Contains(logSample, "connection", "pool"))
         {
-            findings.Add("Connection or pool pressure indicators present in provided sample.");
+            builder.AddFinding("Connection or pool pressure indicators present in provided sample.");
         }
 
         if (!backendResult.IsSuccess)
         {
-            findings.Add("Live log query failed. Validate OTEL endpoint path, auth key, and query payload contract.");
+            builder.AddFinding("Live log query failed. Validate OTEL endpoint path, auth key, and query payload contract.");
         }
 
-        return new OperationResponse(
-            Status: backendResult.IsSuccess ? "analysis-ready" : "backend-error",
-            Summary: $"Log analysis request for {scope}.",
-            Findings: findings,
-            Actions:
-            [
+        return builder
+            .AddActions([
                 "Correlate errors by trace id and isolate first-failure boundary.",
                 "Compare failing routes against slowest queries in the same window.",
                 "Apply smallest corrective change and re-check SLOs."
-            ],
-            ValidationChecks:
-            [
+            ])
+            .AddValidationChecks([
                 "Error rate returns below baseline for at least one alert window.",
                 "P95 latency and retry volume trend downward after mitigation."
-            ],
-            Risks:
-            [
+            ])
+            .AddRisks([
                 "Incomplete log context can hide upstream root cause.",
                 "Treating symptom-only signatures can cause recurrence."
-            ]);
+            ])
+            .Build();
     }
 
     [Description("Analyze metrics through OTEL endpoint and return bottleneck findings with optimization priorities.")]
@@ -168,39 +165,32 @@ internal sealed class HonuaOperationsToolkit(
             cancellationToken);
 
         string scope = Scope(service, environment, timeframe);
-        List<string> findings =
-        [
-            $"OTEL metrics endpoint: {backendResult.Endpoint}",
-            $"Backend result: {backendResult.Detail}",
-            $"Response excerpt: {backendResult.PayloadPreview}",
-            $"Optimization objective: {Normalize(objective, "improve latency and stability")}."
-        ];
+        OperationResponseBuilder builder = new OperationResponseBuilder()
+            .Status(backendResult.IsSuccess ? "analysis-ready" : "backend-error")
+            .Summary($"Metric analysis request for {scope}.")
+            .WithBackend(backendResult, "OTEL metrics")
+            .AddFinding($"Optimization objective: {Normalize(objective, "improve latency and stability")}.");
 
         if (!backendResult.IsSuccess)
         {
-            findings.Add("Live metric query failed. Verify OTEL metrics path and authentication configuration.");
+            builder.AddFinding("Live metric query failed. Verify OTEL metrics path and authentication configuration.");
         }
 
-        return new OperationResponse(
-            Status: backendResult.IsSuccess ? "analysis-ready" : "backend-error",
-            Summary: $"Metric analysis request for {scope}.",
-            Findings: findings,
-            Actions:
-            [
+        return builder
+            .AddActions([
                 "Rank bottlenecks by user impact, not by raw utilization alone.",
                 "Apply one tuning change at a time and capture before/after metrics.",
                 "Promote validated tuning from dev -> staging -> prod via GitOps."
-            ],
-            ValidationChecks:
-            [
+            ])
+            .AddValidationChecks([
                 "SLO indicators improve without error-rate regression.",
                 "Resource headroom remains above safety threshold."
-            ],
-            Risks:
-            [
+            ])
+            .AddRisks([
                 "Burst windows can skew optimization decisions.",
                 "Aggressive tuning can reduce failover resiliency."
-            ]);
+            ])
+            .Build();
     }
 
     [Description("Generate a performance tuning plan via Honua API using workload and bottleneck inputs.")]
@@ -220,32 +210,25 @@ internal sealed class HonuaOperationsToolkit(
             targetSlo,
             cancellationToken);
 
-        return new OperationResponse(
-            Status: backendResult.IsSuccess ? "plan-ready" : "backend-error",
-            Summary: $"Performance tuning request for service `{service}` in `{environment}`.",
-            Findings:
-            [
-                $"Honua API endpoint: {backendResult.Endpoint}",
-                $"Backend result: {backendResult.Detail}",
-                $"Response excerpt: {backendResult.PayloadPreview}",
-                $"Target SLO: {Normalize(targetSlo, "stabilize P95 latency and error budget")}."
-            ],
-            Actions:
-            [
+        return new OperationResponseBuilder()
+            .Status(backendResult.IsSuccess ? "plan-ready" : "backend-error")
+            .Summary($"Performance tuning request for service `{service}` in `{environment}`.")
+            .WithBackend(backendResult, "Honua API")
+            .AddFinding($"Target SLO: {Normalize(targetSlo, "stabilize P95 latency and error budget")}.")
+            .AddActions([
                 "Tune data path first: query shape, index coverage, and filtering strategy.",
                 "Tune runtime next: connection pool, cache behavior, and timeout policy.",
                 "Roll out tuning with canary checks before broad promotion."
-            ],
-            ValidationChecks:
-            [
+            ])
+            .AddValidationChecks([
                 "P95/P99 latency improves under representative load.",
                 "Throughput improves without saturation alarms."
-            ],
-            Risks:
-            [
+            ])
+            .AddRisks([
                 "Over-indexing can increase write and maintenance costs.",
                 "Cache-only tuning can hide underlying query inefficiency."
-            ]);
+            ])
+            .Build();
     }
 
     [Description("Troubleshoot an incident through Honua API and return ordered response actions.")]
@@ -265,32 +248,25 @@ internal sealed class HonuaOperationsToolkit(
             businessImpact,
             cancellationToken);
 
-        return new OperationResponse(
-            Status: backendResult.IsSuccess ? "triage-ready" : "backend-error",
-            Summary: $"Incident triage request for `{service}` in `{environment}`.",
-            Findings:
-            [
-                $"Honua API endpoint: {backendResult.Endpoint}",
-                $"Backend result: {backendResult.Detail}",
-                $"Response excerpt: {backendResult.PayloadPreview}",
-                $"Business impact: {Normalize(businessImpact, "unknown")}."
-            ],
-            Actions:
-            [
+        return new OperationResponseBuilder()
+            .Status(backendResult.IsSuccess ? "triage-ready" : "backend-error")
+            .Summary($"Incident triage request for `{service}` in `{environment}`.")
+            .WithBackend(backendResult, "Honua API")
+            .AddFinding($"Business impact: {Normalize(businessImpact, "unknown")}.")
+            .AddActions([
                 "Stabilize traffic and reduce blast radius before deep changes.",
                 "Correlate deployment diff, logs, and metrics in the same incident window.",
                 "Apply narrow corrective action and validate recovery before closure."
-            ],
-            ValidationChecks:
-            [
+            ])
+            .AddValidationChecks([
                 "User impact is reduced or eliminated.",
                 "No new high-severity alerts in full observation window."
-            ],
-            Risks:
-            [
+            ])
+            .AddRisks([
                 "Parallel uncoordinated mitigations can obscure root cause.",
                 "Skipping rollback criteria can extend outage duration."
-            ]);
+            ])
+            .Build();
     }
 
     [Description("Plan Honua server upgrades through Honua API with sequencing and rollback gates.")]
@@ -698,34 +674,27 @@ internal sealed class HonuaOperationsToolkit(
 
         string cloud = Normalize(preferredCloud, "cloud-agnostic");
         string[] recommendedTargets = RecommendTargetsForCloud(preferredCloud);
-        return new OperationResponse(
-            Status: backendResult.IsSuccess ? "solution-ready" : "backend-error",
-            Summary: $"Deployment recommendation request targeting {cloud}.",
-            Findings:
-            [
-                $"Honua API endpoint: {backendResult.Endpoint}",
-                $"Backend result: {backendResult.Detail}",
-                $"Response excerpt: {backendResult.PayloadPreview}",
-                $"Terraform template source: {runtime.TerraformRepository}@{runtime.TerraformRef}",
-                $"Recommended deployment targets: {string.Join(", ", recommendedTargets)}"
-            ],
-            Actions:
-            [
+        return new OperationResponseBuilder()
+            .Status(backendResult.IsSuccess ? "solution-ready" : "backend-error")
+            .Summary($"Deployment recommendation request targeting {cloud}.")
+            .WithBackend(backendResult, "Honua API")
+            .AddFinding($"Terraform template source: {runtime.TerraformRepository}@{runtime.TerraformRef}")
+            .AddFinding($"Recommended deployment targets: {string.Join(", ", recommendedTargets)}")
+            .AddActions([
                 "Map customer requirements to validated Terraform deployment templates.",
                 "Select target runtime from validated set: azure-functions, lambda, eks, aks, ecs, aca.",
                 "Select topology by risk and performance profile: WAF/no-WAF, nginx/no-proxy, edge rate limiting.",
                 "Produce staged GitOps rollout with rollback and operational ownership."
-            ],
-            ValidationChecks:
-            [
+            ])
+            .AddValidationChecks([
                 $"Budget profile ({Normalize(budgetProfile, "balanced")}) aligns with recommended architecture.",
                 "Proposed design satisfies required security and availability constraints."
-            ],
-            Risks:
-            [
+            ])
+            .AddRisks([
                 "Missing non-functional requirements can produce under- or over-sized topology.",
                 "Cost-only optimization can undercut resiliency for critical workloads."
-            ]);
+            ])
+            .Build();
     }
 
     [Description("Recommend deployment topology via Honua API, including WAF, ingress, and edge rate limiting choices.")]
@@ -749,196 +718,27 @@ internal sealed class HonuaOperationsToolkit(
             runtime.TerraformRef,
             cancellationToken);
 
-        return new OperationResponse(
-            Status: backendResult.IsSuccess ? "plan-ready" : "backend-error",
-            Summary: $"Topology recommendation for `{environment}`.",
-            Findings:
-            [
-                $"Honua API endpoint: {backendResult.Endpoint}",
-                $"Backend result: {backendResult.Detail}",
-                $"Response excerpt: {backendResult.PayloadPreview}",
-                $"Terraform template source: {runtime.TerraformRepository}@{runtime.TerraformRef}",
-                $"Validated deployment targets: {string.Join(", ", runtime.TerraformDeploymentTargets)}"
-            ],
-            Actions:
-            [
+        return new OperationResponseBuilder()
+            .Status(backendResult.IsSuccess ? "plan-ready" : "backend-error")
+            .Summary($"Topology recommendation for `{environment}`.")
+            .WithBackend(backendResult, "Honua API")
+            .AddFinding($"Terraform template source: {runtime.TerraformRepository}@{runtime.TerraformRef}")
+            .AddFinding($"Validated deployment targets: {string.Join(", ", runtime.TerraformDeploymentTargets)}")
+            .AddActions([
                 $"WAF decision: {(enableWaf ? "enable with managed protections" : "disabled; enforce compensating controls at edge")}.",
                 $"Ingress decision: {(useNginxProxy ? "nginx policy gateway" : "direct ingress with service-level policy controls")}.",
                 $"Rate limiting: {(enableEdgeRateLimiting ? "enforce at edge" : "enforce via service policy + monitoring")}.",
                 "Select matching Terraform template module and roll out through GitOps."
-            ],
-            ValidationChecks:
-            [
+            ])
+            .AddValidationChecks([
                 "Synthetic load test confirms latency and failure behavior targets.",
                 "Security controls align with risk tolerance and compliance needs."
-            ],
-            Risks:
-            [
+            ])
+            .AddRisks([
                 "No-WAF posture increases exposure to application-layer attacks.",
                 "Skipping validated template modules can introduce config drift."
-            ]);
-    }
-
-    [Description("Plan the Azure-first Microsoft Agent Framework host path for analyze, publish, build, or deploy operator workflows.")]
-    public Task<OperationResponse> PlanAzureOperatorWorkflowAsync(
-        string workflowFamily,
-        string environment,
-        string operatorGoal,
-        string packageReference,
-        string deploymentTarget,
-        bool publishExternally)
-    {
-        OperatorWorkflowFamily parsedFamily = OperatorWorkflowFamilyExtensions.Parse(workflowFamily);
-        string defaultEnvironment = runtime.AllowedEnvironments.FirstOrDefault() ?? "dev";
-        string normalizedEnvironment = ParseEnvironments(Normalize(environment, defaultEnvironment)).First();
-        string normalizedGoal = SanitizeFreeText(operatorGoal, "operator workflow");
-        string normalizedPackageReference = SanitizeFreeText(packageReference, string.Empty);
-        string normalizedDeploymentTarget = SanitizeFreeText(deploymentTarget, string.Empty);
-
-        OrchestrationHostPlan plan = AzureOrchestrationHostPlanner.Build(
-            parsedFamily,
-            normalizedEnvironment,
-            normalizedGoal,
-            normalizedPackageReference,
-            normalizedDeploymentTarget,
-            publishExternally,
-            runtime,
-            EffectivePolicy);
-
-        List<string> findings =
-        [
-            $"Host target: {plan.HostTarget}.",
-            $"Workflow family: {plan.WorkflowFamily.ToConfigValue()}.",
-            $"Environment: {plan.Environment}.",
-            $"Gate status: {plan.GateStatus}.",
-            $"Contract surfaces: {string.Join(" | ", plan.ContractSurfaces)}"
-        ];
-        findings.AddRange(plan.AzureIntegrationPoints.Select(point => $"Azure integration: {point}"));
-
-        List<string> actions = plan.Stages
-            .Select(stage =>
-                $"{stage.Stage.ToConfigValue()}: {stage.AzureHostResponsibility}")
-            .ToList();
-
-        List<string> validationChecks = plan.RequiredChecks
-            .Concat(plan.EvaluationHooks)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        List<string> risks =
-        [
-            ..plan.BoundaryRules,
-            "The host plan is a dry-run contract-consumption scaffold until concrete MCP and gRPC clients are wired."
-        ];
-
-        return Task.FromResult(new OperationResponse(
-            Status: "orchestration-plan-ready",
-            Summary: $"Azure operator workflow host plan for `{parsedFamily.ToConfigValue()}` in `{normalizedEnvironment}`.",
-            Findings: findings,
-            Actions: actions,
-            ValidationChecks: validationChecks,
-            Risks: risks,
-            Evidence: BuildOrchestrationHostEvidence(plan),
-            OrchestrationHost: plan));
-    }
-
-    [Description("Plan the full GitOps platform story: repo watching, promotion, drift alerting, CI/CD previews, rollback, and audit evidence.")]
-    public Task<OperationResponse> PlanGitOpsPlatformAsync(
-        string configRepository,
-        string branch,
-        string service,
-        string environmentsCsv,
-        string syncMode,
-        string alertTargetsCsv,
-        string commitSha,
-        CancellationToken cancellationToken = default)
-    {
-        _ = cancellationToken;
-        string normalizedRepository = SanitizePayloadValue(configRepository, "config repository");
-        string normalizedBranch = ValidateRevision(Normalize(branch, "main"), "branch");
-        string normalizedService = ValidateServiceName(service);
-        string[] targetEnvironments = ParseEnvironments(environmentsCsv);
-        string normalizedSyncMode = Normalize(syncMode, "webhook").ToLowerInvariant() switch
-        {
-            "webhook" => "webhook",
-            "polling" => "polling",
-            "hybrid" => "hybrid",
-            "webhook+polling" => "hybrid",
-            _ => "webhook"
-        };
-        string[] alertTargets = SplitCsv(alertTargetsCsv, "slack");
-        string normalizedCommitSha = ValidateRevision(Normalize(commitSha, "HEAD"), "commit SHA");
-        string promotionPath = string.Join(" -> ", targetEnvironments);
-        bool productionPromotion = targetEnvironments.Contains("prod", StringComparer.OrdinalIgnoreCase);
-        string gate = productionPromotion ? "promotion-approval" : "lower-env-validation";
-        string[] supportedKinds =
-        [
-            "Connection",
-            "ServiceBundle",
-            "Layer",
-            "Style",
-            "ImportJob",
-            "GeoProcessingPipeline",
-            "EtlPipeline",
-            "RoleDefinition",
-            "RateLimitPolicy",
-            "TenantConfig",
-            "ExecutionPolicy",
-            "Promotion"
-        ];
-
-        List<string> actions =
-        [
-            $"Configure `{normalizedRepository}` branch `{normalizedBranch}` as the desired-state source for `{normalizedService}`.",
-            normalizedSyncMode == "polling"
-                ? "Enable polling sync with durable last-seen commit tracking."
-                : normalizedSyncMode == "hybrid"
-                    ? "Enable webhook sync and retain polling as a missed-event backstop."
-                    : "Enable webhook sync on merge to the watched branch.",
-            $"Run `honua apply -f desired-state --dry-run --commit {normalizedCommitSha}` for PR previews before merge.",
-            $"Promote through `{promotionPath}` with health checks, smoke tests, and manual approval before gated environments.",
-            $"Publish drift alerts to {string.Join(", ", alertTargets)} and include visual diff evidence in the admin review path.",
-            "Use rollback by commit SHA: `honua rollback --to <known-good-commit>`.",
-            "Record apply, promote, rollback, and reconcile events to the audit trail with actor, commit, diff summary, and evidence links."
-        ];
-        actions.AddRange(BuildOperatorPolicyActions());
-
-        return Task.FromResult(new OperationResponse(
-            Status: "gitops-platform-ready",
-            Summary: $"GitOps platform plan for `{normalizedService}` from `{normalizedRepository}` at `{normalizedBranch}`.",
-            Findings:
-            [
-                $"Declarative resource kinds: {string.Join(", ", supportedKinds)}.",
-                "Schema contract: versioned apiVersion/kind manifests with YAML or JSON input.",
-                $"Repository watcher: {normalizedSyncMode}; deployed commit: {normalizedCommitSha}.",
-                $"Promotion path: {promotionPath}; gate: {gate}.",
-                "Drift model: runtime export compared with declared manifests, with optional remediation through approved sync.",
-                "CI/CD integration: GitHub Actions and GitLab templates produce dry-run diffs, PR comments, and rollback evidence."
-            ],
-            Actions: actions,
-            ValidationChecks:
-            [
-                "Manifest schema validation passes for every resource before apply.",
-                "Dry-run diff is attached to the PR before merge.",
-                "Commit SHA is recorded on every sync and shown in status output.",
-                "Each promotion gate has health, smoke, and approval evidence.",
-                "Drift alerts include target environment, declared commit, actual revision, and diff summary.",
-                "Rollback drills can restore a known-good commit without manual manifest surgery."
-            ],
-            Risks:
-            [
-                "Webhook-only sync can miss events without replay or polling backstop.",
-                "Environment overrides can hide drift if they are not part of the declared state contract.",
-                "Auto-remediation must stay approval-gated for production drift."
-            ],
-            Evidence: BuildPlannerEvidence(
-                $"gitops-platform:{normalizedService}",
-                "plan-gitops-platform",
-                targetEnvironments,
-                normalizedCommitSha,
-                "gitops-platform-contract",
-                gate,
-                $"repo={normalizedRepository}; branch={normalizedBranch}; sync={normalizedSyncMode}")));
+            ])
+            .Build();
     }
 
     [Description("Run edition-aware read-only diagnostics over Honua health, metrics, and error telemetry.")]
@@ -1027,157 +827,33 @@ internal sealed class HonuaOperationsToolkit(
             sample,
             cancellationToken);
 
-        List<string> findings =
-        [
-            $"OTEL logs endpoint: {backendResult.Endpoint}",
-            $"Backend result: {backendResult.Detail}",
-            $"Response excerpt: {backendResult.PayloadPreview}"
-        ];
-        if (Contains(sample, "seq scan", "full scan"))
-            findings.Add("Sequential scan indicators suggest missing attribute or spatial selectivity.");
-        if (Contains(sample, "st_intersects", "bbox", "geometry"))
-            findings.Add("Spatial predicate present; verify spatial index coverage and bounding-box prefiltering.");
-        if (Contains(sample, "cache miss", "miss ratio"))
-            findings.Add("Cache miss indicators suggest TTL, key cardinality, or seeding review.");
+        OperationResponseBuilder builder = new OperationResponseBuilder()
+            .Status(backendResult.IsSuccess ? "slow-query-explained" : "backend-error")
+            .Summary($"Slow query analysis for `{normalizedService}` in `{normalizedEnvironment}`.")
+            .WithBackend(backendResult, "OTEL logs");
 
-        return new OperationResponse(
-            Status: backendResult.IsSuccess ? "slow-query-explained" : "backend-error",
-            Summary: $"Slow query analysis for `{normalizedService}` in `{normalizedEnvironment}`.",
-            Findings: findings,
-            Actions:
-            [
+        if (Contains(sample, "seq scan", "full scan"))
+            builder.AddFinding("Sequential scan indicators suggest missing attribute or spatial selectivity.");
+        if (Contains(sample, "st_intersects", "bbox", "geometry"))
+            builder.AddFinding("Spatial predicate present; verify spatial index coverage and bounding-box prefiltering.");
+        if (Contains(sample, "cache miss", "miss ratio"))
+            builder.AddFinding("Cache miss indicators suggest TTL, key cardinality, or seeding review.");
+
+        return builder
+            .AddActions([
                 "Compare slow query predicates against available spatial and attribute indexes.",
                 "Add bounding-box prefilters before expensive geometry predicates when possible.",
                 "Tune cache TTL and seeding only after query shape and index coverage are validated."
-            ],
-            ValidationChecks:
-            [
+            ])
+            .AddValidationChecks([
                 "Explain plan uses the expected spatial or compound index.",
                 "P95 query latency improves under representative load."
-            ],
-            Risks:
-            [
+            ])
+            .AddRisks([
                 "Index recommendations based on a single query can hurt write-heavy workloads.",
                 "Cache tuning without query fixes can hide persistent database pressure."
-            ]);
-    }
-
-    [Description("Recommend spatial and attribute indexes for a service layer with edition gating.")]
-    public Task<OperationResponse> RecommendIndexesAsync(
-        string service,
-        string layer,
-        string queryPattern,
-        string currentIndexes,
-        string edition,
-        CancellationToken cancellationToken = default)
-    {
-        _ = cancellationToken;
-        string normalizedEdition = NormalizeEdition(edition);
-        if (!EditionAtLeast(normalizedEdition, "pro"))
-        {
-            return Task.FromResult(BuildEditionGateResponse("honua_recommend_indexes", normalizedEdition, "pro"));
-        }
-
-        string normalizedService = ValidateServiceName(service);
-        string normalizedLayer = SanitizePayloadValue(layer, "layer");
-        string pattern = SanitizeFreeText(queryPattern, "not provided");
-        string indexes = SanitizeFreeText(currentIndexes, "none provided");
-        List<string> recommendations =
-        [
-            Contains(pattern, "bbox", "intersects", "within", "geometry")
-                ? "Add or verify spatial index coverage for the geometry column used by the primary map/filter predicate."
-                : "Confirm whether the layer needs a spatial index before adding write-cost overhead.",
-            Contains(pattern, "where", "tenant", "status", "category", "date")
-                ? "Add a selective compound attribute index matching tenant/filter/sort order."
-                : "Capture representative filters before adding attribute indexes.",
-            "Measure write amplification and maintenance cost before promoting indexes to production."
-        ];
-
-        return Task.FromResult(new OperationResponse(
-            Status: "index-plan-ready",
-            Summary: $"Index recommendation plan for `{normalizedService}` layer `{normalizedLayer}`.",
-            Findings:
-            [
-                $"Query pattern: {pattern}.",
-                $"Current indexes: {indexes}.",
-                $"Edition: {normalizedEdition}; required: pro."
-            ],
-            Actions: recommendations,
-            ValidationChecks:
-            [
-                "Explain plan selects the expected index for the slow query sample.",
-                "Index build completes in lower environment within the maintenance budget.",
-                "P95 latency improves without unacceptable ingest/write regression."
-            ],
-            Risks:
-            [
-                "Low-cardinality indexes can increase planner noise without improving latency.",
-                "Production index builds can compete with ingest and tile generation workloads."
-            ]));
-    }
-
-    [Description("Forecast capacity from current traffic, growth, and utilization signals.")]
-    public Task<OperationResponse> CapacityForecastAsync(
-        string service,
-        string environment,
-        string metricWindow,
-        double currentDailyRequests,
-        double growthRatePercent,
-        int currentNodes,
-        double cpuUtilizationPercent,
-        double memoryUtilizationPercent,
-        string edition,
-        CancellationToken cancellationToken = default)
-    {
-        _ = cancellationToken;
-        string normalizedEdition = NormalizeEdition(edition);
-        if (!EditionAtLeast(normalizedEdition, "pro"))
-        {
-            return Task.FromResult(BuildEditionGateResponse("honua_capacity_forecast", normalizedEdition, "pro"));
-        }
-
-        string normalizedService = ValidateServiceName(service);
-        string normalizedEnvironment = Normalize(environment, "unknown");
-        int safeNodes = Math.Max(1, currentNodes);
-        double utilization = Math.Clamp(Math.Max(cpuUtilizationPercent, memoryUtilizationPercent) / 100.0, 0.01, 5.0);
-        double growth = Math.Max(0.0, growthRatePercent) / 100.0;
-        double projectedRequests30 = currentDailyRequests * Math.Pow(1 + growth, 30);
-        double daysToScale = growth <= 0 || utilization >= 0.8
-            ? 0
-            : Math.Log(0.8 / utilization) / Math.Log(1 + growth);
-        int recommendedNodes = utilization >= 0.7 || daysToScale <= 60
-            ? safeNodes + 1
-            : safeNodes;
-
-        return Task.FromResult(new OperationResponse(
-            Status: "capacity-forecast-ready",
-            Summary: $"Capacity forecast for `{normalizedService}` in `{normalizedEnvironment}` over `{Normalize(metricWindow, "recent window")}`.",
-            Findings:
-            [
-                $"Current daily requests: {currentDailyRequests:0}.",
-                $"Projected daily requests in 30 days: {projectedRequests30:0}.",
-                $"Current nodes: {safeNodes}; recommended nodes: {recommendedNodes}.",
-                $"Peak utilization signal: {utilization:P0}; days until 80% pressure: {(daysToScale <= 0 ? "now" : daysToScale.ToString("0"))}."
-            ],
-            Actions:
-            [
-                recommendedNodes > safeNodes
-                    ? $"Prepare scale-out from {safeNodes} to {recommendedNodes} node(s) before the next promotion gate."
-                    : "Retain current node count and continue trend monitoring.",
-                "Model cache, database, and ingest pressure separately before committing infrastructure spend.",
-                "Use GitOps promotion to stage capacity changes before production rollout."
-            ],
-            ValidationChecks:
-            [
-                "Load test confirms headroom above 20% at projected 30-day volume.",
-                "Cost delta is reviewed against traffic and SLO impact.",
-                "Autoscaling thresholds align with observed burst windows."
-            ],
-            Risks:
-            [
-                "Linear growth assumptions can understate campaign or tenant onboarding bursts.",
-                "CPU-only planning can miss database, cache, or storage bottlenecks."
-            ]));
+            ])
+            .Build();
     }
 
     [Description("Prepare or execute approved operational runbooks with Enterprise and execution-tier gates.")]
@@ -1369,109 +1045,6 @@ internal sealed class HonuaOperationsToolkit(
         }
 
         return null;
-    }
-
-    [Description("Generate an incident summary with timeline, impact, response actions, and closure checks.")]
-    public Task<OperationResponse> IncidentSummaryAsync(
-        string service,
-        string environment,
-        string timeRange,
-        string timelineEvents,
-        string affectedServices,
-        string edition,
-        CancellationToken cancellationToken = default)
-    {
-        _ = cancellationToken;
-        string normalizedEdition = NormalizeEdition(edition);
-        if (!EditionAtLeast(normalizedEdition, "enterprise"))
-        {
-            return Task.FromResult(BuildEditionGateResponse("honua_incident_summary", normalizedEdition, "enterprise"));
-        }
-
-        string normalizedService = ValidateServiceName(service);
-        string normalizedEnvironment = Normalize(environment, "unknown");
-        string[] affected = SplitCsv(affectedServices, normalizedService);
-
-        return Task.FromResult(new OperationResponse(
-            Status: "incident-summary-ready",
-            Summary: $"Incident summary for `{normalizedService}` in `{normalizedEnvironment}` during `{Normalize(timeRange, "recent window")}`.",
-            Findings:
-            [
-                $"Affected services: {string.Join(", ", affected)}.",
-                $"Timeline: {SanitizeFreeText(timelineEvents, "timeline not provided")}.",
-                "Impact should be stated in customer-visible terms and linked to SLO/error-budget evidence."
-            ],
-            Actions:
-            [
-                "Record start, detect, mitigate, recover, and close timestamps.",
-                "List root cause separately from contributing factors.",
-                "Create follow-up items for prevention, detection, and runbook updates."
-            ],
-            ValidationChecks:
-            [
-                "Affected services have recovered and alerts are stable.",
-                "Customer-visible impact and remediation summary are reviewed.",
-                "Follow-up owners and due dates are assigned."
-            ],
-            Risks:
-            [
-                "A timeline without evidence links can turn into speculation.",
-                "Closing before recovery verification weakens post-incident learning."
-            ]));
-    }
-
-    [Description("Analyze a source GIS deployment and generate a migration plan with risk scoring.")]
-    public Task<OperationResponse> MigrationAdvisorAsync(
-        string sourcePlatform,
-        string serviceInventory,
-        string dataVolumeSummary,
-        string protocolRequirements,
-        string migrationConstraints,
-        string edition,
-        CancellationToken cancellationToken = default)
-    {
-        _ = cancellationToken;
-        string normalizedEdition = NormalizeEdition(edition);
-        if (!EditionAtLeast(normalizedEdition, "pro"))
-        {
-            return Task.FromResult(BuildEditionGateResponse("honua_migration_advisor", normalizedEdition, "pro"));
-        }
-
-        string source = SanitizeFreeText(sourcePlatform, "Esri ArcGIS Enterprise");
-        string inventory = SanitizeFreeText(serviceInventory, "inventory not provided");
-        string protocols = SanitizeFreeText(protocolRequirements, "OGC API, tiles, feature access");
-        bool highRisk = Contains(inventory, "custom extension", "geoprocessing", "network analyst") ||
-            Contains(migrationConstraints, "zero downtime", "regulated", "manual");
-
-        return Task.FromResult(new OperationResponse(
-            Status: "migration-plan-ready",
-            Summary: $"Migration advisor plan from `{source}`.",
-            Findings:
-            [
-                $"Service inventory: {inventory}.",
-                $"Data volume: {SanitizeFreeText(dataVolumeSummary, "unknown")}.",
-                $"Protocol requirements: {protocols}.",
-                $"Risk band: {(highRisk ? "elevated" : "standard")}."
-            ],
-            Actions:
-            [
-                "Group services into clean protocol matches, transform-required services, and manual-review services.",
-                "Stage migration by read-only publish, validation, dual-run, cutover, and rollback checkpoint.",
-                "Track completion percentage by service, layer, data volume, and protocol parity."
-            ],
-            ValidationChecks:
-            [
-                "Inventory includes service/layer count, data volume, auth mode, and protocol usage.",
-                "Representative map, feature, and tile requests match expected responses.",
-                "Rollback plan preserves source availability until cutover is accepted."
-            ],
-            Risks:
-            [
-                highRisk
-                    ? "Custom geoprocessing or strict cutover constraints need manual migration design."
-                    : "Uncataloged clients can still break if protocol behavior differs.",
-                "Data-volume estimates without sample migration timings can understate cutover duration."
-            ]));
     }
 
     [Description("Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls.")]
@@ -1953,7 +1526,7 @@ internal sealed class HonuaOperationsToolkit(
                     autoBundleResult = await supportGateway.TriggerAutoBundleAsync(
                         ticketId,
                         instanceUrl,
-                        gateway.Configuration.HonuaApiKey,
+                        supportGateway.Configuration.SupportAutoBundleApiKey,
                         cancellationToken);
                 }
 

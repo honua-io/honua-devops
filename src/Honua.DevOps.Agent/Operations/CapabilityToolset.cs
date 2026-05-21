@@ -52,11 +52,6 @@ internal static class CapabilityToolset
                 "plan_gitops_engine",
                 "Plan the internal honua-gitops engine diff, drift, and state transitions without applying desired state."),
             CreateTool(
-                (string configRepository, string branch, string service, string environmentsCsv, string syncMode, string alertTargetsCsv, string commitSha)
-                    => toolkit.PlanGitOpsPlatformAsync(configRepository, branch, service, environmentsCsv, syncMode, alertTargetsCsv, commitSha),
-                "plan_gitops_platform",
-                "Plan repository watching, promotion gates, drift alerting, CI/CD previews, rollback, and audit wiring for the GitOps platform."),
-            CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary)
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),
                 "deploy_service_gitops",
@@ -71,11 +66,6 @@ internal static class CapabilityToolset
                     => toolkit.RecommendDeploymentTopologyAsync(environment, enableWaf, useNginxProxy, enableEdgeRateLimiting, trafficProfile, riskTolerance),
                 "recommend_deployment_topology",
                 "Recommend deployment topology options including WAF, ingress, and edge rate limiting."),
-            CreateTool(
-                (string workflowFamily, string environment, string operatorGoal, string packageReference, string deploymentTarget, bool publishExternally)
-                    => toolkit.PlanAzureOperatorWorkflowAsync(workflowFamily, environment, operatorGoal, packageReference, deploymentTarget, publishExternally),
-                "plan_azure_operator_workflow",
-                "Plan the Azure-first Microsoft Agent Framework host path for analyze, publish, build, or deploy operator workflows."),
             CreateTool(
                 (string ticketId, string severity, string environment, string symptoms, string requestedAction, string allowedAccessMode, int ttlMinutes, bool rollbackExpected, string attachedEvidence)
                     => toolkit.TriageSupportTicketAsync(ticketId, severity, environment, symptoms, requestedAction, allowedAccessMode, ttlMinutes, rollbackExpected, attachedEvidence),
@@ -96,30 +86,10 @@ internal static class CapabilityToolset
                 "honua_explain_slow_queries",
                 "Explain slow query signatures and identify likely spatial, cache, or pool bottlenecks."),
             CreateTool(
-                (string service, string layer, string queryPattern, string currentIndexes, string edition)
-                    => toolkit.RecommendIndexesAsync(service, layer, queryPattern, currentIndexes, edition),
-                "honua_recommend_indexes",
-                "Recommend spatial and attribute indexes for a service layer with edition gating."),
-            CreateTool(
-                (string service, string environment, string metricWindow, double currentDailyRequests, double growthRatePercent, int currentNodes, double cpuUtilizationPercent, double memoryUtilizationPercent, string edition)
-                    => toolkit.CapacityForecastAsync(service, environment, metricWindow, currentDailyRequests, growthRatePercent, currentNodes, cpuUtilizationPercent, memoryUtilizationPercent, edition),
-                "honua_capacity_forecast",
-                "Forecast growth, node pressure, and scaling recommendations from current utilization."),
-            CreateTool(
                 (string runbookName, string service, string environment, string parameters, bool confirmed, string edition)
                     => toolkit.RunbookExecuteAsync(runbookName, service, environment, parameters, confirmed, edition),
                 "honua_runbook_execute",
                 "Prepare or execute approved operational runbooks with Enterprise and execution-tier gates."),
-            CreateTool(
-                (string service, string environment, string timeRange, string timelineEvents, string affectedServices, string edition)
-                    => toolkit.IncidentSummaryAsync(service, environment, timeRange, timelineEvents, affectedServices, edition),
-                "honua_incident_summary",
-                "Generate an incident summary with timeline, impact, response actions, and closure checks."),
-            CreateTool(
-                (string sourcePlatform, string serviceInventory, string dataVolumeSummary, string protocolRequirements, string migrationConstraints, string edition)
-                    => toolkit.MigrationAdvisorAsync(sourcePlatform, serviceInventory, dataVolumeSummary, protocolRequirements, migrationConstraints, edition),
-                "honua_migration_advisor",
-                "Analyze an Esri or legacy GIS deployment and produce a migration plan with risk scoring."),
             CreateTool(
                 (string service, string environment, string detectedIssue, string desiredOutcome, bool autoApply, string edition)
                     => toolkit.AutoRemediationPlanAsync(service, environment, detectedIssue, desiredOutcome, autoApply, edition),

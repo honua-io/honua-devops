@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.OrchestrationHost;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
@@ -5,6 +6,10 @@ using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
 
 namespace Honua.DevOps.Agent.Operations;
 
+// [JsonIgnore] fields below are intentionally hidden from the LLM-facing wire
+// shape: they are large structured objects the model can't act on directly,
+// and they bloat the context window. The audit sink reads them via the C#
+// object reference (not JSON), so they still land in the operation journal.
 internal sealed record OperationResponse(
     string Status,
     string Summary,
@@ -12,9 +17,9 @@ internal sealed record OperationResponse(
     IReadOnlyList<string> Actions,
     IReadOnlyList<string> ValidationChecks,
     IReadOnlyList<string> Risks,
-    OperationEvidence? Evidence = null,
-    GitOpsPlan? GitOpsPlan = null,
-    ReleaseOrchestrationPlan? ReleaseOrchestration = null,
-    ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null,
-    OrchestrationHostPlan? OrchestrationHost = null,
-    IReadOnlyList<OperationBackendStep>? BackendSteps = null);
+    [property: JsonIgnore] OperationEvidence? Evidence = null,
+    [property: JsonIgnore] GitOpsPlan? GitOpsPlan = null,
+    [property: JsonIgnore] ReleaseOrchestrationPlan? ReleaseOrchestration = null,
+    [property: JsonIgnore] ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null,
+    [property: JsonIgnore] OrchestrationHostPlan? OrchestrationHost = null,
+    [property: JsonIgnore] IReadOnlyList<OperationBackendStep>? BackendSteps = null);

@@ -72,32 +72,6 @@ public sealed class AzureOrchestrationHostPlannerTests
     }
 
     [Fact]
-    public async Task PlanAzureOperatorWorkflowAsync_EmitsDryRunEvidenceAndTypedPlan()
-    {
-        using BackendGateway gateway = CreateGateway();
-        HonuaOperationsToolkit toolkit = new(
-            CreateRuntime(mode: ExecutionMode.Execute, executionTier: ExecutionTier.PromoteProd),
-            gateway);
-
-        OperationResponse response = await toolkit.PlanAzureOperatorWorkflowAsync(
-            workflowFamily: "deploy",
-            environment: "prod",
-            operatorGoal: "Publish app-package:flood-review to the hosted Azure surface",
-            packageReference: "app-package:flood-review@2026.04",
-            deploymentTarget: "azure-container-apps",
-            publishExternally: true);
-
-        Assert.Equal("orchestration-plan-ready", response.Status);
-        Assert.NotNull(response.OrchestrationHost);
-        Assert.Equal(OperatorWorkflowFamily.Deploy, response.OrchestrationHost!.WorkflowFamily);
-        Assert.NotNull(response.Evidence);
-        Assert.True(response.Evidence!.DryRun);
-        Assert.Equal("approval-required", response.Evidence.PolicyGate);
-        Assert.Contains("approval-record", response.Evidence.RequiredChecks);
-        Assert.Contains(response.Actions, action => action.Contains("publish", StringComparison.Ordinal));
-    }
-
-    [Fact]
     public void Parse_RejectsUnsupportedWorkflowFamily()
     {
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
