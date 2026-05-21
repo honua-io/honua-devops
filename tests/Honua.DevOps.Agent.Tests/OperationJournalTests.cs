@@ -66,6 +66,73 @@ public class OperationJournalTests
     }
 
     [Fact]
+    public void Find_AppliesToolMutatedAndStatusFilters()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"honua-journal-{Guid.NewGuid():n}.jsonl");
+        try
+        {
+            File.WriteAllText(path,
+                "{\"OperationId\":\"op-1\",\"Timestamp\":\"2026-05-20T00:00:01Z\",\"ToolName\":\"describe_environment\",\"Status\":\"environment-described\",\"Summary\":\"\",\"Mutated\":false,\"ExecutionTier\":\"plan\"}\n" +
+                "{\"OperationId\":\"op-2\",\"Timestamp\":\"2026-05-20T00:00:02Z\",\"ToolName\":\"deploy_service_gitops\",\"Status\":\"deploy-planned\",\"Summary\":\"\",\"Mutated\":true,\"ExecutionTier\":\"execute-lower-env\"}\n" +
+                "{\"OperationId\":\"op-3\",\"Timestamp\":\"2026-05-20T00:00:03Z\",\"ToolName\":\"deploy_service_gitops\",\"Status\":\"deploy-rollback-submitted\",\"Summary\":\"\",\"Mutated\":true,\"ExecutionTier\":\"execute-lower-env\"}\n" +
+                "{\"OperationId\":\"op-4\",\"Timestamp\":\"2026-05-20T00:00:04Z\",\"ToolName\":\"analyze_logs\",\"Status\":\"analysis-ready\",\"Summary\":\"\",\"Mutated\":false,\"ExecutionTier\":\"plan\"}\n");
+
+            OperationSearchResult deploys = OperationJournal.Find(
+                $"file://{path}",
+                toolFilter: "deploy_service_gitops",
+                mutatedOnly: true,
+                statusContains: null,
+                limit: 10);
+            Assert.Equal("operations-found", deploys.Status);
+            Assert.Equal(2, deploys.Matched);
+            Assert.Equal(new[] { "op-3", "op-2" }, deploys.Operations.Select(o => o.OperationId).ToArray());
+
+            OperationSearchResult rollback = OperationJournal.Find(
+                $"file://{path}",
+                toolFilter: null,
+                mutatedOnly: null,
+                statusContains: "rollback",
+                limit: 10);
+            Assert.Single(rollback.Operations);
+            Assert.Equal("op-3", rollback.Operations[0].OperationId);
+
+            OperationSearchResult readsOnly = OperationJournal.Find(
+                $"file://{path}",
+                toolFilter: null,
+                mutatedOnly: false,
+                statusContains: null,
+                limit: 10);
+            Assert.Equal(4, readsOnly.Matched);
+
+            OperationSearchResult limited = OperationJournal.Find(
+                $"file://{path}",
+                toolFilter: null,
+                mutatedOnly: null,
+                statusContains: null,
+                limit: 2);
+            Assert.Equal(2, limited.Operations.Count);
+            Assert.Equal("op-4", limited.Operations[0].OperationId);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Find_ReportsUnavailableWhenTargetIsNotFile()
+    {
+        OperationSearchResult result = OperationJournal.Find(
+            "stdout-evidence",
+            toolFilter: null,
+            mutatedOnly: null,
+            statusContains: null,
+            limit: 10);
+        Assert.Equal("audit-journal-unavailable", result.Status);
+        Assert.Empty(result.Operations);
+    }
+
+    [Fact]
     public void ShowOperation_ReturnsNonZeroWhenOperationMissing()
     {
         string path = Path.Combine(Path.GetTempPath(), $"honua-journal-{Guid.NewGuid():n}.jsonl");

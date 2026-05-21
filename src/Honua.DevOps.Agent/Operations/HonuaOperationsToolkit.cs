@@ -1,9 +1,9 @@
 using System.ComponentModel;
 
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
-using Honua.DevOps.Agent.Operations.OrchestrationHost;
 using Honua.DevOps.Agent.Operations.Troubleshooting;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
@@ -22,6 +22,26 @@ internal sealed class HonuaOperationsToolkit(
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 
     internal string SessionEdition => string.IsNullOrWhiteSpace(defaultEdition) ? "community" : defaultEdition!.Trim().ToLowerInvariant();
+
+    [Description("Search the operator's audit journal for recent operations. Returns operationId, timestamp, tool, status, summary, mutated flag, and execution tier. Use this to look up an operationId for rollback, recall what was run in a prior session, or summarize recent activity. Filter by tool name (exact match), mutatedOnly (true to skip read-only calls), or statusContains (substring match). Returns up to `limit` most-recent matches.")]
+    public Task<OperationSearchResult> FindRecentOperationsAsync(
+        string toolFilter,
+        bool mutatedOnly,
+        string statusContains,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        int safeLimit = limit < 1 ? 20 : Math.Min(limit, 200);
+        bool? mutatedToggle = mutatedOnly ? true : null;
+        OperationSearchResult result = OperationJournal.Find(
+            EffectivePolicy.AuditHookTarget,
+            string.IsNullOrWhiteSpace(toolFilter) ? null : toolFilter,
+            mutatedToggle,
+            string.IsNullOrWhiteSpace(statusContains) ? null : statusContains,
+            safeLimit);
+        return Task.FromResult(result);
+    }
 
     [Description("Describe the connected Honua environment: readiness, edition and feature capabilities, manifest scope, deploy targets, and approved environments. Call this first whenever the operator's request lacks an explicit service, environment, or edition so subsequent tool calls are grounded in real state.")]
     public async Task<OperationResponse> DescribeEnvironmentAsync(CancellationToken cancellationToken = default)
@@ -1319,36 +1339,6 @@ internal sealed class HonuaOperationsToolkit(
             GateStatus: guidedFix.RecommendedNextAction,
             BackendEndpoint: backendResult.Endpoint,
             BackendDetail: backendResult.Detail);
-    }
-
-    private OperationEvidence BuildOrchestrationHostEvidence(OrchestrationHostPlan plan)
-    {
-        return new OperationEvidence(
-            Scope: $"azure-orchestration-host:{plan.WorkflowFamily.ToConfigValue()}:{plan.Environment}",
-            RequestedAction: plan.OperatorGoal,
-            EffectiveAction: "plan-azure-operator-workflow",
-            DryRun: true,
-            ExecutionMode: runtime.ExecutionMode.ToString().ToLowerInvariant(),
-            ExecutionTier: runtime.ExecutionTier.ToConfigValue(),
-            TargetEnvironments: [plan.Environment],
-            CurrentRevision: null,
-            DesiredRevision: plan.PackageReference,
-            GitOpsTool: runtime.GitOpsTool,
-            TerraformRepository: runtime.TerraformRepository,
-            TerraformRef: runtime.TerraformRef,
-            DeploymentTargets: runtime.TerraformDeploymentTargets.ToArray(),
-            PolicyGate: plan.GateStatus,
-            ApprovalMode: EffectivePolicy.ApprovalMode.ToConfigValue(),
-            AuditHookTarget: EffectivePolicy.AuditHookTarget,
-            SupportSessionAccess: EffectivePolicy.SupportSession.Access.ToConfigValue(),
-            SupportSessionTtlMinutes: EffectivePolicy.SupportSession.TtlMinutes,
-            SupportSessionCustomerVisible: EffectivePolicy.SupportSession.CustomerVisible,
-            BreakGlassPostActionReviewRequired: EffectivePolicy.BreakGlassPostActionReviewRequired,
-            RequiredChecks: plan.RequiredChecks,
-            DiffSummary: $"orchestration stages: {string.Join(" -> ", plan.Stages.Select(stage => stage.Stage.ToConfigValue()))}",
-            GateStatus: plan.GateStatus,
-            BackendEndpoint: "local://azure-orchestration-host",
-            BackendDetail: "contract-consumption plan only; no backend call performed");
     }
 
     private static DiagnosisScorecard BuildSupportDiagnosisScorecard(
