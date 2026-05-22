@@ -17,7 +17,11 @@ internal sealed class TestHttpMessageHandler(Func<HttpRequestMessage, HttpRespon
         CapturedRequests.Add(new CapturedRequest(
             request.Method.Method,
             request.RequestUri?.AbsoluteUri ?? string.Empty,
-            body));
+            body)
+        {
+            AuthorizationScheme = request.Headers.Authorization?.Scheme,
+            AuthorizationParameter = request.Headers.Authorization?.Parameter
+        });
 
         return responder(request);
     }
@@ -34,4 +38,8 @@ internal sealed class TestHttpMessageHandler(Func<HttpRequestMessage, HttpRespon
 internal sealed record CapturedRequest(
     string Method,
     string Uri,
-    string? Body);
+    string? Body)
+{
+    internal string? AuthorizationScheme { get; init; }
+    internal string? AuthorizationParameter { get; init; }
+}

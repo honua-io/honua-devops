@@ -3,7 +3,8 @@ namespace Honua.DevOps.Agent.Providers;
 internal enum ProviderKind
 {
     Codex,
-    Claude
+    Claude,
+    LocalLlama
 }
 
 internal static class ProviderKindExtensions
@@ -16,15 +17,25 @@ internal static class ProviderKindExtensions
             return false;
         }
 
-        if (value.Equals("codex", StringComparison.OrdinalIgnoreCase))
+        string normalized = value.Trim();
+
+        if (normalized.Equals("codex", StringComparison.OrdinalIgnoreCase))
         {
             provider = ProviderKind.Codex;
             return true;
         }
 
-        if (value.Equals("claude", StringComparison.OrdinalIgnoreCase))
+        if (normalized.Equals("claude", StringComparison.OrdinalIgnoreCase))
         {
             provider = ProviderKind.Claude;
+            return true;
+        }
+
+        if (normalized.Equals("local-llama", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("localllama", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("LocalLlama", StringComparison.Ordinal))
+        {
+            provider = ProviderKind.LocalLlama;
             return true;
         }
 
@@ -38,7 +49,19 @@ internal static class ProviderKindExtensions
         {
             ProviderKind.Codex => "HONUA_DEVOPS_CODEX",
             ProviderKind.Claude => "HONUA_DEVOPS_CLAUDE",
+            ProviderKind.LocalLlama => "HONUA_DEVOPS_LOCAL_LLAMA",
             _ => throw new InvalidOperationException($"Provider `{provider}` is not supported.")
+        };
+    }
+
+    internal static string ToConfigValue(this ProviderKind provider)
+    {
+        return provider switch
+        {
+            ProviderKind.Codex => "codex",
+            ProviderKind.Claude => "claude",
+            ProviderKind.LocalLlama => "local-llama",
+            _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unsupported provider.")
         };
     }
 }

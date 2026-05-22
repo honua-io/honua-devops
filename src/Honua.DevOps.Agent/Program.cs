@@ -105,7 +105,7 @@ try
         runtime.ExecutionMode.ToString().ToLowerInvariant(),
         runtime.ExecutionTier.ToConfigValue(),
         policy.ApprovalMode.ToConfigValue(),
-        options.Provider.ToString().ToLowerInvariant(),
+        options.Provider.ToConfigValue(),
         auditSink);
 
     if (!string.IsNullOrWhiteSpace(options.Prompt))
@@ -115,7 +115,7 @@ try
     }
 
     Console.WriteLine(
-        $"honua-devops is ready ({options.Provider.ToString().ToLowerInvariant()} provider, mode={runtime.ExecutionMode.ToString().ToLowerInvariant()}, tier={runtime.ExecutionTier.ToConfigValue()}, gitops={runtime.GitOpsTool}, edition={detectedEdition}).");
+        $"honua-devops is ready ({options.Provider.ToConfigValue()} provider, mode={runtime.ExecutionMode.ToString().ToLowerInvariant()}, tier={runtime.ExecutionTier.ToConfigValue()}, gitops={runtime.GitOpsTool}, edition={detectedEdition}).");
     Console.WriteLine($"approval={policy.ApprovalMode.ToConfigValue()} audit={auditSink.Target} support-session={policy.SupportSession.Access.ToConfigValue()} ttl={policy.SupportSession.TtlMinutes}m session={sessionId}");
     Console.WriteLine($"honua-api={backendConfiguration.HonuaApiBaseUri} otel={backendConfiguration.OTelBaseUri}");
     Console.WriteLine("Type a request, `exit` to quit, or `/tools` to list available operator tools.");
