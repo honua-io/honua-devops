@@ -18,7 +18,7 @@ internal sealed record ProviderConfiguration(
         Uri? endpoint = ParseEndpoint(endpointValue, $"{prefix}_ENDPOINT");
 
         return new ProviderConfiguration(
-            Name: provider.ToString().ToLowerInvariant(),
+            Name: provider.ToConfigValue(),
             Model: model,
             ApiKey: apiKey,
             Endpoint: endpoint);

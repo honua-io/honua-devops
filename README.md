@@ -9,7 +9,7 @@ This repository is the execution vehicle for the operator control system tracked
 - Operate Honua like a senior platform operator (install, configure, optimize, monitor, troubleshoot, upgrade).
 - Act as a solution engineer and architect to design and deploy Honua workloads to cloud environments.
 - Customize deployment topology per environment (WAF/no WAF, nginx proxy/no proxy, edge rate limiting posture, scaling shape).
-- Provide provider-pluggable AI runtime with at least `codex` and `claude`.
+- Provide provider-pluggable AI runtime with at least `codex`, `claude`, and `local-llama` (NVIDIA NIM and other OpenAI-compatible local endpoints).
 
 Mission: raise the technical and delivery bar high enough to disrupt the GIS professional services status quo.
 
@@ -28,7 +28,7 @@ open-core runtime promise.
 
 - .NET 10 console host
 - Microsoft Agent Framework (`Microsoft.Agents.AI`, `Microsoft.Agents.AI.OpenAI`)
-- OpenAI-compatible provider adapters (`codex`, `claude`)
+- OpenAI-compatible provider adapters (`codex`, `claude`, `local-llama`)
 - Built-in operations toolset (function tools for logs, metrics, troubleshooting, tuning, upgrades, GitOps deploys, customer requirement analysis)
 
 ## Built-In Capabilities
@@ -45,7 +45,7 @@ open-core runtime promise.
 
 ## Provider Configuration
 
-Set `HONUA_DEVOPS_PROVIDER` to `codex` or `claude` (defaults to `codex`).
+Set `HONUA_DEVOPS_PROVIDER` to `codex`, `claude`, or `local-llama` (defaults to `codex`).
 Reference defaults live in `.env.example`.
 `honua-devops` auto-loads `.env` and `.env.local` from the working directory, with process environment variables taking precedence and `.env.local` overriding `.env`.
 
@@ -60,6 +60,14 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_CLAUDE_MODEL` (required)
 - `HONUA_DEVOPS_CLAUDE_API_KEY` (required)
 - `HONUA_DEVOPS_CLAUDE_ENDPOINT` (optional, for custom OpenAI-compatible endpoint)
+
+### LocalLlama provider (NVIDIA NIM / OpenAI-compatible)
+
+- `HONUA_DEVOPS_LOCAL_LLAMA_MODEL` (required, e.g. `meta/llama-3.3-70b-instruct`)
+- `HONUA_DEVOPS_LOCAL_LLAMA_API_KEY` (required, NIM developer-tier key or self-hosted API key)
+- `HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT` (required for hosted NIM; defaults to the OpenAI base URL otherwise)
+
+`local-llama` is the integration surface for NVIDIA NIM (build.nvidia.com hosted, NVIDIA AI Enterprise self-hosted, or AWS Marketplace) and any other OpenAI-compatible local inference endpoint (vLLM, Ollama, TGI). See [docs/deployments/nvidia-nim.md](docs/deployments/nvidia-nim.md) for hosted setup, self-hosted Docker, AWS Marketplace notes, and troubleshooting.
 
 ## Runtime Controls
 

@@ -31,7 +31,9 @@ honua-devops — AI operator for Honua
 Usage: honua-devops [options]
 
 Options:
-  --provider <codex|claude>   Pick the model provider. Defaults to HONUA_DEVOPS_PROVIDER or codex.
+  --provider <codex|claude|local-llama>
+                              Pick the model provider. Defaults to HONUA_DEVOPS_PROVIDER or codex.
+                              local-llama covers NVIDIA NIM and other OpenAI-compatible local endpoints.
   --prompt <text>             Single-shot prompt; agent runs once, prints, and exits.
   --preflight                 Validate config and backends without launching the agent.
   --list-tools                Print the operator tool catalogue and exit.
@@ -75,7 +77,7 @@ Examples:
             {
                 if (index + 1 >= args.Length)
                 {
-                    throw new InvalidOperationException($"{ProviderFlag} requires a value: codex or claude.");
+                    throw new InvalidOperationException($"{ProviderFlag} requires a value: codex, claude, or local-llama.");
                 }
 
                 providerValue = args[++index];
@@ -172,7 +174,7 @@ Examples:
         if (!ProviderKindExtensions.TryParse(selectedProvider, out ProviderKind provider))
         {
             throw new InvalidOperationException(
-                $"Invalid provider `{selectedProvider}`. Supported values: codex, claude.");
+                $"Invalid provider `{selectedProvider}`. Supported values: codex, claude, local-llama.");
         }
 
         return new CliOptions(

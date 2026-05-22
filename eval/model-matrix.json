@@ -39,10 +39,11 @@
       "id": "local-llama",
       "displayName": "Local Llama",
       "role": "portability",
-      "provider": "openai-compatible-local",
+      "provider": "local-llama",
       "enabledEnv": "HONUA_EVAL_LOCAL_LLAMA_ENABLED",
       "commandEnv": "HONUA_EVAL_LOCAL_LLAMA_COMMAND",
       "modelEnv": "HONUA_DEVOPS_LOCAL_LLAMA_MODEL",
+      "secretEnv": "HONUA_DEVOPS_LOCAL_LLAMA_API_KEY",
       "endpointEnv": "HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT",
       "requiredForRelease": false
     }
