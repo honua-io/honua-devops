@@ -78,6 +78,19 @@ try
         return;
     }
 
+    if (options.Listen)
+    {
+        WebhookListenerConfiguration listenerConfiguration = WebhookListenerConfiguration.Load();
+        HonuaOperationsToolkit listenerToolkit = new(runtime, backendGateway, policy, supportGateway);
+        EscalationConsoleReporter reporter = new(listenerConfiguration.AutoTriage ? listenerToolkit : null);
+        EscalationWebhookHandler webhookHandler = new(
+            listenerConfiguration.Secret,
+            (payload, token) => reporter.ReportAsync(payload, token));
+        await using EscalationWebhookListener listener = new(listenerConfiguration, webhookHandler);
+        await listener.RunAsync(cancellationTokenSource.Token);
+        return;
+    }
+
     auditSink = AuditSinkFactory.Create(policy.AuditHookTarget);
 
     string detectedEdition = await DetectEditionAsync(backendGateway, cancellationTokenSource.Token);

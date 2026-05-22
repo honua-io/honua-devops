@@ -10,7 +10,8 @@ internal sealed record CliOptions(
     bool ListTools,
     bool ListOperations,
     string? ShowOperation,
-    int OperationLimit)
+    int OperationLimit,
+    bool Listen)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
@@ -21,6 +22,7 @@ internal sealed record CliOptions(
     private const string ListOperationsFlag = "--list-operations";
     private const string ShowOperationFlag = "--show-operation";
     private const string LimitFlag = "--limit";
+    private const string ListenFlag = "--listen";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
 
     internal const string HelpText = """
@@ -36,7 +38,14 @@ Options:
   --list-operations           Print recent operations from the audit journal (requires file:// audit hook).
   --show-operation <id>       Print a single operation record by operation id.
   --limit <n>                 Limit --list-operations to the n most recent records (default 20).
+  --listen                    Run the escalation webhook receiver. Requires HONUA_DEVOPS_WEBHOOK_SECRET.
   -h, --help                  Show this help and exit.
+
+Environment (--listen):
+  HONUA_DEVOPS_WEBHOOK_SECRET       Required. Shared HMAC-SHA256 secret matching honua-support.
+  HONUA_DEVOPS_WEBHOOK_PORT         Optional. TCP port to bind (default 8090).
+  HONUA_DEVOPS_WEBHOOK_PATH         Optional. URL path to accept POSTs on (default /escalations).
+  HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE  Optional. When true (default), auto-triage on receive.
 
 Examples:
   honua-devops --preflight
@@ -44,6 +53,7 @@ Examples:
   honua-devops --list-tools
   honua-devops --list-operations --limit 50
   honua-devops --show-operation 7d2b9f...
+  honua-devops --listen
 """;
 
     internal static CliOptions Parse(string[] args)
@@ -56,6 +66,7 @@ Examples:
         bool listOperations = false;
         string? showOperation = null;
         int operationLimit = 20;
+        bool listen = false;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -118,6 +129,12 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(ListenFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                listen = true;
+                continue;
+            }
+
             if (argument.Equals(LimitFlag, StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 >= args.Length || !int.TryParse(args[index + 1], out int parsedLimit) || parsedLimit < 1)
@@ -131,7 +148,7 @@ Examples:
             }
 
             throw new InvalidOperationException(
-                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, or {HelpFlag}.");
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, or {HelpFlag}.");
         }
 
         if (help || listTools || listOperations || showOperation is not null)
@@ -144,7 +161,8 @@ Examples:
                 listTools,
                 listOperations,
                 showOperation,
-                operationLimit);
+                operationLimit,
+                listen);
         }
 
         string selectedProvider = providerValue ??
@@ -165,6 +183,7 @@ Examples:
             listTools,
             listOperations,
             showOperation,
-            operationLimit);
+            operationLimit,
+            listen);
     }
 }
