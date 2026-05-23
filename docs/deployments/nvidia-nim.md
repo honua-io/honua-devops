@@ -122,12 +122,49 @@ sovereignty-required environments:
 Honua-GIS-32B is the fine-tuned, domain-specific NIM target that the
 `local-llama` provider was designed to feed.
 
-- TODO: link to the published Honua-GIS-32B model card once
-  [honua-io/honua-sdk-python#64](https://github.com/honua-io/honua-sdk-python/issues/64)
-  ships the model.
-- Until then, point `HONUA_DEVOPS_LOCAL_LLAMA_MODEL` at a stock NIM model
-  (`meta/llama-3.3-70b-instruct` is the closest base) and treat results as
-  the portability baseline.
+### Awaiting 64.10
+
+The canonical Honua-GIS-32B model id, hosted NIM endpoint URL, and API
+key issuance flow are produced by
+[honua-io/honua-sdk-python#64.10](https://github.com/honua-io/honua-sdk-python/issues/64).
+This section will be replaced with the published model card link, endpoint
+hostname, and key issuance steps as soon as 64.10 lands. honua-devops needs
+no code change to consume the endpoint — only the three
+`HONUA_DEVOPS_LOCAL_LLAMA_*` env vars repointed at the Honua-GIS deployment.
+
+Placeholder env-var sample (replace the values once 64.10 publishes them):
+
+```bash
+HONUA_DEVOPS_PROVIDER=local-llama
+HONUA_DEVOPS_LOCAL_LLAMA_MODEL=honua/honua-gis-32b     # awaiting 64.10 canonical id
+HONUA_DEVOPS_LOCAL_LLAMA_API_KEY=<issued-by-64.10>     # awaiting 64.10 key issuance flow
+HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT=https://<gis-nim-host>/v1   # awaiting 64.10 hostname
+```
+
+Until 64.10 ships, point `HONUA_DEVOPS_LOCAL_LLAMA_MODEL` at a stock NIM
+model (`meta/llama-3.3-70b-instruct` is the closest base) and treat results
+as the portability baseline.
+
+### Rollout baseline (founder defaults)
+
+Recorded for the Honua-GIS-32B production rollout the `local-llama` lane is
+designed to feed (parent epic `honua-io/honua-sdk-python#64`):
+
+- **Dedicated repo** for the Honua-GIS fine-tune artifacts and serving stack
+  (kept separate from honua-devops and honua-server).
+- **Qwen 2.5 Coder 32B** as the initial base model the fine-tune starts from.
+- **Single H100 production pass**, **capped at USD 1,500** until the founder
+  revises the cap. Operators reviewing NIM cost reports should treat any
+  per-pass spend above that ceiling as a stop-the-line signal.
+- **Founder/operator corpus licensing sign-off** is required before any
+  customer corpus is mixed into the fine-tune dataset; the sign-off is
+  recorded on the parent epic.
+
+These defaults do not change anything in honua-devops directly — they shape
+the artifact that the `local-llama` provider will eventually call against.
+Audit records continue to read `Provider="local-llama"` for any
+Honua-GIS-32B session; the model id is captured only via the
+`HONUA_DEVOPS_LOCAL_LLAMA_MODEL` env value at process start.
 
 ## 6. Troubleshooting
 
@@ -164,3 +201,26 @@ dotnet test tests/Honua.DevOps.Agent.Tests/Honua.DevOps.Agent.Tests.csproj \
 
 A live nightly run against the build.nvidia.com developer tier is a manual
 artifact for now (the CI environment intentionally has no NIM credentials).
+
+### Opt-in live integration test
+
+`tests/Honua.DevOps.Agent.Tests/LiveLocalLlamaIntegrationTests.cs` issues a
+single short chat completion against the configured `local-llama` endpoint
+to confirm end-to-end wiring works against a real NIM (build.nvidia.com,
+self-hosted, AWS Marketplace, or the Honua-GIS-32B deployment from 64.10).
+The test is **skipped by default in CI** and only runs when both opt-in
+gates are present:
+
+```bash
+HONUA_DEVOPS_LIVE_LOCAL_LLAMA=true \
+HONUA_DEVOPS_LOCAL_LLAMA_MODEL=<model-id> \
+HONUA_DEVOPS_LOCAL_LLAMA_API_KEY=<key> \
+HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT=https://<host>/v1 \
+dotnet test tests/Honua.DevOps.Agent.Tests/Honua.DevOps.Agent.Tests.csproj \
+  --filter LiveLocalLlamaIntegrationTests
+```
+
+Without `HONUA_DEVOPS_LIVE_LOCAL_LLAMA=true` (or with any of the three
+provider env vars missing) the test returns early and reports as passing.
+This mirrors the `HONUA_DEVOPS_LIVE_INTEGRATION=true` pattern used for the
+Honua backend live tests, and keeps PR/main CI lanes credential-free.
