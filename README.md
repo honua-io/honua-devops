@@ -75,7 +75,7 @@ Reference defaults live in `.env.example`.
 
 The QGIS plugin distribution lane is tracked from the same strategy plan:
 `honua-io/honua-qgis-plugin` is the GPL-2.0-or-later plugin repo, and
-<https://honua.io/qgis-plugin.html> is the current public install/status page.
+<https://honua.io/qgis-plugin.html> is the current public landing/status page.
 Release ZIP, marketplace approval, screenshots, and demo media stay pending
 until the plugin release owner publishes those artifacts.
 

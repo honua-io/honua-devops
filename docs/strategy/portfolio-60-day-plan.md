@@ -600,7 +600,7 @@ Reference: copy-paste-ready epic titles + sub-issues for the five new epics in �
 
 ## Appendix C — Filed backlog and promotions
 
-Executed 2026-05-21 against the live GitHub portfolio. All issues are ready for honua-agentflow to pick up via existing repo profiles. Specifica-source repos have matching contracts in `agent-delivery-spec/contracts/<repo>/<n>.md`.
+Executed 2026-05-21 against the live GitHub portfolio. All issues are ready for honua-agentflow to pick up via existing repo profiles. Specifica-source repos have unpublished contract handoff paths in `agent-delivery-spec/contracts/<repo>/<n>.md`; those paths are not public GitHub URLs until the Specifica workspace has a published remote.
 
 ### Label promotions on existing issues (4)
 
@@ -622,12 +622,12 @@ Executed 2026-05-21 against the live GitHub portfolio. All issues are ready for 
 | [honua-devops#46](https://github.com/honua-io/honua-devops/issues/46) | Epic: NVIDIA NIM integration as a first-class provider in honua-devops | Make the NVIDIA stack claim technically real, not aspirational (§5 Epic 4) | priority/P1 phase/MVP effort/M ready-to-start |
 | [honua-sales#48](https://github.com/honua-io/honua-sales/issues/48) | Epic: Procurement readiness — SOC 2 program kickoff for SLG market | Close the compliance / SLG GTM mismatch identified in §7 | priority/P1 phase/MVP effort/XL blocks-others |
 
-### Specifica contracts written (2)
+### Specifica contract handoffs recorded (2)
 
 For repos with `requirements_source: specifica`, agentflow grooming requires a contract document outside the GitHub issue body.
 
-- [`agent-delivery-spec/contracts/honua-devops/46.md`](https://github.com/honua-io/agent-delivery-spec/blob/main/contracts/honua-devops/46.md) — full contract for the NIM integration epic
-- [`agent-delivery-spec/contracts/honua-sales/48.md`](https://github.com/honua-io/agent-delivery-spec/blob/main/contracts/honua-sales/48.md) — full contract for the SOC 2 procurement-readiness umbrella
+- `agent-delivery-spec/contracts/honua-devops/46.md` — unpublished Specifica handoff path for the NIM integration epic
+- `agent-delivery-spec/contracts/honua-sales/48.md` — unpublished Specifica handoff path for the SOC 2 procurement-readiness umbrella
 
 The other four new epics live in honua-sdk-python which uses `markdown-default` grooming — the GitHub issue body itself is the contract.
 
@@ -648,7 +648,7 @@ These match the §9 decision points. Resolved entries no longer gate agentflow; 
 
 - All target repos (honua-server, honua-sdk-python, honua-devops, honua-sales) have profiles in `honua-agentflow/profiles/`.
 - All required labels exist on all target repos: priority/P0-P4, ready-to-start, blocks-others, effort/XS-XL, phase/MVP/Beta/GA, area/*, edition/*.
-- Specifica contracts written for the two issues in specifica-source repos.
+- Specifica contract handoff paths recorded for the two issues in specifica-source repos; no public contract URLs are claimed in this tracker.
 - Markdown-default repos (honua-sdk-python) have issue bodies with the required `## Why`, `## Scope`, `## Acceptance Criteria` sections.
 
 agentflow can now pick these up via standard `inbox` / `next` flow.

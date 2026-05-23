@@ -4,7 +4,7 @@
 
 ## Current Capabilities
 
-- Provider-pluggable agent runtime with Codex and Claude configuration paths.
+- Provider-pluggable agent runtime with Codex, Claude, and `local-llama` configuration paths.
 - Plan/execute modes, execution tiers, approval modes, audit hooks, support-session posture, and break-glass controls.
 - Built-in operations toolkit for diagnostics, metrics review, slow-query explanation, index recommendations, capacity forecasts, runbook execution, incident summaries, migration advice, and remediation planning.
 - Honua API, OTEL, and `honua-support` backend integration, including diagnosis evidence and scorecard posting to support tickets.
