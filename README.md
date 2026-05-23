@@ -67,7 +67,7 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_LOCAL_LLAMA_API_KEY` (required, NIM developer-tier key or self-hosted API key)
 - `HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT` (required for hosted NIM; defaults to the OpenAI base URL otherwise)
 
-`local-llama` is the integration surface for NVIDIA NIM (build.nvidia.com hosted, NVIDIA AI Enterprise self-hosted, or AWS Marketplace) and any other OpenAI-compatible local inference endpoint (vLLM, Ollama, TGI). See [docs/deployments/nvidia-nim.md](docs/deployments/nvidia-nim.md) for hosted setup, self-hosted Docker, AWS Marketplace notes, and troubleshooting.
+`local-llama` is the integration surface for NVIDIA NIM (build.nvidia.com hosted, NVIDIA AI Enterprise self-hosted, or AWS Marketplace) and any other OpenAI-compatible local inference endpoint (vLLM, Ollama, TGI). The canonical Honua-tuned target is **Honua-GIS-32B** (parent epic `honua-io/honua-sdk-python#64`); the same three env vars point at it once the dedicated NIM endpoint ships from 64.10. See [docs/deployments/nvidia-nim.md](docs/deployments/nvidia-nim.md) for hosted setup, self-hosted Docker, AWS Marketplace notes, the Honua-GIS-32B model card, and troubleshooting.
 
 ## Runtime Controls
 
@@ -165,6 +165,24 @@ dotnet test tests/Honua.DevOps.Agent.Tests/Honua.DevOps.Agent.Tests.csproj \
 ```
 
 Set `HONUA_DEVOPS_DEPLOY_TARGET_ID` to also exercise the real deploy-control plan contract. The current live tests do not create, submit, or roll back deploy operations.
+
+The `local-llama` provider has its own opt-in live test against any
+OpenAI-compatible NIM endpoint (build.nvidia.com developer tier, self-hosted
+NIM, AWS Marketplace, or the Honua-GIS-32B deployment from
+`honua-io/honua-sdk-python#64`):
+
+```bash
+HONUA_DEVOPS_LIVE_LOCAL_LLAMA=true \
+HONUA_DEVOPS_LOCAL_LLAMA_MODEL=<model-id> \
+HONUA_DEVOPS_LOCAL_LLAMA_API_KEY=<key> \
+HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT=https://<host>/v1 \
+dotnet test tests/Honua.DevOps.Agent.Tests/Honua.DevOps.Agent.Tests.csproj \
+  --filter LiveLocalLlamaIntegrationTests
+```
+
+Without `HONUA_DEVOPS_LIVE_LOCAL_LLAMA=true` (or with any of the three
+provider env vars missing) the test returns early so PR/main CI lanes never
+hit a NIM endpoint.
 
 ## Run
 
