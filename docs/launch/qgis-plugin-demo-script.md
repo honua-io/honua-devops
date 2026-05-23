@@ -1,7 +1,7 @@
 # Honua QGIS Plugin Demo Script
 
 This script is the reviewable recording plan for the first public Honua GIS
-Assistant demo. It keeps the pass focused on the shipped `0.1.0` early-preview
+Assistant demo. It keeps the pass focused on the current `0.1.0` source-preview
 scope: install the plugin, open the local-first assistant panel, refresh local
 Ollama models, run a bounded vector-layer query, and show the privacy controls.
 
