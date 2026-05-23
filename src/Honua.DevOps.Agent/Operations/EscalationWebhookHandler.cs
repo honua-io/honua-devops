@@ -62,11 +62,11 @@ internal sealed class EscalationWebhookHandler
                 Payload: null);
         }
 
-        if (!string.Equals(payload.Event, EscalationWebhookPayload.ExpectedEvent, StringComparison.Ordinal))
+        if (!string.Equals(payload.EventType, EscalationWebhookPayload.ExpectedEvent, StringComparison.Ordinal))
         {
             return new WebhookHandlerResult(
                 StatusCode: 400,
-                Reason: $"unexpected-event:{payload.Event}",
+                Reason: $"unexpected-event:{payload.EventType}",
                 Payload: null);
         }
 

@@ -89,6 +89,10 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_SUPPORT_SESSION_TTL_MINUTES` (`60` default)
 - `HONUA_DEVOPS_SUPPORT_SESSION_CUSTOMER_VISIBLE` (`true` default)
 - `HONUA_DEVOPS_BREAK_GLASS_POST_REVIEW_REQUIRED` (`true` default)
+- `HONUA_DEVOPS_WEBHOOK_SECRET` (required only for `--listen`; shared HMAC-SHA256 escalation webhook secret configured in `honua-support`)
+- `HONUA_DEVOPS_WEBHOOK_PORT` (`8090` default; localhost listener port)
+- `HONUA_DEVOPS_WEBHOOK_PATH` (`/escalations` default; signed POST path)
+- `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE` (`true` default; when true, accepted webhooks trigger read-only ticket triage output)
 - `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
 - `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`)
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-terraform`)
@@ -117,6 +121,7 @@ Support ticket integration:
 - `HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH` defaults to `/api/v1/tickets`
 - `HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN` should be set to an operator support token outside local development.
 - Diagnosis posts include guided-fix output plus `OperationEvidence` and `DiagnosisScorecard` payloads for ticket audit and score tracking.
+- `--listen` runs the signed escalation receiver on `http://localhost:${HONUA_DEVOPS_WEBHOOK_PORT}${HONUA_DEVOPS_WEBHOOK_PATH}`. It accepts `POST` requests whose body has `eventType: "ticket.escalation_requested"` (matching `honua-support`'s `SupportNotificationPayload`) and `X-Honua-Signature: sha256=<lowercase HMAC-SHA256(secret, raw body)>`; accepted requests return HTTP 202 with `{"status":202,"reason":"accepted"}`.
 - Auto-bundle (forwarding a Honua API key to the support backend so it can pull live telemetry from a customer instance) is **disabled by default**. To opt in:
   - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ENABLED=true`
   - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ALLOWED_HOSTS=` comma-separated list of permitted `instanceUrl` hosts; auto-bundle requests with hosts outside this list are rejected before any HTTP call
@@ -234,6 +239,13 @@ Inspect the operation journal (requires `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --list-operations --limit 50
 dotnet run --project src/Honua.DevOps.Agent -- --show-operation <operationId>
+```
+
+Run the honua-support escalation receiver:
+
+```bash
+HONUA_DEVOPS_WEBHOOK_SECRET=<shared-secret> \
+dotnet run --project src/Honua.DevOps.Agent -- --listen
 ```
 
 Single-shot prompt:

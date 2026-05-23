@@ -42,12 +42,15 @@ internal sealed class EscalationConsoleReporter
                 ticketId: payload.TicketId ?? string.Empty,
                 severity: payload.Severity ?? "medium",
                 environment: payload.Environment ?? "unknown",
-                symptoms: payload.Symptoms ?? string.Empty,
+                // honua-support's notification body does not carry symptoms or a
+                // diagnosis blob — those live on the ticket itself. Pass empty
+                // strings and let the operator follow `ticketUrl` for detail.
+                symptoms: string.Empty,
                 requestedAction: "diagnose",
                 allowedAccessMode: "read-only",
                 ttlMinutes: 0,
                 rollbackExpected: false,
-                attachedEvidence: payload.DiagnosisSummary() ?? string.Empty,
+                attachedEvidence: string.Empty,
                 cancellationToken: cancellationToken);
 
             WriteTriage(triage);
@@ -72,31 +75,35 @@ internal sealed class EscalationConsoleReporter
                .Append(" | Severity: ").Append(payload.Severity ?? "(missing)")
                .Append(" | Env: ").Append(payload.Environment ?? "(missing)")
                .Append(" | Service: ").AppendLine(payload.Service ?? "(missing)");
-        builder.Append("Symptoms: ").AppendLine(payload.Symptoms ?? "(none)");
+        builder.Append("Phase: ").Append(payload.Phase ?? "(missing)")
+               .Append(" | Customer status: ").AppendLine(payload.CustomerStatus ?? "(missing)");
 
-        string? summary = payload.DiagnosisSummary();
-        if (!string.IsNullOrWhiteSpace(summary))
+        string? slaSummary = payload.SlaSummary();
+        if (!string.IsNullOrWhiteSpace(slaSummary))
         {
-            builder.Append("Diagnosis: ").AppendLine(summary);
+            builder.Append("SLA: ").AppendLine(slaSummary);
         }
-        else if (payload.Diagnosis.ValueKind == JsonValueKind.Object)
+        else if (payload.Sla.ValueKind == JsonValueKind.Object)
         {
-            builder.Append("Diagnosis: ").AppendLine(payload.Diagnosis.GetRawText());
-        }
-        else
-        {
-            builder.AppendLine("Diagnosis: (none)");
+            builder.Append("SLA: ").AppendLine(payload.Sla.GetRawText());
         }
 
-        string? mode = payload.DiagnosisMode();
-        if (!string.IsNullOrWhiteSpace(mode))
+        if (payload.Escalation is { } escalation)
         {
-            builder.Append("Recommended mode: ").AppendLine(mode);
+            builder.Append("Escalation: tier=")
+                   .Append(escalation.Tier?.ToString() ?? "(none)")
+                   .Append(" | access-mode=")
+                   .AppendLine(escalation.AccessMode ?? "(none)");
+
+            if (escalation.EscalatedAt.HasValue)
+            {
+                builder.Append("Escalated at: ").AppendLine(escalation.EscalatedAt.Value.ToString("u"));
+            }
         }
 
-        if (payload.EscalatedAt.HasValue)
+        if (!string.IsNullOrWhiteSpace(payload.TicketUrl))
         {
-            builder.Append("Escalated at: ").AppendLine(payload.EscalatedAt.Value.ToString("u"));
+            builder.Append("Ticket URL: ").AppendLine(payload.TicketUrl);
         }
 
         builder.AppendLine(EndDivider);
