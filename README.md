@@ -3,6 +3,10 @@
 AI DevOps operator and solution architect for Honua.
 
 Current operator capabilities are summarized in [docs/features/README.md](docs/features/README.md).
+The portfolio execution tracker lives in
+[docs/strategy/portfolio-60-day-plan.md](docs/strategy/portfolio-60-day-plan.md);
+its QGIS plugin section links the live `honua-qgis-plugin` source repo and
+the public landing page at <https://honua.io/qgis-plugin.html>.
 
 This repository is the execution vehicle for the operator control system tracked in [honua-devops#11](https://github.com/honua-io/honua-devops/issues/11):
 
@@ -68,6 +72,12 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT` (required for hosted NIM; defaults to the OpenAI base URL otherwise)
 
 `local-llama` is the integration surface for NVIDIA NIM (build.nvidia.com hosted, NVIDIA AI Enterprise self-hosted, or AWS Marketplace) and any other OpenAI-compatible local inference endpoint (vLLM, Ollama, TGI). The canonical Honua-tuned target is **Honua-GIS-32B** (parent epic `honua-io/honua-sdk-python#64`); the same three env vars point at it once the dedicated NIM endpoint ships from 64.10. See [docs/deployments/nvidia-nim.md](docs/deployments/nvidia-nim.md) for hosted setup, self-hosted Docker, AWS Marketplace notes, the Honua-GIS-32B model card, and troubleshooting.
+
+The QGIS plugin distribution lane is tracked from the same strategy plan:
+`honua-io/honua-qgis-plugin` is the GPL-2.0-or-later plugin repo, and
+<https://honua.io/qgis-plugin.html> is the current public install/status page.
+Release ZIP, marketplace approval, screenshots, and demo media stay pending
+until the plugin release owner publishes those artifacts.
 
 ## Runtime Controls
 
