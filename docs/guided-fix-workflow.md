@@ -28,6 +28,62 @@ Every support interaction starts with a `SupportTicket` containing:
 | `rollbackExpected` | Yes | Whether rollback preparation is required |
 | `attachedEvidence` | No | Logs, screenshots, traces, or other artifacts |
 
+## Escalation Webhook Receiver
+
+`honua-devops --listen` runs the inbound receiver for `honua-support`
+escalation events. The listener binds to localhost only:
+`http://localhost:${HONUA_DEVOPS_WEBHOOK_PORT:-8090}${HONUA_DEVOPS_WEBHOOK_PATH:-/escalations}`.
+
+Environment:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `HONUA_DEVOPS_WEBHOOK_SECRET` | Yes | none | Shared HMAC-SHA256 secret matching `honua-support` |
+| `HONUA_DEVOPS_WEBHOOK_PORT` | No | `8090` | Local TCP port, 1–65535 |
+| `HONUA_DEVOPS_WEBHOOK_PATH` | No | `/escalations` | Normalized URL path; must start with `/` |
+| `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE` | No | `true` | Runs read-only triage after an accepted event |
+
+Accepted requests are signed `POST` bodies:
+
+| Contract item | Value |
+|---------------|-------|
+| Method | `POST` |
+| Path | `HONUA_DEVOPS_WEBHOOK_PATH` |
+| Required signature header | `X-Honua-Signature: sha256=<lowercase-hex HMAC-SHA256(secret, raw body)>` |
+| Event body field | `eventType: "ticket.escalation_requested"` |
+| Informational event header | `X-Honua-Event: ticket.escalation_requested` |
+
+Payload body fields are camelCase and mirror honua-support's
+`SupportNotificationPayload`:
+
+| Field | Description |
+|-------|-------------|
+| `eventId` | Sender-generated event identifier, surfaced for audit correlation |
+| `eventType` | Must be `ticket.escalation_requested` |
+| `ticketId` | Ticket or incident reference |
+| `customerId` | Customer reference from `honua-support` |
+| `severity` | Support severity string |
+| `environment` | Target environment |
+| `service` | Affected service |
+| `phase` | Ticket lifecycle phase from `honua-support` |
+| `customerStatus` | Customer-facing status string from `honua-support` |
+| `sla` | SLA snapshot object (`supportTier`, `firstResponseTarget`, `updateCadence`, etc.); summarised for display |
+| `escalation` | Optional object — `tier` (int), `accessMode` (string), `escalatedAt` (ISO-8601) |
+| `ticketUrl` | Optional deep link to the ticket in `honua-support` |
+
+`honua-support`'s notification body does not carry symptoms or a diagnosis
+blob — those live on the ticket itself. Operators follow `ticketUrl` for that
+detail; the embedded read-only triage runs against ticket metadata only.
+
+The HTTP response body is always a small JSON status envelope:
+`{"status":<http-status>,"reason":"<reason>"}`. Current reasons are
+`accepted`, `invalid-signature`, `malformed-json`, `empty-payload`,
+`unexpected-event:<event>`, `method-not-allowed`, and `not-found`.
+
+When `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE=true`, the accepted payload is rendered
+to the operator console and then passed through `triage_support_ticket` with
+`allowedAccessMode=read-only`; the webhook itself does not grant write access.
+
 ## Workflow Phases
 
 ### Phase 1: Read-Only Triage (Default)

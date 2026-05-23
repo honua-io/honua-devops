@@ -3,6 +3,10 @@
 AI DevOps operator and solution architect for Honua.
 
 Current operator capabilities are summarized in [docs/features/README.md](docs/features/README.md).
+The portfolio execution tracker lives in
+[docs/strategy/portfolio-60-day-plan.md](docs/strategy/portfolio-60-day-plan.md);
+its QGIS plugin section links the live `honua-qgis-plugin` source repo and
+the public landing page at <https://honua.io/qgis-plugin.html>.
 
 This repository is the execution vehicle for the operator control system tracked in [honua-devops#11](https://github.com/honua-io/honua-devops/issues/11):
 
@@ -69,6 +73,12 @@ Reference defaults live in `.env.example`.
 
 `local-llama` is the integration surface for NVIDIA NIM (build.nvidia.com hosted, NVIDIA AI Enterprise self-hosted, or AWS Marketplace) and any other OpenAI-compatible local inference endpoint (vLLM, Ollama, TGI). The canonical Honua-tuned target is **Honua-GIS-32B** (parent epic `honua-io/honua-sdk-python#64`); the same three env vars point at it once the dedicated NIM endpoint ships from 64.10. See [docs/deployments/nvidia-nim.md](docs/deployments/nvidia-nim.md) for hosted setup, self-hosted Docker, AWS Marketplace notes, the Honua-GIS-32B model card, and troubleshooting.
 
+The QGIS plugin distribution lane is tracked from the same strategy plan:
+`honua-io/honua-qgis-plugin` is the GPL-2.0-or-later plugin repo, and
+<https://honua.io/qgis-plugin.html> is the current public landing/status page.
+Release ZIP, marketplace approval, screenshots, and demo media stay pending
+until the plugin release owner publishes those artifacts.
+
 ## Runtime Controls
 
 - `HONUA_DEVOPS_EXECUTION_MODE` (`plan` default, or `execute`)
@@ -79,6 +89,10 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_SUPPORT_SESSION_TTL_MINUTES` (`60` default)
 - `HONUA_DEVOPS_SUPPORT_SESSION_CUSTOMER_VISIBLE` (`true` default)
 - `HONUA_DEVOPS_BREAK_GLASS_POST_REVIEW_REQUIRED` (`true` default)
+- `HONUA_DEVOPS_WEBHOOK_SECRET` (required only for `--listen`; shared HMAC-SHA256 escalation webhook secret configured in `honua-support`)
+- `HONUA_DEVOPS_WEBHOOK_PORT` (`8090` default; localhost listener port)
+- `HONUA_DEVOPS_WEBHOOK_PATH` (`/escalations` default; signed POST path)
+- `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE` (`true` default; when true, accepted webhooks trigger read-only ticket triage output)
 - `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
 - `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`)
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-terraform`)
@@ -107,6 +121,7 @@ Support ticket integration:
 - `HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH` defaults to `/api/v1/tickets`
 - `HONUA_DEVOPS_SUPPORT_API_BEARER_TOKEN` should be set to an operator support token outside local development.
 - Diagnosis posts include guided-fix output plus `OperationEvidence` and `DiagnosisScorecard` payloads for ticket audit and score tracking.
+- `--listen` runs the signed escalation receiver on `http://localhost:${HONUA_DEVOPS_WEBHOOK_PORT}${HONUA_DEVOPS_WEBHOOK_PATH}`. It accepts `POST` requests whose body has `eventType: "ticket.escalation_requested"` (matching `honua-support`'s `SupportNotificationPayload`) and `X-Honua-Signature: sha256=<lowercase HMAC-SHA256(secret, raw body)>`; accepted requests return HTTP 202 with `{"status":202,"reason":"accepted"}`.
 - Auto-bundle (forwarding a Honua API key to the support backend so it can pull live telemetry from a customer instance) is **disabled by default**. To opt in:
   - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ENABLED=true`
   - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ALLOWED_HOSTS=` comma-separated list of permitted `instanceUrl` hosts; auto-bundle requests with hosts outside this list are rejected before any HTTP call
@@ -224,6 +239,13 @@ Inspect the operation journal (requires `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --list-operations --limit 50
 dotnet run --project src/Honua.DevOps.Agent -- --show-operation <operationId>
+```
+
+Run the honua-support escalation receiver:
+
+```bash
+HONUA_DEVOPS_WEBHOOK_SECRET=<shared-secret> \
+dotnet run --project src/Honua.DevOps.Agent -- --listen
 ```
 
 Single-shot prompt:

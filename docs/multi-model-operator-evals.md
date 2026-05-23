@@ -56,7 +56,9 @@ artifacts/multi-model-operator-evals/
 
 Local Llama is deliberately not a release authority. It is tracked to catch
 portability regressions and prompt overfitting, but hosted release gates remain
-Claude and Codex.
+Claude and Codex. Its matrix entry uses the same provider id as the runtime
+(`local-llama`) and records model, secret, and endpoint env vars so NIM and
+other OpenAI-compatible endpoints are configured consistently.
 
 ## Lane Command Environment
 
@@ -120,6 +122,9 @@ environment that provides:
 - `HONUA_DEVOPS_CODEX_API_KEY`
 - optional `HONUA_EVAL_LOCAL_LLAMA_ENABLED=true`
 - optional `HONUA_EVAL_LOCAL_LLAMA_COMMAND`
+- optional `HONUA_DEVOPS_LOCAL_LLAMA_MODEL`
+- optional `HONUA_DEVOPS_LOCAL_LLAMA_API_KEY`
+- optional `HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT`
 
 ## Scoring
 
