@@ -106,3 +106,7 @@ The current repo implementation now:
 - ties service-state drift to `ServiceBundle` export/reconciliation semantics
 
 That is enough to make `#14` real in code and to support the next execution-focused slice without redesigning the response contract again.
+
+## Related: Console-Facing Projection
+
+The Console-facing projection over GitOps proposals — stable operation IDs, raw evidence references, unified operation status, and advisory briefs surfaced to Honua Console without scraping Git or CI — is a separate bounded layer that reuses `deploy_service_gitops` validation and the deploy-control operation model. It is documented in `docs/console-ai-devops-bridge.md` (`honua-devops#59`).
