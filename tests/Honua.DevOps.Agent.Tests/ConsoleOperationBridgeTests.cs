@@ -273,12 +273,20 @@ public class ConsoleOperationBridgeTests
     [Fact]
     public async Task GetGitOpsProposalAsync_ProjectsExistingServerOperation()
     {
+        // Mirrors the landed honua-server DeployOperationResponse shape: revisions and the
+        // echoed create-request parameters live under "target", not at the response root.
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new
         {
             operationId = "op-7f3",
             status = "AwaitingApproval",
-            desiredRevision = "release/2026.03",
-            parameters = new { service = "roads-api", environments = "dev,staging", action = "sync", owner = "soleil" }
+            target = new
+            {
+                targetId = "prod-api",
+                environment = "prod",
+                currentRevision = "release/2026.02",
+                desiredRevision = "release/2026.03",
+                parameters = new { service = "roads-api", environments = "dev,staging", action = "sync", owner = "soleil" }
+            }
         }));
         ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
 
@@ -288,9 +296,61 @@ public class ConsoleOperationBridgeTests
         Assert.Equal("proposed", proposal.Status);
         Assert.Equal("op-7f3", proposal.OperationId);
         Assert.Equal("roads-api", proposal.Service);
+        Assert.Equal("sync", proposal.RequestedAction);
+        Assert.Equal("soleil", proposal.Owner);
         Assert.Equal("release/2026.03", proposal.DesiredRevision);
+        Assert.Equal("release/2026.02", proposal.CurrentRevision);
         Assert.Equal(["dev", "staging"], proposal.TargetEnvironments);
         Assert.Contains(proposal.SuggestedActions, action => action.Kind == "governed-submit");
+    }
+
+    [Fact]
+    public async Task GetGitOpsProposalAsync_DoesNotExposeMutatingActionsWhenOperationMissing()
+    {
+        // A not-found / contract-unavailable read must not advertise submit/rollback or a
+        // server-operation link against an operation that does not exist.
+        TestHttpMessageHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
+
+        OperationResponse response = await bridge.GetGitOpsProposalAsync("op-missing");
+
+        GitOpsProposalBridge proposal = AssertProposal(response);
+        Assert.Equal("contract-unavailable", proposal.Status);
+        Assert.Null(proposal.OperationId);
+        Assert.DoesNotContain(proposal.SuggestedActions, action => action.MutatesState);
+        Assert.DoesNotContain(
+            proposal.SuggestedActions,
+            action => action.Kind is "governed-submit" or "governed-rollback");
+        Assert.DoesNotContain(
+            proposal.WorkflowLinks,
+            link => link.Rel is "server-operation" or "submit" or "rollback");
+        // Only non-mutating review guidance remains, with no fabricated deep links.
+        Assert.Contains(proposal.SuggestedActions, action => action.Id == "review-evidence");
+        Assert.All(proposal.WorkflowLinks, link => Assert.False(link.Available));
+    }
+
+    [Fact]
+    public async Task ConsoleBridgeProjection_IsInProcessOnly_AndOmittedFromSerializedResponse()
+    {
+        TestHttpMessageHandler handler = new(request =>
+            request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/deploy/operations", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "AwaitingApproval" })
+                : TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
+
+        OperationResponse response = await bridge.CreateGitOpsProposalAsync(
+            "roads-api", "dev", "main", "sync", "ship", "soleil");
+
+        // The typed projection is available in-process by object reference...
+        Assert.NotNull(response.ConsoleBridge);
+        Assert.NotNull(response.ConsoleBridge!.Proposal);
+
+        // ...but, like GitOpsPlan, it is excluded from the LLM-facing wire shape (JsonIgnore),
+        // so the compact status/summary is all the model and audit journal serialize.
+        using JsonDocument document = JsonDocument.Parse(JsonSerializer.Serialize(response));
+        Assert.False(document.RootElement.TryGetProperty("ConsoleBridge", out _));
+        Assert.True(document.RootElement.TryGetProperty("Status", out _));
+        Assert.True(document.RootElement.TryGetProperty("Summary", out _));
     }
 
     [Fact]

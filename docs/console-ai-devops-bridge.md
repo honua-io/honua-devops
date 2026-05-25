@@ -70,7 +70,12 @@ rollback, or write-capable runbooks. Returns a `GitOpsProposalBridge`:
 
 Projects an existing proposal by stable `operationId` over the deploy-control operation
 record, with the same `GitOpsProposalBridge` shape, raw evidence references, and
-governed suggestions. Never scrapes Git or CI.
+governed suggestions. Service, action, owner, and revisions are read from the
+deploy-control `target` object, where honua-server echoes the create-request parameters.
+Never scrapes Git or CI. When the operation is not found or the contract is unavailable,
+the projection stays blocked (`contract-unavailable`, `operationId` null) and omits the
+server-operation link and governed submit/rollback suggestions, so it never advertises
+mutating actions against an operation that does not exist.
 
 ### `get_devops_operation_status`
 

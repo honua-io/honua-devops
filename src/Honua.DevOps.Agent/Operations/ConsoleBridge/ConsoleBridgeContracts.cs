@@ -129,8 +129,10 @@ internal sealed record DevOpsOperationStatus(
     string LastUpdated);
 
 // Carried on OperationResponse (JSON-ignored, like GitOpsPlan) so the structured
-// projection is available in-process and to the audit sink by object reference, while
-// the LLM-facing wire shape stays compact.
+// projection is available in-process by object reference to callers that hold the
+// response (the Console-facing bridge surface), while the LLM-facing wire shape stays
+// compact. Like GitOpsPlan, it is not serialized to the model or persisted in the audit
+// journal; the journal records the compact status/summary plus evidence and backend steps.
 internal sealed record ConsoleBridgeProjection(
     string Kind,
     GitOpsProposalBridge? Proposal = null,

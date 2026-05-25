@@ -203,24 +203,23 @@ internal sealed class ConsoleOperationBridge(
         string[] environments = SplitCsv(root is null ? null : TryGetParameter(root.Value, "environments"));
         string timestamp = Timestamp();
 
-        List<EvidenceRef> evidence =
-        [
-            EvidenceFromCall("deploy-operation", result.CallResult),
-            ServerOperationEvidence(normalizedOperationId)
-        ];
-        List<WorkflowLink> links =
-        [
-            SelfLink(normalizedOperationId),
-            ServerOperationLink(normalizedOperationId),
-            GovernedLink("submit", "Submit proposal for execution", normalizedOperationId, "submit"),
-            GovernedLink("rollback", "Roll back operation", normalizedOperationId, "rollback")
-        ];
-        List<SuggestedAction> suggestedActions =
-        [
-            SubmitSuggestion(normalizedOperationId),
-            RollbackSuggestion(normalizedOperationId),
-            ReviewEvidenceSuggestion(normalizedOperationId)
-        ];
+        // Only assert a durable server operation, governed links, and mutating suggestions
+        // when the operation was actually found. A not-found / contract-unavailable read
+        // keeps OperationId null and offers non-mutating review guidance only, so it never
+        // advertises submit/rollback against an operation that does not exist.
+        List<EvidenceRef> evidence = [EvidenceFromCall("deploy-operation", result.CallResult)];
+        List<WorkflowLink> links = [SelfLink(found ? normalizedOperationId : null)];
+        List<SuggestedAction> suggestedActions = [];
+        if (found)
+        {
+            evidence.Add(ServerOperationEvidence(normalizedOperationId));
+            links.Add(ServerOperationLink(normalizedOperationId));
+            links.Add(GovernedLink("submit", "Submit proposal for execution", normalizedOperationId, "submit"));
+            links.Add(GovernedLink("rollback", "Roll back operation", normalizedOperationId, "rollback"));
+            suggestedActions.Add(SubmitSuggestion(normalizedOperationId));
+            suggestedActions.Add(RollbackSuggestion(normalizedOperationId));
+        }
+        suggestedActions.Add(ReviewEvidenceSuggestion(found ? normalizedOperationId : null));
 
         bool targetsProd = environments.Contains("prod", StringComparer.OrdinalIgnoreCase);
         GitOpsProposalBridge proposal = new(
@@ -800,8 +799,9 @@ internal sealed class ConsoleOperationBridge(
     }
 
     // Tolerant, case-insensitive string lookup over the server response object plus a
-    // shallow descent into a common envelope ("operation"/"data"/"result") because the
-    // exact deploy-control response shape is owned by the server child ticket.
+    // shallow descent into common nesting (response envelopes and the deploy-control
+    // "target" sub-object; see NestedObjectKeys). Tolerant parsing keeps the bridge
+    // resilient to envelope/casing drift across deploy-control responses.
     private static string? TryGetString(JsonElement element, params string[] names)
     {
         string? direct = ReadString(element, names);
@@ -810,7 +810,7 @@ internal sealed class ConsoleOperationBridge(
             return direct;
         }
 
-        foreach (string envelope in EnvelopeKeys)
+        foreach (string envelope in NestedObjectKeys)
         {
             if (TryGetObject(element, envelope, out JsonElement nested))
             {
@@ -889,8 +889,25 @@ internal sealed class ConsoleOperationBridge(
             }
         }
 
+        // honua-server DeployOperationResponse nests the create-request parameters under
+        // target.parameters (merged onto the deploy target), so service/action/owner/
+        // environments echoed back on a read live there, not at the root.
+        if (TryGetObject(root, "target", out JsonElement target)
+            && TryGetObject(target, "parameters", out JsonElement targetParameters))
+        {
+            string? value = ReadString(targetParameters, [name]);
+            if (value is not null)
+            {
+                return value;
+            }
+        }
+
         return ReadString(root, [name]);
     }
 
-    private static readonly string[] EnvelopeKeys = ["operation", "data", "result"];
+    // Nested objects the tolerant lookup descends into after a direct root read:
+    // the "operation"/"data"/"result" response envelopes and the honua-server
+    // deploy-control "target" sub-object, which carries desiredRevision/currentRevision
+    // (and parameters) on a DeployOperationResponse.
+    private static readonly string[] NestedObjectKeys = ["operation", "data", "result", "target"];
 }
