@@ -34,7 +34,8 @@ internal sealed record BackendConfiguration(
     string HonuaManifestVersionsPath = "api/v1/admin/manifest/versions",
     bool SupportAutoBundleEnabled = false,
     IReadOnlyList<string>? SupportAutoBundleAllowedHosts = null,
-    string? SupportAutoBundleApiKey = null)
+    string? SupportAutoBundleApiKey = null,
+    Uri? ConsoleBaseUri = null)
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
     private const string OTelBaseUrlVariable = "HONUA_DEVOPS_OTEL_BASE_URL";
@@ -74,6 +75,8 @@ internal sealed record BackendConfiguration(
     private const string LegacyDeployPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_PATH";
     private const string LegacyRequirementsPathVariable = "HONUA_DEVOPS_HONUA_REQUIREMENTS_PATH";
     private const string LegacyTopologyPathVariable = "HONUA_DEVOPS_HONUA_TOPOLOGY_PATH";
+
+    private const string ConsoleBaseUrlVariable = "HONUA_DEVOPS_CONSOLE_BASE_URL";
 
     private const string SupportApiBaseUrlVariable = "HONUA_DEVOPS_SUPPORT_API_BASE_URL";
     private const string SupportApiTicketsPathVariable = "HONUA_DEVOPS_SUPPORT_API_TICKETS_PATH";
@@ -204,6 +207,10 @@ internal sealed record BackendConfiguration(
             Environment.GetEnvironmentVariable(SupportAutoBundleAllowedHostsVariable));
         string? supportAutoBundleApiKey = Normalize(Environment.GetEnvironmentVariable(SupportAutoBundleApiKeyVariable));
 
+        Uri? consoleBaseUri = ParseOptionalBaseUri(
+            Environment.GetEnvironmentVariable(ConsoleBaseUrlVariable),
+            ConsoleBaseUrlVariable);
+
         return new BackendConfiguration(
             HonuaApiBaseUri: honuaApiBaseUri,
             OTelBaseUri: otelBaseUri,
@@ -236,7 +243,8 @@ internal sealed record BackendConfiguration(
             HonuaManifestVersionsPath: honuaManifestVersionsPath,
             SupportAutoBundleEnabled: supportAutoBundleEnabled,
             SupportAutoBundleAllowedHosts: supportAutoBundleAllowedHosts,
-            SupportAutoBundleApiKey: supportAutoBundleApiKey);
+            SupportAutoBundleApiKey: supportAutoBundleApiKey,
+            ConsoleBaseUri: consoleBaseUri);
     }
 
     private static bool ParseBoolean(string? value, bool fallback, string variableName)

@@ -46,6 +46,7 @@ open-core runtime promise.
 - AI DevOps tools (`honua_diagnose`, slow-query explanation, runbook execution, and auto-remediation planning) — edition-gated for community/pro/enterprise
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
+- Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`) projecting stable, evidence-linked proposal/operation/brief contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
 
 ## Provider Configuration
 
@@ -126,6 +127,12 @@ Support ticket integration:
   - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ENABLED=true`
   - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_ALLOWED_HOSTS=` comma-separated list of permitted `instanceUrl` hosts; auto-bundle requests with hosts outside this list are rejected before any HTTP call
   - `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_API_KEY` should be a dedicated key scoped for the auto-bundle backend; the primary `HONUA_DEVOPS_HONUA_API_KEY` is never forwarded.
+
+Console-facing AI DevOps bridge:
+
+- `HONUA_DEVOPS_DEPLOY_TARGET_ID` enables durable proposal creation through honua-server deploy-control. Without it, `create_gitops_proposal` returns a blocked `target-unconfigured` projection instead of inventing an operation id.
+- `HONUA_DEVOPS_CONSOLE_BASE_URL` (optional) is used to assemble Console deep links; server deep links and raw evidence refs always derive from `HONUA_DEVOPS_HONUA_API_BASE_URL`.
+- The bridge reuses the deploy-control endpoints (`/preflight`, `/plan`, `/operations`); proposals are recorded with `submitImmediately=false` and never submit, roll back, or apply manifests. See [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md).
 
 Health probes:
 

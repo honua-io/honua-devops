@@ -1,3 +1,4 @@
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Microsoft.Extensions.AI;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -14,6 +15,7 @@ internal static class CapabilityToolset
         string? defaultEdition = null)
     {
         HonuaOperationsToolkit toolkit = new(runtime, gateway, policy, supportGateway, defaultEdition);
+        ConsoleOperationBridge consoleBridge = new(runtime, gateway, policy);
 
         return
         [
@@ -99,7 +101,27 @@ internal static class CapabilityToolset
                 (string service, string environment, string detectedIssue, string desiredOutcome, bool autoApply, string edition)
                     => toolkit.AutoRemediationPlanAsync(service, environment, detectedIssue, desiredOutcome, autoApply, edition),
                 "honua_auto_remediation_plan",
-                "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls.")
+                "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls."),
+            CreateTool(
+                (string service, string environmentsCsv, string revision, string action, string changeSummary, string owner)
+                    => consoleBridge.CreateGitOpsProposalAsync(service, environmentsCsv, revision, action, changeSummary, owner),
+                "create_gitops_proposal",
+                "Create a Console-facing GitOps deployment proposal as a stable, evidence-linked projection. Records a durable honua-server deploy-control operation with submitImmediately=false (advisory; never executes) and returns the proposal with server operationId, deterministic idempotency key, raw backend evidence, workflow deep links, and governed submit/rollback suggestions. Stays blocked if no deploy target is configured."),
+            CreateTool(
+                (string operationId)
+                    => consoleBridge.GetGitOpsProposalAsync(operationId),
+                "get_gitops_proposal",
+                "View an existing GitOps proposal by stable operationId as a projection over the honua-server deploy-control operation, with raw evidence references and governed suggestions. Never scrapes Git or CI."),
+            CreateTool(
+                (string operationId)
+                    => consoleBridge.GetDevOpsOperationStatusAsync(operationId),
+                "get_devops_operation_status",
+                "Get the unified DevOps operation status for a stable operationId across proposal, PR, CI, promotion, smoke, SLO-watch, rollback-readiness, and rollback-execution sections that all share the operationId. PR/CI sections are marked evidence-missing rather than scraped."),
+            CreateTool(
+                (string service, string environment, string title, string summary, string recommendedAction, string evidenceReference, string operationId, string confidence)
+                    => consoleBridge.BuildAiDevOpsBriefAsync(service, environment, title, summary, recommendedAction, evidenceReference, operationId, confidence),
+                "build_ai_devops_brief",
+                "Build an advisory AI DevOps brief with affected resources, raw evidence references, suggested actions (with requiresApproval/mutatesState flags), confidence, owner, status, and workflow links. Advisory only with auto-apply disabled; mutating suggestions require an explicit governed submit/rollback.")
         ];
     }
 

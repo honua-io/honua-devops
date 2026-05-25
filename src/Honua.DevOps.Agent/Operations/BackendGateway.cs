@@ -386,6 +386,44 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
+    // JSON-returning variants used by the Console bridge: it must read the durable server
+    // operationId and workflow status fields, not just a truncated payload preview.
+    internal Task<BackendJsonResult> GetDeployOperationJsonAsync(string operationId, CancellationToken cancellationToken)
+    {
+        return GetJsonFromHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}",
+            cancellationToken);
+    }
+
+    internal Task<BackendJsonResult> CreateDeployOperationJsonAsync(
+        string targetId,
+        string desiredRevision,
+        string? currentRevision,
+        string reason,
+        bool submitImmediately,
+        string idempotencyKey,
+        string correlationId,
+        string priority,
+        IReadOnlyDictionary<string, string>? parameters,
+        CancellationToken cancellationToken)
+    {
+        return PostJsonToHonuaAsync(
+            configuration.HonuaDeployOperationsPath,
+            new
+            {
+                targetId,
+                desiredRevision,
+                currentRevision,
+                reason,
+                idempotencyKey,
+                correlationId,
+                priority,
+                submitImmediately,
+                parameters
+            },
+            cancellationToken);
+    }
+
     internal Task<BackendCallResult> SubmitDeployOperationAsync(
         string operationId,
         string reason,
@@ -592,6 +630,18 @@ internal sealed class BackendGateway : IDisposable
             HttpMethod.Get,
             relativePath,
             payload: null,
+            configuration.HonuaApiKey,
+            ApiKeyTransport.XApiKey,
+            cancellationToken);
+    }
+
+    private Task<BackendJsonResult> PostJsonToHonuaAsync(string relativePath, object payload, CancellationToken cancellationToken)
+    {
+        return SendJsonAsync(
+            configuration.HonuaApiBaseUri,
+            HttpMethod.Post,
+            relativePath,
+            payload,
             configuration.HonuaApiKey,
             ApiKeyTransport.XApiKey,
             cancellationToken);
