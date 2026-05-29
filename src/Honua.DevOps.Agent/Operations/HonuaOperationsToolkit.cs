@@ -1,6 +1,7 @@
 using System.ComponentModel;
 
 using Honua.DevOps.Agent.Operations.Audit;
+using Honua.DevOps.Agent.Operations.DesiredState;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -110,6 +111,116 @@ internal sealed class HonuaOperationsToolkit(
         }
 
         return BackendGateway.ExtractEditionFromCapabilities(capabilities.Payload);
+    }
+
+    [Description("Detect drift in the customer's desired-state object tree (desired-state/ YAML). Parses every PlatformStack, ExecutionPolicy, PlatformRelease, Promotion, and ServiceBundle, validates each against its schema and the shared conventions (desired-state/conventions.env), and checks operator control-model policy rules. Returns a read-only, structured remediation plan: per object, each detected issue is classified as schema-mismatch, policy-violation, or unsupported-target with a suggested fix. This never mutates objects, applies state, or bypasses any approval/execution gate. Pass desiredStateRoot to point at a control repo's desired-state directory; leave empty to use HONUA_DEVOPS_DESIRED_STATE_ROOT or the repo default.")]
+    public Task<OperationResponse> DetectDesiredStateDriftAsync(
+        string desiredStateRoot,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        string resolvedRoot = ResolveDesiredStateRoot(desiredStateRoot);
+
+        DesiredStateDriftReport report;
+        try
+        {
+            report = DesiredStateDriftDetector.DetectFromDirectory(resolvedRoot);
+        }
+        catch (Exception exception) when (exception is DirectoryNotFoundException or FileNotFoundException or InvalidOperationException)
+        {
+            return Task.FromResult(new OperationResponse(
+                Status: "desired-state-unavailable",
+                Summary: $"Could not load desired-state tree at `{resolvedRoot}`.",
+                Findings: [exception.Message],
+                Actions:
+                [
+                    "Point desiredStateRoot at a directory containing conventions.env and the desired-state object YAML.",
+                    "Or set HONUA_DEVOPS_DESIRED_STATE_ROOT to the control repo's desired-state directory."
+                ],
+                ValidationChecks: ["Desired-state root exists and contains conventions.env."],
+                Risks: ["Drift cannot be assessed without a readable desired-state tree."]));
+        }
+
+        return Task.FromResult(BuildDesiredStateDriftResponse(resolvedRoot, report));
+    }
+
+    private OperationResponse BuildDesiredStateDriftResponse(string resolvedRoot, DesiredStateDriftReport report)
+    {
+        List<string> findings =
+        [
+            $"Desired-state root: {resolvedRoot}.",
+            $"Objects scanned: {report.ObjectsScanned}; files failed to parse: {report.FilesFailedToParse}.",
+            $"Issues: {report.IssueCount} (schema-mismatch={report.SchemaMismatchCount}, policy-violation={report.PolicyViolationCount}, unsupported-target={report.UnsupportedTargetCount})."
+        ];
+        foreach (ObjectRemediation remediation in report.Remediations.Where(remediation => !remediation.IsClean))
+        {
+            string objectLabel = $"{remediation.Kind ?? "<unknown>"}/{remediation.Name ?? "<unnamed>"} [{remediation.Namespace ?? "<no-namespace>"}] ({remediation.Path})";
+            foreach (DriftIssue issue in remediation.Issues)
+            {
+                findings.Add($"{objectLabel}: [{IssueTypeLabel(issue.IssueType)}] {issue.FieldPath ?? "<object>"} - {issue.Detail}");
+            }
+        }
+
+        List<string> actions = report.IsClean
+            ?
+            [
+                "Desired-state tree is consistent with schema, conventions, and operator policy. No remediation required.",
+                "Keep the operator in plan/pr-first posture until lower-environment evidence is stable before applying."
+            ]
+            : report.Remediations
+                .Where(remediation => !remediation.IsClean)
+                .SelectMany(remediation => remediation.Issues
+                    .Select(issue => $"{remediation.Kind ?? "object"}/{remediation.Name ?? remediation.Path} -> {issue.SuggestedFix}"))
+                .ToList();
+        if (!report.IsClean)
+        {
+            actions.Add("Apply these fixes in the control repo via PR; this tool only reports drift and does not mutate desired state.");
+        }
+
+        return new OperationResponse(
+            Status: report.IsClean ? "desired-state-consistent" : "desired-state-drift-detected",
+            Summary: report.IsClean
+                ? $"No drift across {report.ObjectsScanned} desired-state objects."
+                : $"{report.IssueCount} desired-state issue(s) across {report.ObjectsScanned} objects.",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "Every object uses apiVersion honua.io/v1alpha1 and required schema fields.",
+                "All runtime targets are within the validated allow-list from conventions.env.",
+                "Routine objects reference the approval-required default ExecutionPolicy, not break-glass.",
+                "prod ServiceBundles use the `promote` action and reference a Promotion."
+            ],
+            Risks:
+            [
+                "Schema or naming drift can break reference resolution and future multi-object reconciliation.",
+                "Policy drift (break-glass-by-default, prod without promotion) weakens the operator approval model."
+            ],
+            DesiredStateDrift: report);
+    }
+
+    private static string IssueTypeLabel(DriftIssueType issueType) => issueType switch
+    {
+        DriftIssueType.SchemaMismatch => "schema-mismatch",
+        DriftIssueType.PolicyViolation => "policy-violation",
+        DriftIssueType.UnsupportedTarget => "unsupported-target",
+        _ => "unknown"
+    };
+
+    private static string ResolveDesiredStateRoot(string desiredStateRoot)
+    {
+        if (!string.IsNullOrWhiteSpace(desiredStateRoot))
+        {
+            return Path.GetFullPath(desiredStateRoot.Trim());
+        }
+
+        string? configuredRoot = Environment.GetEnvironmentVariable("HONUA_DEVOPS_DESIRED_STATE_ROOT");
+        if (!string.IsNullOrWhiteSpace(configuredRoot))
+        {
+            return Path.GetFullPath(configuredRoot.Trim());
+        }
+
+        return Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "desired-state"));
     }
 
     [Description("Analyze logs through OTEL endpoint and produce findings, remediation steps, and validation checks.")]

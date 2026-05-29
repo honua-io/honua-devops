@@ -81,6 +81,10 @@ internal static class CapabilityToolset
                 "process_pending_tickets",
                 "Pull pending support tickets from honua-support, run diagnosis against the fault catalog, and post results back."),
             CreateTool(
+                (string desiredStateRoot) => toolkit.DetectDesiredStateDriftAsync(desiredStateRoot),
+                "detect_desired_state_drift",
+                "Detect drift in the desired-state/ object tree: parse the YAML objects, validate them against their schema and conventions, and return a structured remediation plan classifying each issue as schema-mismatch, policy-violation, or unsupported-target. Read-only; never mutates desired state or bypasses approval gates. Pass desiredStateRoot (empty to use HONUA_DEVOPS_DESIRED_STATE_ROOT or the repo default)."),
+            CreateTool(
                 (string service, string environment, string timeframe, string symptoms, string edition)
                     => toolkit.HonuaDiagnoseAsync(service, environment, timeframe, symptoms, edition),
                 "honua_diagnose",
