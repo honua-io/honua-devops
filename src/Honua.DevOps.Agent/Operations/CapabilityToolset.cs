@@ -81,6 +81,10 @@ internal static class CapabilityToolset
                 "process_pending_tickets",
                 "Pull pending support tickets from honua-support, run diagnosis against the fault catalog, and post results back."),
             CreateTool(
+                () => toolkit.TriagePendingTicketsAsync(),
+                "triage_pending_tickets",
+                "Pull pending/open support tickets from honua-support and emit a planning-only triage plan (per-ticket severity, category, suggested next action, confidence, priority). Read-only: posts nothing and takes no remediation; fixes stay behind approval/execution gates."),
+            CreateTool(
                 (string service, string environment, string timeframe, string symptoms, string edition)
                     => toolkit.HonuaDiagnoseAsync(service, environment, timeframe, symptoms, edition),
                 "honua_diagnose",

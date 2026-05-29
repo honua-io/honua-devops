@@ -8,6 +8,7 @@ using Honua.DevOps.Agent.Operations.Troubleshooting;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
+using Honua.DevOps.Agent.Operations.Triage;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
 namespace Honua.DevOps.Agent.Operations;
@@ -1470,45 +1471,15 @@ internal sealed class HonuaOperationsToolkit(
                 string ticketId = ticketElement.TryGetProperty("id", out System.Text.Json.JsonElement idEl)
                     ? idEl.GetString() ?? "unknown"
                     : "unknown";
-                string severity = ticketElement.TryGetProperty("severity", out System.Text.Json.JsonElement sevEl)
-                    ? sevEl.GetString() ?? "medium"
-                    : "medium";
                 string environment = ticketElement.TryGetProperty("environment", out System.Text.Json.JsonElement envEl)
                     ? envEl.GetString() ?? "unknown"
                     : "unknown";
-                string service = ticketElement.TryGetProperty("service", out System.Text.Json.JsonElement serviceEl)
-                    ? serviceEl.GetString() ?? "support-triage"
-                    : "support-triage";
-                string symptoms = ticketElement.TryGetProperty("symptoms", out System.Text.Json.JsonElement symEl)
-                    ? symEl.GetString() ?? string.Empty
-                    : string.Empty;
-                string requestedAction = ticketElement.TryGetProperty("requestedAction", out System.Text.Json.JsonElement raEl)
-                    ? raEl.GetString() ?? "diagnose"
-                    : "diagnose";
-                string allowedAccessMode = ticketElement.TryGetProperty("allowedAccessMode", out System.Text.Json.JsonElement aamEl)
-                    ? aamEl.GetString() ?? "read-only"
-                    : "read-only";
-                int ttlMinutes = ticketElement.TryGetProperty("ttlMinutes", out System.Text.Json.JsonElement ttlEl)
-                    ? ttlEl.TryGetInt32(out int ttlVal) ? ttlVal : 60
-                    : 60;
-                bool rollbackExpected = ticketElement.TryGetProperty("rollbackExpected", out System.Text.Json.JsonElement rbEl)
-                    && rbEl.ValueKind == System.Text.Json.JsonValueKind.True;
                 string? instanceUrl = ticketElement.TryGetProperty("instanceUrl", out System.Text.Json.JsonElement instanceEl)
                     ? instanceEl.GetString()
                     : null;
 
-                SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
-                SupportTicket ticket = new(
-                    TicketId: ticketId,
-                    Service: Normalize(service, "support-triage"),
-                    Severity: parsedSeverity,
-                    Environment: Normalize(environment, "unknown"),
-                    Symptoms: Normalize(symptoms, "not provided"),
-                    RequestedAction: Normalize(requestedAction, "diagnose"),
-                    AllowedAccessMode: Normalize(allowedAccessMode, "read-only"),
-                    TtlMinutes: ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes,
-                    RollbackExpected: rollbackExpected,
-                    AttachedEvidence: string.Empty);
+                SupportTicket ticket = ParseSupportTicket(ticketElement);
+                SupportSeverity parsedSeverity = ticket.Severity;
 
                 BackendCallResult? autoBundleResult = null;
                 if (!string.IsNullOrWhiteSpace(instanceUrl))
@@ -1569,6 +1540,170 @@ internal sealed class HonuaOperationsToolkit(
                 ValidationChecks: validationChecks,
                 Risks: risks);
         }
+    }
+
+    [Description("Pull pending/open support tickets from honua-support and emit a planning-only triage plan: per-ticket severity, category, suggested next action, confidence, and priority. Read-only; does NOT post diagnoses or take any remediation. Any fix stays behind the operator approval/execution gates.")]
+    public async Task<OperationResponse> TriagePendingTicketsAsync(CancellationToken cancellationToken = default)
+    {
+        if (supportGateway is null)
+        {
+            return new OperationResponse(
+                Status: "support-api-disabled",
+                Summary: "honua-support integration is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.",
+                Findings: ["SupportGateway is not available. Skipping triage planning."],
+                Actions: [],
+                ValidationChecks: [],
+                Risks: []);
+        }
+
+        using BackendJsonResult listJsonResult = await supportGateway.ListPendingTicketsJsonAsync(cancellationToken);
+        BackendCallResult listResult = listJsonResult.CallResult;
+        if (!listResult.IsSuccess)
+        {
+            return new OperationResponse(
+                Status: "backend-error",
+                Summary: $"Failed to list tickets from honua-support: {listResult.Detail}",
+                Findings: [$"Endpoint: {listResult.Endpoint}", $"Detail: {listResult.Detail}", $"Preview: {listResult.PayloadPreview}"],
+                Actions: ["Verify HONUA_DEVOPS_SUPPORT_API_BASE_URL is set to a reachable honua-support instance."],
+                ValidationChecks: [],
+                Risks: ["Tickets cannot be triaged while the support API is unreachable."],
+                BackendSteps: [ToBackendStep("triage:list-tickets", listResult, mutatesState: false)]);
+        }
+
+        if (listJsonResult.Payload is null)
+        {
+            return new OperationResponse(
+                Status: "parse-error",
+                Summary: "Failed to parse ticket list response from honua-support.",
+                Findings: [$"Raw preview: {listResult.PayloadPreview}"],
+                Actions: [],
+                ValidationChecks: [],
+                Risks: ["Tickets cannot be triaged due to an unparseable API response."],
+                BackendSteps: [ToBackendStep("triage:list-tickets", listResult, mutatesState: false)]);
+        }
+
+        System.Text.Json.JsonDocument ticketsDoc = listJsonResult.Payload;
+        int totalTickets = 0;
+        List<SupportTicket> pendingTickets = [];
+        if (ticketsDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (System.Text.Json.JsonElement element in ticketsDoc.RootElement.EnumerateArray())
+            {
+                totalTickets++;
+                if (IsPendingTicket(element))
+                {
+                    pendingTickets.Add(ParseSupportTicket(element));
+                }
+            }
+        }
+
+        if (pendingTickets.Count == 0)
+        {
+            return new OperationResponse(
+                Status: "no-pending-tickets",
+                Summary: "No pending/open tickets found in honua-support (phase=intake or phase=triaging).",
+                Findings: [$"Inspected {totalTickets} ticket(s); none are awaiting triage."],
+                Actions: [],
+                ValidationChecks: [],
+                Risks: [],
+                SupportTriage: new SupportTriagePlan(totalTickets, 0, 0, []),
+                BackendSteps: [ToBackendStep("triage:list-tickets", listResult, mutatesState: false)]);
+        }
+
+        SupportTriagePlan plan = SupportTriagePlanner.Build(pendingTickets, totalTickets, EffectivePolicy);
+
+        List<string> findings =
+        [
+            $"Triaged {plan.PendingTickets} pending ticket(s) of {plan.TotalTickets} inspected; {plan.ClassifiedTickets} matched a known fault pattern.",
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+            $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
+            "Triage is read-only: no diagnoses were posted and no remediation was taken."
+        ];
+        findings.AddRange(plan.Triages.Select(triage =>
+            $"[{triage.PriorityScore}] {triage.TicketId} ({triage.Severity.ToConfigValue()}) in `{triage.Environment}`: " +
+            $"category={triage.Category}, confidence={triage.Confidence}, suggested-action={triage.SuggestedAction}" +
+            (triage.MatchedScenarioName is null ? "." : $", matched={triage.MatchedScenarioName} ({triage.MatchScore:F0}%).")));
+
+        List<string> actions =
+        [
+            "Work tickets in descending priority order; the score blends severity with diagnosis confidence.",
+            "For each suggested action, route any write/remediation through the existing approval and execution gates (triage_support_ticket / honua_runbook_execute / honua_auto_remediation_plan)."
+        ];
+        actions.AddRange(plan.Triages
+            .Where(triage => triage.MissingEvidence.Count > 0)
+            .Select(triage => $"[{triage.TicketId}] Request missing evidence: {string.Join("; ", triage.MissingEvidence)}"));
+
+        return new OperationResponse(
+            Status: "triage-plan-ready",
+            Summary: $"Support triage plan for {plan.PendingTickets} pending ticket(s) (read-only).",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "Confirm each ticket's classification against attached evidence before acting.",
+                "Verify that any remediation derived from this plan passes its edition, approval, and execution-tier gates."
+            ],
+            Risks:
+            [
+                "Triage classification depends on symptom and evidence quality; low-confidence tickets need more evidence.",
+                "Priority ordering is advisory; business impact may justify reordering."
+            ],
+            SupportTriage: plan,
+            BackendSteps: [ToBackendStep("triage:list-tickets", listResult, mutatesState: false)]);
+    }
+
+    private static bool IsPendingTicket(System.Text.Json.JsonElement element)
+    {
+        string phase = element.TryGetProperty("phase", out System.Text.Json.JsonElement phaseElement)
+            ? phaseElement.GetString() ?? string.Empty
+            : string.Empty;
+        return phase.Equals("intake", StringComparison.OrdinalIgnoreCase) ||
+               phase.Equals("triaging", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private SupportTicket ParseSupportTicket(System.Text.Json.JsonElement ticketElement)
+    {
+        string ticketId = ticketElement.TryGetProperty("id", out System.Text.Json.JsonElement idEl)
+            ? idEl.GetString() ?? "unknown"
+            : "unknown";
+        string severity = ticketElement.TryGetProperty("severity", out System.Text.Json.JsonElement sevEl)
+            ? sevEl.GetString() ?? "medium"
+            : "medium";
+        string environment = ticketElement.TryGetProperty("environment", out System.Text.Json.JsonElement envEl)
+            ? envEl.GetString() ?? "unknown"
+            : "unknown";
+        string service = ticketElement.TryGetProperty("service", out System.Text.Json.JsonElement serviceEl)
+            ? serviceEl.GetString() ?? "support-triage"
+            : "support-triage";
+        string symptoms = ticketElement.TryGetProperty("symptoms", out System.Text.Json.JsonElement symEl)
+            ? symEl.GetString() ?? string.Empty
+            : string.Empty;
+        string requestedAction = ticketElement.TryGetProperty("requestedAction", out System.Text.Json.JsonElement raEl)
+            ? raEl.GetString() ?? "diagnose"
+            : "diagnose";
+        string allowedAccessMode = ticketElement.TryGetProperty("allowedAccessMode", out System.Text.Json.JsonElement aamEl)
+            ? aamEl.GetString() ?? "read-only"
+            : "read-only";
+        int ttlMinutes = ticketElement.TryGetProperty("ttlMinutes", out System.Text.Json.JsonElement ttlEl)
+            ? ttlEl.TryGetInt32(out int ttlVal) ? ttlVal : 60
+            : 60;
+        bool rollbackExpected = ticketElement.TryGetProperty("rollbackExpected", out System.Text.Json.JsonElement rbEl)
+            && rbEl.ValueKind == System.Text.Json.JsonValueKind.True;
+        string evidence = ticketElement.TryGetProperty("attachedEvidence", out System.Text.Json.JsonElement evEl)
+            ? evEl.GetString() ?? string.Empty
+            : string.Empty;
+
+        return new SupportTicket(
+            TicketId: ticketId,
+            Service: Normalize(service, "support-triage"),
+            Severity: SupportSeverityExtensions.Parse(severity),
+            Environment: Normalize(environment, "unknown"),
+            Symptoms: Normalize(symptoms, "not provided"),
+            RequestedAction: Normalize(requestedAction, "diagnose"),
+            AllowedAccessMode: Normalize(allowedAccessMode, "read-only"),
+            TtlMinutes: ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes,
+            RollbackExpected: rollbackExpected,
+            AttachedEvidence: evidence);
     }
 
     private OperationResponse BuildEditionGateResponse(string toolName, string currentEdition, string requiredEdition)
