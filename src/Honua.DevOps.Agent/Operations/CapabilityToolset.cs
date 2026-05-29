@@ -72,6 +72,11 @@ internal static class CapabilityToolset
                 "recommend_deployment_topology",
                 "Recommend deployment topology options including WAF, ingress, and edge rate limiting."),
             CreateTool(
+                (string workloadName, string targetsCsv, double vCpu, double memoryGib, double requestsPerSecond, double avgRequestMillis, double dutyCycle, int minReplicas, bool requiresPersistentState, bool latencySensitiveSustained, string metricsSource)
+                    => toolkit.PlanCostOptimizationAsync(workloadName, targetsCsv, vCpu, memoryGib, requestsPerSecond, avgRequestMillis, dutyCycle, minReplicas, requiresPersistentState, latencySensitiveSustained, metricsSource),
+                "plan_cost_optimization",
+                "Compare the supported runtime targets (azure-functions, lambda, eks, aks, ecs, aca) for a described workload shape and recommend the lowest-cost viable target. Read-only: uses static, approximate pricing (NOT live pricing) and never mutates state. Inputs: workloadName; targetsCsv (empty = configured deploy targets); vCpu and memoryGib per replica; requestsPerSecond; avgRequestMillis; dutyCycle (0-1 fraction serving traffic); minReplicas; requiresPersistentState; latencySensitiveSustained; metricsSource (where the numbers came from, e.g. 'OTEL p50 over 7d' or 'operator estimate'). Returns relative cost per target, right-sizing suggestions, a recommended target, and the pricing assumptions."),
+            CreateTool(
                 (string ticketId, string severity, string environment, string symptoms, string requestedAction, string allowedAccessMode, int ttlMinutes, bool rollbackExpected, string attachedEvidence)
                     => toolkit.TriageSupportTicketAsync(ticketId, severity, environment, symptoms, requestedAction, allowedAccessMode, ttlMinutes, rollbackExpected, attachedEvidence),
                 "triage_support_ticket",

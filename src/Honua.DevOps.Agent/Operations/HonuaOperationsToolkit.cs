@@ -1,6 +1,7 @@
 using System.ComponentModel;
 
 using Honua.DevOps.Agent.Operations.Audit;
+using Honua.DevOps.Agent.Operations.CostOptimization;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -759,6 +760,68 @@ internal sealed class HonuaOperationsToolkit(
                 "Skipping validated template modules can introduce config drift."
             ])
             .Build();
+    }
+
+    [Description("Compare the supported runtime targets for a described workload shape and recommend the lowest-cost viable target. Read-only planning only; uses static approximate pricing (no live pricing), never mutates state.")]
+    public Task<OperationResponse> PlanCostOptimizationAsync(
+        string workloadName,
+        string targetsCsv,
+        double vCpu,
+        double memoryGib,
+        double requestsPerSecond,
+        double avgRequestMillis,
+        double dutyCycle,
+        int minReplicas,
+        bool requiresPersistentState,
+        bool latencySensitiveSustained,
+        string metricsSource,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        string normalizedWorkload = ValidateServiceName(workloadName);
+        string[] targets = ResolveCostTargets(targetsCsv);
+        WorkloadShape workload = NormalizeWorkloadShape(
+            vCpu,
+            memoryGib,
+            requestsPerSecond,
+            avgRequestMillis,
+            dutyCycle,
+            minReplicas,
+            requiresPersistentState,
+            latencySensitiveSustained,
+            metricsSource);
+
+        CostOptimizationPlan plan = CostOptimizationPlanner.Build(workload, targets);
+
+        OperationResponseBuilder builder = new OperationResponseBuilder()
+            .Status("cost-plan-ready")
+            .Summary($"Cost-optimization comparison for `{normalizedWorkload}` across {string.Join(", ", targets)}.")
+            .WithCostOptimization(plan)
+            .AddFinding($"Workload shape: {plan.WorkloadSummary}.")
+            .AddFinding($"Metrics provenance: {plan.MetricsProvenance}.")
+            .AddFindings(plan.Estimates.Select(estimate =>
+                $"{estimate.Target} ({estimate.Family}): ~${estimate.EstimatedMonthlyUsd:F0}/mo, {estimate.RelativeToCheapest:F2}x cheapest, viable={estimate.Viable}, util={estimate.EffectiveUtilization:P0} [{estimate.BillingModel}]."));
+
+        builder
+            .AddAction($"Recommended target: {plan.RecommendationRationale}")
+            .AddActions(plan.Estimates
+                .SelectMany(estimate => estimate.RightSizing)
+                .Select(suggestion => $"Right-sizing ({suggestion.Target}/{suggestion.Dimension}): {suggestion.Suggestion} — {suggestion.Rationale}"))
+            .AddAction("Read-only planning output. Confirm with a real cloud quote before committing budget; do not treat figures as billable.");
+
+        builder
+            .AddValidationCheck("Pricing inputs are static approximations; validate against current cloud rate cards before procurement.")
+            .AddValidationCheck("Recommended target is the cheapest VIABLE option; disqualified targets are shown but never recommended.")
+            .AddValidationChecks(plan.Assumptions.Select(assumption => $"assumption: {assumption}"));
+
+        builder.AddRisks([
+            "Static pricing can diverge materially from negotiated, reserved, or spot pricing.",
+            "Cost model excludes egress, storage, and data-transfer, which can dominate real bills.",
+            "Workload shape supplied by the operator may not reflect production duty cycle; prefer OTEL-derived metrics where available."
+        ]);
+
+        return Task.FromResult(builder.Build());
     }
 
     [Description("Run edition-aware read-only diagnostics over Honua health, metrics, and error telemetry.")]
@@ -1763,6 +1826,70 @@ internal sealed class HonuaOperationsToolkit(
         }
 
         return runtime.TerraformDeploymentTargets;
+    }
+
+    private string[] ResolveCostTargets(string targetsCsv)
+    {
+        // Default to the operator's configured Terraform deployment targets so the
+        // comparison only spans targets they can actually deploy to.
+        string[] configured = runtime.TerraformDeploymentTargets.Length > 0
+            ? runtime.TerraformDeploymentTargets
+            : ["azure-functions", "lambda", "eks", "aks", "ecs", "aca"];
+
+        string fallback = string.Join(",", configured);
+        string[] requested = SplitCsv(targetsCsv, fallback);
+
+        // Resolve through the registry so an unsupported target fails fast with the
+        // same error the rest of the toolkit surfaces.
+        return RuntimeAdapterRegistry.ResolveMany(requested)
+            .Select(adapter => adapter.Capability.Target)
+            .ToArray();
+    }
+
+    private static WorkloadShape NormalizeWorkloadShape(
+        double vCpu,
+        double memoryGib,
+        double requestsPerSecond,
+        double avgRequestMillis,
+        double dutyCycle,
+        int minReplicas,
+        bool requiresPersistentState,
+        bool latencySensitiveSustained,
+        string metricsSource)
+    {
+        // Clamp every numeric input to a sane, bounded range so downstream pricing
+        // math can never see negative, zero-divide, or absurd values.
+        double safeVCpu = Clamp(vCpu, 0.05, 128, fallback: 0.5);
+        double safeMemory = memoryGib > 0 ? Clamp(memoryGib, 0.125, 1024, fallback: 1.0) : Clamp(safeVCpu * 2.0, 0.125, 1024, fallback: 1.0);
+        double safeRps = Clamp(requestsPerSecond, 0.0, 5_000_000, fallback: 1.0);
+        double safeMillis = Clamp(avgRequestMillis, 1.0, 900_000, fallback: 100.0);
+        double safeDuty = Clamp(dutyCycle, 0.0, 1.0, fallback: 1.0);
+        int safeReplicas = minReplicas < 1 ? 1 : Math.Min(minReplicas, 1000);
+
+        string provenance = string.IsNullOrWhiteSpace(metricsSource)
+            ? "operator-described (no metrics source supplied)"
+            : SanitizeFreeText(metricsSource, "operator-described");
+
+        return new WorkloadShape(
+            VCpu: safeVCpu,
+            MemoryGib: safeMemory,
+            RequestsPerSecond: safeRps,
+            AvgRequestMillis: safeMillis,
+            DutyCycle: safeDuty,
+            MinReplicas: safeReplicas,
+            RequiresPersistentState: requiresPersistentState,
+            LatencySensitiveSustained: latencySensitiveSustained,
+            MetricsProvenance: provenance);
+    }
+
+    private static double Clamp(double value, double min, double max, double fallback)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return fallback;
+        }
+
+        return Math.Clamp(value, min, max);
     }
 
     private static string ValidateServiceName(string value)

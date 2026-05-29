@@ -1,3 +1,4 @@
+using Honua.DevOps.Agent.Operations.CostOptimization;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
@@ -18,6 +19,7 @@ internal sealed class OperationResponseBuilder
     private GitOpsPlan? _gitOpsPlan;
     private ReleaseOrchestrationPlan? _releaseOrchestration;
     private ServiceBundleReconciliationPlan? _serviceBundleReconciliation;
+    private CostOptimizationPlan? _costOptimization;
 
     internal OperationResponseBuilder Status(string value)
     {
@@ -146,6 +148,12 @@ internal sealed class OperationResponseBuilder
         return this;
     }
 
+    internal OperationResponseBuilder WithCostOptimization(CostOptimizationPlan plan)
+    {
+        _costOptimization = plan;
+        return this;
+    }
+
     internal OperationResponseBuilder AddBackendStep(OperationBackendStep step)
     {
         _backendSteps ??= [];
@@ -183,6 +191,7 @@ internal sealed class OperationResponseBuilder
             GitOpsPlan: _gitOpsPlan,
             ReleaseOrchestration: _releaseOrchestration,
             ServiceBundleReconciliation: _serviceBundleReconciliation,
+            CostOptimization: _costOptimization,
             BackendSteps: _backendSteps);
     }
 }
