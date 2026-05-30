@@ -1,0 +1,96 @@
+name: Compatibility Train Conformance Gate
+
+# Producer half of the compatibility train (honua-devops#68, epic
+# honua-io/geospatial-grpc#18). On PR/push this lane only proves the gate itself
+# is correct: bash -n + the smoke self-test exercise the PASS path and every
+# block path (broken consumer, the honua-server#1238 JSONB-projection shape,
+# known-expected gaps, new drift alongside a gap, missing candidate, missing/
+# unpinned fixtures, missing verdict) entirely offline.
+#
+# workflow_dispatch runs the REAL gate: given a candidate server image/version
+# and a pinned geospatial-grpc fixtures version it dispatches every enrolled
+# consumer SDK's conformance against the candidate, collects the verdict, emits
+# the evidence #41 consumes, and BLOCKS (non-zero exit) on any break. Wire this
+# dispatch lane as a required check on the promotion path so a breaking
+# candidate cannot be promoted.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - trunk
+  workflow_dispatch:
+    inputs:
+      candidate_image:
+        description: "Candidate server image/tag under test (e.g. ghcr.io/honua-io/honua-server:2026.06.0-rc.1)."
+        required: false
+      candidate_version:
+        description: "Candidate SDK version label (when validating an SDK bump rather than a server image)."
+        required: false
+      fixtures_version:
+        description: "Pinned geospatial-grpc shared conformance fixtures version (e.g. 0.1.0-alpha.1). 'latest'/empty is rejected."
+        required: true
+      train_repos:
+        description: "Space-separated consumer set (default: every enrolled consumer in the registry)."
+        required: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  conformance-gate-selftest:
+    name: Gate self-test (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          bash -n scripts/compat-train-conformance-gate.sh
+          bash -n scripts/smoke-compat-train-conformance-gate.sh
+
+      - name: Validate consumer registry JSON
+        run: jq -e . compatibility/consumers.conformance.json >/dev/null
+
+      - name: Conformance gate smoke (pass path + every block path)
+        run: ./scripts/smoke-compat-train-conformance-gate.sh
+
+  conformance-gate-dispatch:
+    name: Run consumer conformance against the candidate
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: conformance-gate-selftest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run the conformance gate against the candidate
+        env:
+          GH_TOKEN: ${{ secrets.COMPAT_TRAIN_DISPATCH_TOKEN || github.token }}
+          COMPAT_TRAIN_DISPATCH: "true"
+          COMPAT_TRAIN_CANDIDATE_IMAGE: ${{ github.event.inputs.candidate_image }}
+          COMPAT_TRAIN_CANDIDATE_VERSION: ${{ github.event.inputs.candidate_version }}
+          COMPAT_TRAIN_FIXTURES_VERSION: ${{ github.event.inputs.fixtures_version }}
+          COMPAT_TRAIN_REPOS: ${{ github.event.inputs.train_repos }}
+          COMPAT_TRAIN_EVIDENCE_OUTPUT: compat-train-conformance-evidence.json
+          COMPAT_TRAIN_REPORT_OUTPUT: compat-train-conformance-report.md
+        run: ./scripts/compat-train-conformance-gate.sh
+
+      - name: Append report to step summary
+        if: ${{ always() }}
+        run: |
+          if [[ -f compat-train-conformance-report.md ]]; then
+            cat compat-train-conformance-report.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload conformance evidence + report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-train-conformance-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            compat-train-conformance-evidence.json
+            compat-train-conformance-report.md
