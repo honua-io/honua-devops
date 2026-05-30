@@ -672,6 +672,96 @@ internal sealed class HonuaOperationsToolkit(
             ServiceBundleReconciliation: serviceBundleReconciliation);
     }
 
+    [Description(
+        "Generate a PR-ready desired-state change set from a validated metadata release package (issue #57, first slice). " +
+        "Input is the server-supplied release-package JSON: semantic resources, target environments, compatibility report, " +
+        "optional data-script coverage, and rollback policy. Returns a deterministic, secret-free change set: a stable " +
+        "branch name, commit message, PR title/body with evidence links, a repo-relative file path -> content map " +
+        "(metadata manifests, environment overlays, optional data-script coverage, validation evidence, rollback policy), " +
+        "rollback commands derived from the rollback classification and known-good revision, and an overall readiness of " +
+        "ready/warning/blocked/unknown. Read-only: it renders Git artifacts in-process and never writes Git, opens a PR, " +
+        "applies manifests, or creates a server operation; merge/reconcile runs through the governed GitOps/approval path. " +
+        "Returns a blocked change set when compatibility flags breaking changes, and an unknown projection when the " +
+        "document cannot be parsed.")]
+    public Task<OperationResponse> GenerateMetadataReleaseChangeSetAsync(
+        string releasePackageJson,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        if (!MetadataReleaseChangeSetBuilder.TryBuild(releasePackageJson, out MetadataReleaseChangeSet changeSet, out string? error))
+        {
+            return Task.FromResult(new OperationResponse(
+                Status: MetadataChangeSetReadiness.Unknown,
+                Summary: "Metadata release package could not be turned into a change set: the supplied document was empty or malformed.",
+                Findings:
+                [
+                    $"Parse error: {error ?? "unknown"}",
+                    "No desired-state files were generated."
+                ],
+                Actions:
+                [
+                    "Supply a valid metadata release-package JSON document (server compatibility report, semantic resources, environments, rollback policy).",
+                    "No Git artifacts were produced; nothing was written."
+                ],
+                ValidationChecks:
+                [
+                    "release-package-json-required",
+                    "change-set-read-only-no-git-write"
+                ],
+                Risks:
+                [
+                    "Readiness is unknown because no release-package evidence could be interpreted."
+                ]));
+        }
+
+        List<string> findings =
+        [
+            $"Release package: {changeSet.ReleasePackageId} ({changeSet.Service} -> {string.Join(", ", changeSet.TargetEnvironments)} @ {changeSet.DesiredRevision})",
+            $"Readiness: {changeSet.Readiness}",
+            $"Branch: {changeSet.BranchName}",
+            $"Semantic resources: {changeSet.SemanticResources.Count}",
+            $"Generated files: {changeSet.Files.Count} ({string.Join(", ", changeSet.Files.Select(file => file.Path))})",
+            $"Rollback classification: {changeSet.RollbackClassification}; known-good revision: {changeSet.KnownGoodRevision ?? "unknown"}",
+            $"Evidence references: {changeSet.EvidenceLinks.Count}"
+        ];
+        findings.AddRange(changeSet.BlockingReasons.Select(reason => $"Blocking: {reason}"));
+
+        List<string> actions =
+        [
+            "Change set is read-only; honua-devops renders Git artifacts but never writes Git, opens a PR, or applies manifests.",
+            $"Open or update branch `{changeSet.BranchName}` with the generated files, then route merge/reconcile through the governed GitOps/approval path.",
+            .. changeSet.RollbackCommands.Count > 0
+                ? new[] { $"Rollback commands prepared ({changeSet.RollbackCommands.Count}); they require explicit governed approval before running." }
+                : Array.Empty<string>(),
+            .. changeSet.Warnings.Select(warning => $"Warning: {warning}")
+        ];
+
+        return Task.FromResult(new OperationResponse(
+            Status: changeSet.Readiness,
+            Summary: $"Metadata release change set for `{changeSet.Service}` {changeSet.DesiredRevision} -> {string.Join(", ", changeSet.TargetEnvironments)} ({changeSet.Readiness}).",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "change-set-read-only-no-git-write",
+                "branch-and-commit-deterministic",
+                "generated-files-secret-free",
+                "rollback-commands-derived-from-classification",
+                "compatibility-report-interpreted-not-computed"
+            ],
+            Risks:
+            [
+                changeSet.Readiness == MetadataChangeSetReadiness.Blocked
+                    ? "Change set is blocked by the supplied compatibility report; do not open a PR until the breaking change is resolved."
+                    : "Change set reflects the supplied release-package evidence and can drift before merge.",
+                changeSet.RollbackClassification == MetadataRollbackClass.Irreversible
+                    ? "Rollback is classified irreversible; only a forward fix can recover this release."
+                    : "Acting on the change set still requires the governed approval/submit path."
+            ],
+            MetadataReleaseChangeSet: changeSet));
+    }
+
     [Description("Analyze customer requirements through Honua API and generate deployment recommendations.")]
     public async Task<OperationResponse> AnalyzeCustomerRequirementsAsync(
         string customerRequirements,

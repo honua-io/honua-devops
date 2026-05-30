@@ -26,4 +26,5 @@ internal sealed record OperationResponse(
     [property: JsonIgnore] ReleaseOrchestrationPlan? ReleaseOrchestration = null,
     [property: JsonIgnore] ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null,
     [property: JsonIgnore] IReadOnlyList<OperationBackendStep>? BackendSteps = null,
-    [property: JsonIgnore] ConsoleBridgeProjection? ConsoleBridge = null);
+    [property: JsonIgnore] ConsoleBridgeProjection? ConsoleBridge = null,
+    [property: JsonIgnore] MetadataReleaseChangeSet? MetadataReleaseChangeSet = null);
