@@ -1,0 +1,35 @@
+{
+  "releaseId": "rel-2026.03-search",
+  "operationId": "op-blocked-1",
+  "service": "search-api",
+  "desiredRevision": "release/2026.03",
+  "targetEnvironments": ["staging"],
+  "compatibility": {
+    "status": "incompatible",
+    "breakingChanges": 2,
+    "warnings": 0,
+    "findings": ["Removed field `legacyScore` consumed by 3 clients.", "Changed response envelope shape."]
+  },
+  "scriptCoverage": {
+    "covered": 5,
+    "total": 5,
+    "uncovered": []
+  },
+  "prPreview": {
+    "number": "1260",
+    "url": "https://github.com/honua-io/control-repo/pull/1260",
+    "ciStatus": "red"
+  },
+  "promotionGates": [
+    { "id": "compatibility-clean", "label": "Compatibility clean", "satisfied": false, "blocking": true, "detail": "2 breaking changes detected." },
+    { "id": "scripts-covered", "label": "Release scripts covered", "satisfied": true, "blocking": true, "detail": "All scripts covered." },
+    { "id": "ci-green", "label": "CI green", "satisfied": false, "blocking": true, "detail": "Integration suite failing." }
+  ],
+  "requiredApprovals": ["release-manager", "platform-lead"],
+  "residualRisks": ["Breaking changes will fail 3 known clients until they migrate."],
+  "rollbackPlan": {
+    "classification": "automatic",
+    "required": false,
+    "priorRevision": "release/2026.02"
+  }
+}

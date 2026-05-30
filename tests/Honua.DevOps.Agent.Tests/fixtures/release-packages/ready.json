@@ -1,0 +1,35 @@
+{
+  "releaseId": "rel-2026.03-roads",
+  "operationId": "op-ready-1",
+  "service": "roads-api",
+  "desiredRevision": "release/2026.03",
+  "targetEnvironments": ["dev", "staging"],
+  "compatibility": {
+    "status": "compatible",
+    "breakingChanges": 0,
+    "warnings": 0,
+    "findings": ["No breaking schema or protocol changes detected."]
+  },
+  "scriptCoverage": {
+    "covered": 4,
+    "total": 4,
+    "uncovered": []
+  },
+  "prPreview": {
+    "number": "1247",
+    "url": "https://github.com/honua-io/control-repo/pull/1247",
+    "ciStatus": "green"
+  },
+  "promotionGates": [
+    { "id": "compatibility-clean", "label": "Compatibility clean", "satisfied": true, "blocking": true, "detail": "No breaking changes." },
+    { "id": "scripts-covered", "label": "Release scripts covered", "satisfied": true, "blocking": true, "detail": "All scripts covered." },
+    { "id": "ci-green", "label": "CI green", "satisfied": true, "blocking": true, "detail": "All checks passed." }
+  ],
+  "requiredApprovals": ["release-manager"],
+  "residualRisks": [],
+  "rollbackPlan": {
+    "classification": "automatic",
+    "required": false,
+    "priorRevision": "release/2026.02"
+  }
+}

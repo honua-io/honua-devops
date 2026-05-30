@@ -1,0 +1,35 @@
+{
+  "releaseId": "rel-2026.03-tiles",
+  "operationId": "op-warning-1",
+  "service": "tiles-api",
+  "desiredRevision": "release/2026.03",
+  "targetEnvironments": ["staging"],
+  "compatibility": {
+    "status": "compatible",
+    "breakingChanges": 0,
+    "warnings": 2,
+    "findings": ["Deprecated field `bbox` still in use by 1 client.", "New optional field added."]
+  },
+  "scriptCoverage": {
+    "covered": 3,
+    "total": 4,
+    "uncovered": ["2026_03_add_index.sql"]
+  },
+  "prPreview": {
+    "number": "1251",
+    "url": "https://github.com/honua-io/control-repo/pull/1251",
+    "ciStatus": "green"
+  },
+  "promotionGates": [
+    { "id": "compatibility-clean", "label": "Compatibility clean", "satisfied": true, "blocking": true, "detail": "No breaking changes." },
+    { "id": "scripts-covered", "label": "Release scripts covered", "satisfied": false, "blocking": false, "detail": "1 script lacks coverage." },
+    { "id": "ci-green", "label": "CI green", "satisfied": true, "blocking": true, "detail": "All checks passed." }
+  ],
+  "requiredApprovals": ["release-manager"],
+  "residualRisks": ["One migration script lacks automated coverage; verify manually before prod."],
+  "rollbackPlan": {
+    "classification": "automatic",
+    "required": false,
+    "priorRevision": "release/2026.02"
+  }
+}
