@@ -1,0 +1,29 @@
+name: Console Release Promotion
+
+on:
+  pull_request:
+  push:
+    branches:
+      - trunk
+  workflow_dispatch:
+
+jobs:
+  console-release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          bash -n scripts/console-release-gate.sh
+          bash -n scripts/console-preview-env.sh
+          bash -n scripts/smoke-console-release-gate.sh
+
+      - name: Console release gate + preview planner smoke
+        run: ./scripts/smoke-console-release-gate.sh
+
+      - name: Console release gate against sample evidence
+        run: |
+          ./scripts/console-release-gate.sh \
+            desired-state/console/sample-ci-evidence.json

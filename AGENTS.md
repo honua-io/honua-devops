@@ -151,7 +151,10 @@ Each tool call emits one JSONL audit record.
   Other workflows are smoke/contract/eval lanes (`devops-baseline-contracts.yml`,
   `operator-bootstrap-smoke.yml`, `secrets-lifecycle-contracts.yml`,
   `slo-enforcement-baseline.yml`, `client-compatibility-scoreboard.yml`,
-  `multi-model-operator-evals.yml`, `backup-restore-gameday.yml`).
+  `multi-model-operator-evals.yml`, `backup-restore-gameday.yml`,
+  `console-release-promotion.yml`: `bash -n` + `smoke-console-release-gate.sh` for
+  the honua-console release gate / preview planner — see
+  `docs/console-release-promotion.md`).
 - NuGet locked-restore mode is active when `packages.lock.json` is present;
   changing package versions requires updating the lock file.
 - Default-safe posture: keep `plan` mode + `pr-first` approval unless a task
