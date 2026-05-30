@@ -1,0 +1,26 @@
+{
+  "artifact": {
+    "kind": "unified-runtime-image",
+    "version": "2026.05.0-rc1"
+  },
+  "environment": "staging",
+  "stages": {
+    "install": "pass",
+    "lint": "pass",
+    "typecheck": "pass",
+    "unit": "pass",
+    "browser_smoke": "pass",
+    "build": "pass"
+  },
+  "surfaces": {
+    "console": "ready",
+    "studio": "ready",
+    "catalog": "ready",
+    "share": "preview",
+    "operate": "ready"
+  },
+  "legacy": {
+    "portal_required": false,
+    "admin_required": false
+  }
+}
