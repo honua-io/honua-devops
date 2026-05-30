@@ -1,0 +1,23 @@
+name: Compatibility Train Release Validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - trunk
+  workflow_dispatch:
+
+jobs:
+  compat-train-release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          bash -n scripts/compat-train-release-gate.sh
+          bash -n scripts/smoke-compat-train-release-gate.sh
+
+      - name: Compatibility-train release gate smoke
+        run: ./scripts/smoke-compat-train-release-gate.sh

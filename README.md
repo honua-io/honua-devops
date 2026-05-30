@@ -314,6 +314,7 @@ Onboarding helper:
 - Manual AWS/Azure runbooks (apply -> smoke -> destroy): `docs/manual-cloud-runbooks.md`
 - Backup and restore game-day: `docs/backup-restore-gameday.md`
 - SLO release gate baseline: `docs/slo-release-gates.md`
+- Compatibility-train release validation: `docs/compat-train-release-validation.md`
 - SLO observability assets: `observability/`
 - Client compatibility scoreboard: `docs/client-compatibility-scoreboard.md`
 - Secrets lifecycle: `docs/secrets-lifecycle.md`
@@ -361,6 +362,8 @@ Helper scripts:
 - `scripts/smoke-slo-release-gate.sh`
 - `scripts/slo-release-watch.sh`
 - `scripts/smoke-slo-release-watch.sh`
+- `scripts/compat-train-release-gate.sh`
+- `scripts/smoke-compat-train-release-gate.sh`
 - `scripts/validate-slo-assets.sh`
 - `scripts/generate-client-compat-scoreboard.py`
 - `scripts/smoke-client-compat-scoreboard.sh`
