@@ -1,0 +1,54 @@
+{
+  "$comment": "Consumer-SDK conformance registry for the compatibility-train conformance gate (honua-devops#68, epic geospatial-grpc#18). Each entry describes how to dispatch a consumer repo's shared-fixture conformance job against a CANDIDATE server/SDK version and how to collect its verdict. The gate (scripts/compat-train-conformance-gate.sh) is the PRODUCER of the per-repo verdict that scripts/compat-train-release-gate.sh (#41) consumes. The shared geospatial-grpc conformance fixtures (geospatial-grpc#3) are the single source of truth; they are pinned by version, never copied.",
+  "fixtures": {
+    "source_repo": "honua-io/geospatial-grpc",
+    "asset_pattern": "conformance-fixtures-<version>.tar.gz",
+    "$comment": "Pinned via COMPAT_TRAIN_FIXTURES_VERSION / the gate input; must equal each consumer's pinned CONFORMANCE_FIXTURES_VERSION. The gate refuses to run on an unpinned ('latest'/empty) fixtures version."
+  },
+  "known_server_gaps": {
+    "$comment": "Already-tracked nightly honua-server gaps. A consumer break whose ONLY failing fixtures map to these issues is KNOWN-EXPECTED-FAILING: the consumer conformance jobs xfail these (so the job is green), and this gate records them as known (never silently swallowed). Any NEW/untracked fixture break still fails the gate. When a server fix lands the entry is removed here and the consumer flips the xfail to required.",
+    "honua-server#1238": "FeatureServer/OGC query of JSONB-attribute layer (column projection)",
+    "honua-server#1166": "Temporal query support",
+    "honua-server#1167": "Replica / offline sync endpoints",
+    "honua-server#1237": "Analysis (process) list/estimate endpoints"
+  },
+  "consumers": {
+    "honua-sdk-dotnet": {
+      "repo": "honua-io/honua-sdk-dotnet",
+      "workflow": "conformance.yml",
+      "candidate_input": "server_image",
+      "fixtures_input": "fixtures_version",
+      "enrolled": true
+    },
+    "honua-sdk-js": {
+      "repo": "honua-io/honua-sdk-js",
+      "workflow": "integration.yml",
+      "candidate_input": "base_url",
+      "candidate_commit_input": "server_commit",
+      "fixtures_input": "fixtures_version",
+      "enrolled": true
+    },
+    "honua-sdk-python": {
+      "repo": "honua-io/honua-sdk-python",
+      "workflow": "conformance.yml",
+      "candidate_input": "server_image",
+      "fixtures_input": "fixtures_version",
+      "enrolled": true
+    },
+    "honua-mobile": {
+      "repo": "honua-io/honua-mobile",
+      "workflow": "live-server-integration.yml",
+      "candidate_input": "honua_server_image",
+      "fixtures_input": "fixtures_version",
+      "enrolled": true
+    },
+    "honua-qgis-plugin": {
+      "repo": "honua-io/honua-qgis-plugin",
+      "workflow": "",
+      "candidate_input": "",
+      "fixtures_input": "",
+      "enrolled": false,
+      "$comment": "Not yet enrolled in the shared-fixture conformance lane (no conformance workflow). Listed for train completeness; the gate treats an unenrolled consumer as not-required UNLESS COMPAT_TRAIN_REQUIRE_ALL=true."
+    }
+  }
+}

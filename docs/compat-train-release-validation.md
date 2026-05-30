@@ -3,6 +3,14 @@
 Release-candidate validation for the cross-repo compatibility train
 (`honua-devops#41`).
 
+> **Producer + evaluator.** This gate is the *evaluator*: it consumes a per-repo
+> verdict and decides if the train is releasable. The *producer* of that verdict
+> — the gate that actively runs every consumer SDK's conformance against a
+> candidate and emits the evidence shape consumed here — is
+> `scripts/compat-train-conformance-gate.sh` (`honua-devops#68`); see
+> [compat-train-conformance-gate.md](compat-train-conformance-gate.md). Run the
+> conformance gate to produce `evidence.json`, then this gate to evaluate it.
+
 A Honua release candidate is validated as a **train**: the server plus the
 downstream client/SDK repos that must all stay green against the *same*
 candidate before the release ships. This gate evaluates the per-repo
