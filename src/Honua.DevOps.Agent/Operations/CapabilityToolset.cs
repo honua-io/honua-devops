@@ -59,6 +59,11 @@ internal static class CapabilityToolset
                 "plan_gitops_engine",
                 "Plan the internal honua-gitops engine diff, drift, and state transitions without applying desired state."),
             CreateTool(
+                (string releasePackageJson)
+                    => toolkit.GenerateMetadataReleaseChangeSetAsync(releasePackageJson),
+                "generate_metadata_release_changeset",
+                "Generate a PR-ready desired-state change set from a validated metadata release package: deterministic branch name, commit message, PR title/body with evidence links, repo-relative file path -> content map (metadata manifests, environment overlays, optional data-script coverage, validation evidence, rollback policy), rollback commands derived from the rollback classification and known-good revision, and an overall ready/warning/blocked/unknown readiness. Read-only: renders Git artifacts in-process and never writes Git, opens a PR, applies manifests, or creates a server operation; merge/reconcile runs through the governed GitOps/approval path. Blocked when compatibility flags breaking changes."),
+            CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary)
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),
                 "deploy_service_gitops",
