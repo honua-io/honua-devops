@@ -1,0 +1,35 @@
+{
+  "releaseId": "rel-2026.03-rollback",
+  "operationId": "op-rollback-1",
+  "service": "ingest-api",
+  "desiredRevision": "release/2026.03",
+  "targetEnvironments": ["prod"],
+  "compatibility": {
+    "status": "compatible",
+    "breakingChanges": 0,
+    "warnings": 0,
+    "findings": ["Schema compatible; failure is runtime, not contract."]
+  },
+  "scriptCoverage": {
+    "covered": 6,
+    "total": 6,
+    "uncovered": []
+  },
+  "prPreview": {
+    "number": "1270",
+    "url": "https://github.com/honua-io/control-repo/pull/1270",
+    "ciStatus": "green"
+  },
+  "promotionGates": [
+    { "id": "compatibility-clean", "label": "Compatibility clean", "satisfied": true, "blocking": true, "detail": "No breaking changes." },
+    { "id": "slo-watch", "label": "Post-deploy SLO watch", "satisfied": false, "blocking": true, "detail": "Error budget breached after rollout; SLO watch failed." }
+  ],
+  "requiredApprovals": ["incident-commander"],
+  "residualRisks": ["Live error rate exceeds SLO; customer-facing impact until reverted."],
+  "rollbackPlan": {
+    "classification": "automatic",
+    "required": true,
+    "priorRevision": "release/2026.02",
+    "findings": ["Revert to release/2026.02 via governed deploy-control rollback.", "Verify error rate returns under SLO."]
+  }
+}

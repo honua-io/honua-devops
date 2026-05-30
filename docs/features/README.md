@@ -13,7 +13,7 @@
 - Runtime-adapter lifecycle for validate, plan/apply infra, plan/apply release, verify, rollback, drift, and export actual state.
 - Release orchestration state machine covering preflight, backup, migration, rollout, smoke, SLO watch, promotion, and rollback.
 - SLO release gates, backup/restore game days, secrets lifecycle checks, supply-chain baseline checks, fault injection, and multi-model operator evaluations.
-- Console-facing AI DevOps bridge that projects stable, evidence-linked GitOps proposal, unified operation-status, and advisory-brief contracts over honua-server deploy-control without scraping Git or CI (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`). AI output stays advisory; governed submit/rollback require explicit approval. See `docs/console-ai-devops-bridge.md`.
+- Console-facing AI DevOps bridge that projects stable, evidence-linked GitOps proposal, unified operation-status, advisory-brief, and read-only release-explanation contracts over honua-server deploy-control without scraping Git or CI (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`). AI output stays advisory; governed submit/rollback require explicit approval. See `docs/console-ai-devops-bridge.md`.
 - Portfolio execution tracker with live QGIS plugin cross-links:
   `docs/strategy/portfolio-60-day-plan.md` links the GPL plugin repo,
   public landing page, and release-owner follow-ups.

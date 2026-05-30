@@ -16,6 +16,7 @@ internal static class CapabilityToolset
     {
         HonuaOperationsToolkit toolkit = new(runtime, gateway, policy, supportGateway, defaultEdition);
         ConsoleOperationBridge consoleBridge = new(runtime, gateway, policy);
+        ReleasePackageExplainer releaseExplainer = new(gateway.Configuration);
 
         return
         [
@@ -121,7 +122,12 @@ internal static class CapabilityToolset
                 (string service, string environment, string title, string summary, string recommendedAction, string evidenceReference, string operationId, string confidence)
                     => consoleBridge.BuildAiDevOpsBriefAsync(service, environment, title, summary, recommendedAction, evidenceReference, operationId, confidence),
                 "build_ai_devops_brief",
-                "Build an advisory AI DevOps brief with affected resources, raw evidence references, suggested actions (with requiresApproval/mutatesState flags), confidence, owner, status, and workflow links. Advisory only with auto-apply disabled; mutating suggestions require an explicit governed submit/rollback.")
+                "Build an advisory AI DevOps brief with affected resources, raw evidence references, suggested actions (with requiresApproval/mutatesState flags), confidence, owner, status, and workflow links. Advisory only with auto-apply disabled; mutating suggestions require an explicit governed submit/rollback."),
+            CreateTool(
+                (string releasePackageJson, string mode, string correlationId)
+                    => releaseExplainer.ExplainReleasePackageAsync(releasePackageJson, mode, correlationId),
+                "explain_release_package",
+                "Explain a Console release package without computing compatibility or scraping Git/CI. Input is the release-package evidence JSON (server compatibility report, script coverage, PR preview, promotion gates, rollback plan). Returns a structured, evidence-linked explanation: per-section status, promotion gates, required approvals, residual risk, a rollback classification, and a human-readable summary, with overall readiness of ready/warning/blocked/unknown/rollback-required. mode is 'explanation' (read-only, default) or 'proposal' (governed handoff only; never executes). correlationId links the Console action to the server release package and downstream PR/CI/GitOps operations.")
         ];
     }
 

@@ -1,0 +1,20 @@
+{
+  "releaseId": "rel-2026.03-partial",
+  "service": "partial-api",
+  "desiredRevision": "release/2026.03",
+  "targetEnvironments": ["dev"],
+  "compatibility": {
+    "status": "unknown"
+  },
+  "scriptCoverage": {
+    "covered": 0,
+    "total": 0
+  },
+  "prPreview": {
+    "number": "1262",
+    "ciStatus": "not-run"
+  },
+  "rollbackPlan": {
+    "classification": "unknown"
+  }
+}

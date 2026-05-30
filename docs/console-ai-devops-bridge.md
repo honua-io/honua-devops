@@ -22,7 +22,7 @@ In scope (this repo):
 
 - Bridge DTOs and mappers under `src/Honua.DevOps.Agent/Operations/ConsoleBridge/`.
 - Agent/tool projections: `create_gitops_proposal`, `get_gitops_proposal`,
-  `get_devops_operation_status`, `build_ai_devops_brief`.
+  `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`.
 - Reuse of `BackendGateway` deploy-control calls, `OperationResponse`,
   `OperationBackendStep`, operator policy, and redaction.
 
@@ -107,6 +107,42 @@ Advisory projection. Produces an `AiDevOpsBrief` with `affectedResources`, raw
 and `workflowLinks`. Auto-apply is disabled; the brief makes no backend calls and never
 executes. Mutating suggestions carry `requiresApproval=true` and `mutatesState=true`
 with a `targetOperationId` and are surfaced but never run.
+
+### `explain_release_package`
+
+Read-only release-package explanation surface (tracked by `honua-devops#58`). Console
+hands the bridge the release-package evidence document — the server-computed
+compatibility report, script coverage, PR preview, promotion gates, and rollback plan —
+and gets back a `ReleaseExplanation`:
+
+- `explanationId`, `operationId`, `correlationId`, `mode`, `releaseId`, `service`,
+  `targetEnvironments`, `desiredRevision`
+- `readiness` (`ready` / `warning` / `blocked` / `unknown` / `rollback-required`)
+- `summary` (single human-readable paragraph Console can render verbatim)
+- `sections` (one `ReleaseExplanationSection` per `compatibility`, `script-coverage`,
+  `pr-preview`, `promotion-gates`, `rollback-plan`; each with its own status, findings,
+  and evidence)
+- `promotionGates`, `requiredApprovals`, `residualRisks`, `rollbackClassification`
+  (`automatic` / `manual` / `irreversible` / `not-required` / `unknown`)
+- `evidence`, `suggestedActions`, `workflowLinks`, `blockingReasons`, `createdAt`
+
+It does **not** compute compatibility — it interprets the supplied report (server
+compatibility computation is owned by `honua-server#57`). It never scrapes Git or CI: a
+section without supplied evidence is marked `evidence-missing`. The explanation is
+read-only in `explanation` mode (the default) and makes no backend call. In `proposal`
+mode it surfaces a single governed, approval-required PR-creation handoff suggestion for
+a non-blocked release; it still never creates the PR, submits, applies, or rolls back. A
+`rollback-required` release surfaces a governed rollback suggestion the same way. All
+free text passing through (findings, residual risks, gate labels/details, release/service
+identifiers, PR/rollback references) is redaction-scrubbed before it reaches the
+projection. A document that cannot be parsed returns an `unknown` projection with an
+`evidence-missing` reference rather than throwing. `correlationId` is preserved on the
+explanation so Console actions, the server release package, PRs, CI checks, and GitOps
+operations can be correlated.
+
+The structured `ReleaseExplanation` is carried on `OperationResponse.ConsoleBridge`
+(in-process, `JsonIgnore`d like the other bridge projections); the LLM-facing/audit wire
+shape keeps only the compact status/summary.
 
 ## Advisory and Approval Guarantees
 
