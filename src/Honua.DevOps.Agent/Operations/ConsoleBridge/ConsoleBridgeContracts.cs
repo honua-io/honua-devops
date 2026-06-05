@@ -205,6 +205,94 @@ internal sealed record ReleaseExplanation(
     IReadOnlyList<string> BlockingReasons,
     string CreatedAt);
 
+// Delegated-session access modes Console renders for the L2/L3 trust layer. These are the
+// exact wire values of OperatorPolicy's SupportSessionAccess.ToConfigValue(): the bridge
+// reuses them verbatim rather than minting a parallel vocabulary.
+internal static class DelegatedSessionAccess
+{
+    internal const string Disabled = "disabled";
+    internal const string ReadOnly = "read-only";
+    internal const string OperatorScoped = "operator-scoped";
+}
+
+// Posture Console renders for the guided-fix mode a ticket resolves to. Mirrors
+// GuidedFixMode.ToConfigValue() so Console never re-derives it from prose.
+internal static class SupportPosture
+{
+    internal const string ReadOnlyTriage = "read-only-triage";
+    internal const string GuidedFix = "guided-fix";
+    internal const string OperatorScoped = "operator-scoped";
+}
+
+// Live delegated-session state for a ticket: the access mode the operator is actually
+// allowed to use, the effective TTL (already min-clamped against policy), an absolute
+// expiry timestamp Console can render a countdown from, and the customer-visible flag.
+// Active is false when access is disabled or the session is not operator-scoped, so
+// Console can show "no live session" without parsing the mode string. ExpiresAt is null
+// when no session is active (nothing to expire) and is computed from EstablishedAt + TTL.
+internal sealed record DelegatedSessionState(
+    string TicketId,
+    string AccessMode,
+    string Posture,
+    int TtlMinutes,
+    string? EstablishedAt,
+    string? ExpiresAt,
+    bool CustomerVisible,
+    bool Active,
+    IReadOnlyList<string> RequiredApprovalContext);
+
+// Console-consumable projection of the DiagnosisScorecard posted back to honua-support.
+// OverallResult/CompositeScore are the scorecard's own derived pass/fail and 0-100 score;
+// the booleans are surfaced individually so Console can render a per-criterion checklist.
+// FailureModes and Evidence let Console explain a "fail" without re-running diagnosis.
+internal sealed record DiagnosisScorecardBridge(
+    string ScenarioId,
+    string ScenarioName,
+    string OverallResult,
+    double CompositeScore,
+    string Confidence,
+    bool DiagnosisCorrect,
+    bool RemediationSafe,
+    bool PolicyCompliant,
+    bool RollbackGuidanceCorrect,
+    bool RecoveryVerified,
+    bool ServiceHealthRestored,
+    double EvidenceQuality,
+    IReadOnlyList<string> FailureModes,
+    IReadOnlyList<EvidenceRef> Evidence);
+
+// Why a ticket was handed off (escalated) to an operator-scoped session. Trigger is a
+// stable machine code (e.g. matched-fault-write-remediation, severity-escalation,
+// access-requested); Signal is the concrete observation that fired it; Justification is
+// the human-readable sentence Console can show verbatim. RollbackIntent and
+// RequiredApprovalContext make the approval posture explicit. Escalated is false for a
+// read-only/guided-fix ticket that never crossed the operator-scoped boundary, so Console
+// can render "not escalated" without inspecting the posture string.
+internal sealed record EscalationRationale(
+    bool Escalated,
+    string Trigger,
+    string Signal,
+    string Justification,
+    string AccessScope,
+    int TtlMinutes,
+    string RollbackIntent,
+    IReadOnlyList<string> RequiredApprovalContext);
+
+// Aggregate console view of a support ticket's L2/L3 trust state: the live delegated
+// session, the diagnosis scorecard, the escalation rationale, and the audit-journal
+// references (JSONL records keyed by the support-triage operation scope) backing them.
+// Read-only by construction: the bridge projects already-computed honua-devops state and
+// never opens a session, posts a diagnosis, or escalates.
+internal sealed record SupportTicketConsoleView(
+    string TicketId,
+    string Posture,
+    string DiagnosisSummary,
+    DelegatedSessionState Session,
+    DiagnosisScorecardBridge Scorecard,
+    EscalationRationale Escalation,
+    IReadOnlyList<EvidenceRef> AuditReferences,
+    string CreatedAt);
+
 // Carried on OperationResponse (JSON-ignored, like GitOpsPlan) so the structured
 // projection is available in-process by object reference to callers that hold the
 // response (the Console-facing bridge surface), while the LLM-facing wire shape stays
@@ -215,4 +303,5 @@ internal sealed record ConsoleBridgeProjection(
     GitOpsProposalBridge? Proposal = null,
     DevOpsOperationStatus? OperationStatus = null,
     AiDevOpsBrief? Brief = null,
-    ReleaseExplanation? ReleaseExplanation = null);
+    ReleaseExplanation? ReleaseExplanation = null,
+    SupportTicketConsoleView? SupportTicket = null);

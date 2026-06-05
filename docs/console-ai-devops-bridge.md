@@ -164,6 +164,55 @@ shape keeps only the compact status/summary.
   `HONUA_DEVOPS_CONSOLE_BASE_URL`; when unset, the `self` link is returned with
   `available=false` rather than fabricated.
 
+## Support-Ticket Trust State (L2/L3)
+
+Tracked by `honua-devops#70` (part of `honua-server#1495`). The bridge also projects a
+support ticket's live trust state so Console can render escalation rationale and the
+remote-session posture without scraping agent prose. The `get_support_ticket_console_view`
+tool returns a `SupportTicketConsoleView` (kind `support-ticket-view`) over the same
+diagnosis pipeline as `triage_support_ticket`. It is a read-only projection: it never
+opens a session, posts a diagnosis, or escalates.
+
+- **`DelegatedSessionState`** — access mode (`disabled`/`read-only`/`operator-scoped`,
+  verbatim from `SupportSessionAccess.ToConfigValue()`), the guided-fix posture, the
+  effective TTL (min-clamped against policy), `establishedAt`/`expiresAt` for a countdown,
+  the customer-visible flag, and an `active` flag (true only when access is enabled and the
+  ticket resolved to an operator-scoped session). TTL/expiry/customer-visibility derive
+  from `OperatorPolicy.SupportSession`.
+- **`DiagnosisScorecardBridge`** — projects the `DiagnosisScorecard` posted to
+  honua-support: `overallResult` (pass/fail), composite score, confidence, the
+  per-criterion booleans (diagnosis/remediation/policy/rollback/recovery/health) for a
+  checklist, failure modes, and evidence references.
+- **`EscalationRationale`** — "why escalated": an `escalated` flag, a stable `trigger`
+  code (`matched-fault-write-remediation`, `severity-escalation`, `access-requested`, or
+  `not-escalated`), the concrete `signal`, the human-readable justification, access scope,
+  TTL, rollback intent, and required approval context. The same `trigger`/`signal` now
+  travel on the `escalation` object that `SupportGateway.PostDiagnosisAsync` posts back to
+  honua-support alongside the diagnosis.
+- **Audit references** — `EvidenceRef`s of type `audit-journal` keyed by the support-triage
+  operation scope, with a `file://` URL when `HONUA_DEVOPS_AUDIT_HOOK_TARGET` is
+  file-backed, so Console deep-links to the append-only JSONL rather than embedding raw
+  audit lines.
+
+### Alignment with honua-support#20 (telemetry/context contract)
+
+honua-support#20 formalizes a **shared, versioned telemetry/context schema** for the
+console→support→devops auto-attached payload (user/tenant, env kind, version/commit,
+route, recent errors, instance URL + scoped key). Two mismatches to resolve when that
+schema lands (tracked there, not fixed here):
+
+1. **Auto-bundle payload is informal.** `SupportGateway.TriggerAutoBundleAsync` posts only
+   `{ instanceUrl, apiKey }`. It does not yet carry the #20 context fields (tenant, env
+   kind, version/commit, route, recent errors). It should adopt the versioned schema once
+   published.
+2. **Escalation webhook is a separate, narrower shape.** The signed inbound
+   `EscalationWebhookPayload` (`eventType`, `ticketId`, `severity`, `environment`,
+   `service`, `phase`, `sla`, nested `escalation.{tier,accessMode,escalatedAt}`,
+   `ticketUrl`) mirrors honua-support's `SupportNotificationPayload`, not the #20
+   telemetry/context schema. The HMAC-over-raw-bytes signing and `X-Honua-Event` /
+   `X-Honua-Signature` headers are sound and should be retained; the body should reference
+   the shared schema version so all three repos stay in lockstep.
+
 ## Real-Server Integration Policy
 
 Per the Console Patterns Charter section 11, the bridge binds to real honua-server

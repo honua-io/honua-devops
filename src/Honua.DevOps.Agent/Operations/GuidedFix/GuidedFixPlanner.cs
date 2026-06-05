@@ -20,7 +20,7 @@ internal static class GuidedFixPlanner
         List<string> guidedCommands = BuildGuidedCommands(ticket, mode, matchedFault, executionMode);
         List<string> validationSteps = BuildValidationSteps(ticket, mode, matchedFault);
         GuidedFixEscalation? escalation = mode == GuidedFixMode.OperatorScoped
-            ? BuildEscalation(ticket, policy)
+            ? BuildEscalation(ticket, policy, matchedFault)
             : null;
 
         return new GuidedFixResult(
@@ -396,10 +396,13 @@ internal static class GuidedFixPlanner
 
     private static GuidedFixEscalation BuildEscalation(
         SupportTicket ticket,
-        OperatorPolicy.OperatorPolicy policy)
+        OperatorPolicy.OperatorPolicy policy,
+        FaultMatch? matchedFault)
     {
+        (string trigger, string signal) = ResolveEscalationTrigger(ticket, matchedFault);
+
         return new GuidedFixEscalation(
-            Justification: $"Escalation requested for ticket {ticket.TicketId} ({ticket.Severity.ToConfigValue()}) in {ticket.Environment}.",
+            Justification: $"Escalation requested for ticket {ticket.TicketId} ({ticket.Severity.ToConfigValue()}) in {ticket.Environment}: {signal}.",
             AccessScope: policy.SupportSession.Access.ToConfigValue(),
             TtlMinutes: Math.Min(ticket.TtlMinutes, policy.SupportSession.TtlMinutes),
             RollbackIntent: ticket.RollbackExpected ? "rollback-prepared" : "forward-fix-only",
@@ -411,7 +414,35 @@ internal static class GuidedFixPlanner
                 $"ttl-minutes:{Math.Min(ticket.TtlMinutes, policy.SupportSession.TtlMinutes)}",
                 "operator-justification",
                 ticket.RollbackExpected ? "rollback-intent:prepared" : "rollback-intent:forward-fix"
-            ]);
+            ],
+            Trigger: trigger,
+            Signal: signal);
+    }
+
+    // Identify which signal caused the operator-scoped hand-off so "why escalated" is a
+    // stable code plus a concrete observation, not reconstructed from prose downstream.
+    private static (string Trigger, string Signal) ResolveEscalationTrigger(
+        SupportTicket ticket,
+        FaultMatch? matchedFault)
+    {
+        if (matchedFault is { RemediationScope: RemediationScope.WriteCapable })
+        {
+            return (
+                GuidedFixEscalation.MatchedFaultWriteRemediationTrigger,
+                $"matched fault `{matchedFault.ScenarioName}` ({matchedFault.FaultCategory}) at " +
+                $"{matchedFault.MatchScore:F0}% confidence requires write-capable remediation");
+        }
+
+        if (ticket.Severity is SupportSeverity.High or SupportSeverity.Critical)
+        {
+            return (
+                GuidedFixEscalation.SeverityEscalationTrigger,
+                $"{ticket.Severity.ToConfigValue()}-severity ticket requested operator-scoped access");
+        }
+
+        return (
+            GuidedFixEscalation.AccessRequestedTrigger,
+            $"operator-scoped access requested via `{ticket.AllowedAccessMode}` for the ticket");
     }
 
     private static string BuildDiagnosisSummary(

@@ -113,7 +113,12 @@ internal sealed class SupportGateway : IDisposable
                     justification = diagnosis.Escalation.Justification,
                     accessScope = diagnosis.Escalation.AccessScope,
                     ttlMinutes = diagnosis.Escalation.TtlMinutes,
-                    rollbackIntent = diagnosis.Escalation.RollbackIntent
+                    rollbackIntent = diagnosis.Escalation.RollbackIntent,
+                    // Escalation rationale: the signal/trigger that caused the hand-off, so
+                    // honua-support and the console can render "why escalated" alongside the
+                    // diagnosis without re-deriving it from the justification sentence.
+                    trigger = diagnosis.Escalation.Trigger,
+                    signal = diagnosis.Escalation.Signal
                 }
         };
 

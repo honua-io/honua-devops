@@ -29,4 +29,13 @@ internal sealed record GuidedFixEscalation(
     string AccessScope,
     int TtlMinutes,
     string RollbackIntent,
-    IReadOnlyList<string> RequiredApprovalContext);
+    IReadOnlyList<string> RequiredApprovalContext,
+    string Trigger = GuidedFixEscalation.AccessRequestedTrigger,
+    string Signal = "operator-scoped access requested for the ticket")
+{
+    // Stable machine codes for the signal that caused the hand-off, so honua-support and
+    // Console can render "why escalated" without parsing the justification sentence.
+    internal const string MatchedFaultWriteRemediationTrigger = "matched-fault-write-remediation";
+    internal const string SeverityEscalationTrigger = "severity-escalation";
+    internal const string AccessRequestedTrigger = "access-requested";
+}

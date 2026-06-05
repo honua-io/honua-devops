@@ -89,6 +89,11 @@ internal static class CapabilityToolset
                 "process_pending_tickets",
                 "Pull pending support tickets from honua-support, run diagnosis against the fault catalog, and post results back."),
             CreateTool(
+                (string ticketId, string severity, string environment, string symptoms, string requestedAction, string allowedAccessMode, int ttlMinutes, bool rollbackExpected, string attachedEvidence)
+                    => toolkit.BuildSupportTicketConsoleViewAsync(ticketId, severity, environment, symptoms, requestedAction, allowedAccessMode, ttlMinutes, rollbackExpected, attachedEvidence),
+                "get_support_ticket_console_view",
+                "Build a Console-facing view of a support ticket's L2/L3 trust state: live delegated-session (access mode disabled/read-only/operator-scoped, effective TTL, absolute expiry, customer-visible and active flags), the DiagnosisScorecard (pass/fail, composite score, per-criterion checklist, failure modes, evidence), the escalation rationale (which signal/trigger caused the operator-scoped hand-off, or not-escalated), and audit-journal references. Read-only projection: runs the same diagnosis as triage but never opens a session, posts a diagnosis, or escalates."),
+            CreateTool(
                 (string service, string environment, string timeframe, string symptoms, string edition)
                     => toolkit.HonuaDiagnoseAsync(service, environment, timeframe, symptoms, edition),
                 "honua_diagnose",

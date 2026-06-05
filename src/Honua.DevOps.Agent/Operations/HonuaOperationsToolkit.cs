@@ -1,6 +1,7 @@
 using System.ComponentModel;
 
 using Honua.DevOps.Agent.Operations.Audit;
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -1376,6 +1377,138 @@ internal sealed class HonuaOperationsToolkit(
             ValidationChecks: validationChecks,
             Risks: risks,
             Evidence: BuildGuidedFixEvidence(ticket, guidedFix, backendResult));
+    }
+
+    [Description("Build a Console-facing view of a support ticket's L2/L3 trust state: the live delegated-session (access mode disabled/read-only/operator-scoped, effective TTL, absolute expiry, customer-visible flag, active flag), the DiagnosisScorecard (pass/fail, composite score, per-criterion checklist, failure modes), the escalation rationale (which signal/trigger caused the operator-scoped hand-off, or not-escalated), and audit-journal references. Read-only projection: runs the same diagnosis as triage but never opens a session, posts a diagnosis, or escalates.")]
+    public async Task<OperationResponse> BuildSupportTicketConsoleViewAsync(
+        string ticketId,
+        string severity,
+        string environment,
+        string symptoms,
+        string requestedAction,
+        string allowedAccessMode,
+        int ttlMinutes,
+        bool rollbackExpected,
+        string attachedEvidence,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedTicketId = SanitizePayloadValue(ticketId, "ticket ID");
+        SupportSeverity parsedSeverity = SupportSeverityExtensions.Parse(severity);
+        string normalizedEnvironment = Normalize(environment, "unknown");
+        string normalizedSymptoms = SanitizeFreeText(symptoms, string.Empty);
+        string normalizedRequestedAction = SanitizeFreeText(requestedAction, "diagnose");
+        string normalizedAccessMode = Normalize(allowedAccessMode, "read-only");
+        int effectiveTtl = ttlMinutes is < 1 or > 1440 ? EffectivePolicy.SupportSession.TtlMinutes : ttlMinutes;
+        string normalizedEvidence = SanitizeFreeText(attachedEvidence, string.Empty);
+
+        SupportTicket ticket = new(
+            TicketId: normalizedTicketId,
+            Service: "support-triage",
+            Severity: parsedSeverity,
+            Environment: normalizedEnvironment,
+            Symptoms: normalizedSymptoms,
+            RequestedAction: normalizedRequestedAction,
+            AllowedAccessMode: normalizedAccessMode,
+            TtlMinutes: effectiveTtl,
+            RollbackExpected: rollbackExpected,
+            AttachedEvidence: normalizedEvidence);
+
+        BackendCallResult backendResult = await gateway.RequestTroubleshootAsync(
+            "support-triage",
+            normalizedEnvironment,
+            normalizedSymptoms,
+            normalizedRequestedAction,
+            $"ticket:{normalizedTicketId}",
+            cancellationToken);
+
+        GuidedFixResult guidedFix = GuidedFixPlanner.Build(
+            ticket,
+            EffectivePolicy,
+            runtime.ExecutionMode,
+            runtime.ExecutionTier,
+            backendResult);
+
+        OperationEvidence operationEvidence = BuildGuidedFixEvidence(ticket, guidedFix, backendResult);
+        DiagnosisScorecard scorecard = BuildSupportDiagnosisScorecard(ticket, guidedFix, backendResult);
+
+        string timestamp = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        DateTimeOffset establishedAt = DateTimeOffset.UtcNow;
+        string auditScope = operationEvidence.Scope;
+
+        List<EvidenceRef> scorecardEvidence =
+        [
+            new EvidenceRef(
+                Type: "backend-troubleshoot",
+                Source: "honua-server",
+                RawRef: backendResult.Endpoint,
+                Url: backendResult.Endpoint,
+                Summary: $"{backendResult.Detail} :: {backendResult.PayloadPreview}",
+                CapturedAt: timestamp,
+                Sensitivity: EvidenceSensitivity.Internal),
+            SupportSessionBridge.AuditReference(auditScope, EffectivePolicy.AuditHookTarget, timestamp)
+        ];
+
+        DelegatedSessionState session = SupportSessionBridge.BuildSessionState(
+            ticket,
+            guidedFix,
+            EffectivePolicy,
+            operationEvidence.SupportSessionTtlMinutes,
+            establishedAt);
+        DiagnosisScorecardBridge scorecardBridge = SupportSessionBridge.BuildScorecard(
+            scorecard,
+            guidedFix.Confidence,
+            scorecardEvidence);
+        EscalationRationale escalationRationale = SupportSessionBridge.BuildEscalationRationale(guidedFix);
+
+        SupportTicketConsoleView view = new(
+            TicketId: normalizedTicketId,
+            Posture: guidedFix.Mode.ToConfigValue(),
+            DiagnosisSummary: guidedFix.DiagnosisSummary,
+            Session: session,
+            Scorecard: scorecardBridge,
+            Escalation: escalationRationale,
+            AuditReferences: [SupportSessionBridge.AuditReference(auditScope, EffectivePolicy.AuditHookTarget, timestamp)],
+            CreatedAt: timestamp);
+
+        ConsoleBridgeProjection projection = new("support-ticket-view", SupportTicket: view);
+
+        List<string> findings =
+        [
+            $"Ticket: {normalizedTicketId} ({parsedSeverity.ToConfigValue()}) in `{normalizedEnvironment}`.",
+            $"Posture: {view.Posture}.",
+            $"Session: access={session.AccessMode}, active={session.Active}, ttl={session.TtlMinutes}m, expires={session.ExpiresAt ?? "n/a"}, customer-visible={session.CustomerVisible}.",
+            $"Scorecard: {scorecardBridge.OverallResult} (composite {scorecardBridge.CompositeScore}, confidence {scorecardBridge.Confidence}).",
+            $"Escalated: {escalationRationale.Escalated} (trigger {escalationRationale.Trigger}).",
+            $"Why escalated: {escalationRationale.Signal}",
+            $"Audit scope: {auditScope}."
+        ];
+        if (scorecardBridge.FailureModes.Count > 0)
+        {
+            findings.Add($"Scorecard failure modes: {string.Join(", ", scorecardBridge.FailureModes)}.");
+        }
+
+        return new OperationResponse(
+            Status: scorecardBridge.OverallResult,
+            Summary: $"Console view for ticket {normalizedTicketId}: {view.Posture} posture, scorecard {scorecardBridge.OverallResult}, escalated={escalationRationale.Escalated}.",
+            Findings: findings,
+            Actions:
+            [
+                "Read-only projection of trust state; no session is opened, no diagnosis is posted, and no escalation occurs here.",
+                "Route any session approval through the governed support-session path with explicit operator sign-off.",
+                $"Required approval context: {string.Join(", ", escalationRationale.RequiredApprovalContext.DefaultIfEmpty("none"))}."
+            ],
+            ValidationChecks:
+            [
+                "session-state-derived-from-policy",
+                "scorecard-pass-fail-stable",
+                "escalation-rationale-trigger-coded"
+            ],
+            Risks:
+            [
+                "Session TTL/expiry reflect policy at read time; an approved live session can expire before action.",
+                "Scorecard is a heuristic over telemetry completeness and does not replace operator judgment."
+            ],
+            ConsoleBridge: projection);
     }
 
     private OperationEvidence BuildGuidedFixEvidence(

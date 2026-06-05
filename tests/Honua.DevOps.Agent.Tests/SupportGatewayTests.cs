@@ -153,7 +153,9 @@ public class SupportGatewayTests
                 AccessScope: "operator-scoped",
                 TtlMinutes: 30,
                 RollbackIntent: "rollback-prepared",
-                RequiredApprovalContext: ["approver-identity"]));
+                RequiredApprovalContext: ["approver-identity"],
+                Trigger: GuidedFixEscalation.SeverityEscalationTrigger,
+                Signal: "critical-severity ticket requested operator-scoped access"));
 
         BackendCallResult result = await gateway.PostDiagnosisAsync("T-002", diagnosis);
 
@@ -165,6 +167,11 @@ public class SupportGatewayTests
         Assert.Equal("operator-scoped", escalation.GetProperty("accessScope").GetString());
         Assert.Equal(30, escalation.GetProperty("ttlMinutes").GetInt32());
         Assert.Equal("rollback-prepared", escalation.GetProperty("rollbackIntent").GetString());
+        // Escalation rationale: "why escalated" trigger + signal travel with the diagnosis.
+        Assert.Equal("severity-escalation", escalation.GetProperty("trigger").GetString());
+        Assert.Equal(
+            "critical-severity ticket requested operator-scoped access",
+            escalation.GetProperty("signal").GetString());
     }
 
     [Fact]
