@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.Troubleshooting;
 
@@ -85,6 +86,7 @@ internal sealed class SupportGateway : IDisposable
         GuidedFixResult diagnosis,
         OperationEvidence? evidence = null,
         DiagnosisScorecard? diagnosisScorecard = null,
+        SupportTicketTrust? trust = null,
         CancellationToken cancellationToken = default)
     {
         if (configuration.SupportApiBaseUri is null)
@@ -119,7 +121,13 @@ internal sealed class SupportGateway : IDisposable
                     // diagnosis without re-deriving it from the justification sentence.
                     trigger = diagnosis.Escalation.Trigger,
                     signal = diagnosis.Escalation.Signal
-                }
+                },
+            // Structured TRUST relay (honua-support#23): the already-computed #70
+            // projections (delegated session, scorecard, escalation rationale) travel under
+            // a single optional `trust` object so honua-support can persist them verbatim and
+            // surface them to the console without re-deriving from prose. Omitted entirely
+            // when no projection is supplied so the payload stays backward compatible.
+            trust = BuildTrustPayload(trust)
         };
 
         return await SendAsync(
@@ -128,6 +136,71 @@ internal sealed class SupportGateway : IDisposable
             payload,
             cancellationToken);
     }
+
+    // Map the #70 console projections onto the shared TRUST wire contract honua-support
+    // consumes verbatim. Every field is optional: any sub-object is omitted when its source
+    // projection is absent, and the whole object is null when no trust state was supplied.
+    private static object? BuildTrustPayload(SupportTicketTrust? trust)
+    {
+        if (trust is null ||
+            (trust.Session is null && trust.Scorecard is null && trust.Escalation is null))
+        {
+            return null;
+        }
+
+        return new
+        {
+            delegatedSession = trust.Session is null
+                ? null
+                : new
+                {
+                    mode = trust.Session.AccessMode,
+                    establishedAt = trust.Session.EstablishedAt,
+                    expiresAt = trust.Session.ExpiresAt,
+                    customerVisible = trust.Session.CustomerVisible,
+                    active = trust.Session.Active
+                },
+            scorecard = trust.Scorecard is null
+                ? null
+                : new
+                {
+                    overallResult = trust.Scorecard.OverallResult,
+                    score = trust.Scorecard.CompositeScore,
+                    confidence = trust.Scorecard.Confidence,
+                    criteria = BuildScorecardCriteria(trust.Scorecard),
+                    failureModes = trust.Scorecard.FailureModes,
+                    evidenceRefs = trust.Scorecard.Evidence
+                        .Select(static reference => reference.RawRef ?? reference.Url ?? reference.Summary)
+                        .ToArray()
+                },
+            escalation = trust.Escalation is null
+                ? null
+                : new
+                {
+                    escalated = trust.Escalation.Escalated,
+                    trigger = trust.Escalation.Trigger,
+                    signal = trust.Escalation.Signal,
+                    justification = trust.Escalation.Justification,
+                    accessScope = trust.Escalation.AccessScope,
+                    ttlMinutes = trust.Escalation.TtlMinutes,
+                    rollbackIntent = trust.Escalation.RollbackIntent
+                }
+        };
+    }
+
+    // Flatten the per-criterion booleans the scorecard bridge already computed into the
+    // { name, passed } list the wire contract carries, preserving the scorecard's own
+    // criterion vocabulary so honua-support renders a checklist without re-deriving it.
+    private static IReadOnlyList<object> BuildScorecardCriteria(DiagnosisScorecardBridge scorecard)
+        =>
+        [
+            new { name = "diagnosis-correct", passed = scorecard.DiagnosisCorrect },
+            new { name = "remediation-safe", passed = scorecard.RemediationSafe },
+            new { name = "policy-compliant", passed = scorecard.PolicyCompliant },
+            new { name = "rollback-guidance-correct", passed = scorecard.RollbackGuidanceCorrect },
+            new { name = "recovery-verified", passed = scorecard.RecoveryVerified },
+            new { name = "service-health-restored", passed = scorecard.ServiceHealthRestored }
+        ];
 
     internal async Task<BackendCallResult> TriggerAutoBundleAsync(
         string ticketId,

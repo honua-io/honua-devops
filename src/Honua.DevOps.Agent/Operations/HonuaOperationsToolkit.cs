@@ -1760,11 +1760,44 @@ internal sealed class HonuaOperationsToolkit(
 
                 OperationEvidence evidence = BuildGuidedFixEvidence(ticket, guidedFix, backendResult);
                 DiagnosisScorecard scorecard = BuildSupportDiagnosisScorecard(ticket, guidedFix, backendResult);
+
+                // Relay the structured TRUST state (honua-support#23): reuse the already-
+                // computed #70 projections — delegated session, scorecard, escalation
+                // rationale — so honua-support can persist them and surface them to the
+                // console without re-deriving from prose. No new trust is computed here.
+                string trustTimestamp = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+                DateTimeOffset trustEstablishedAt = DateTimeOffset.UtcNow;
+                List<EvidenceRef> trustScorecardEvidence =
+                [
+                    new EvidenceRef(
+                        Type: "backend-troubleshoot",
+                        Source: "honua-server",
+                        RawRef: backendResult.Endpoint,
+                        Url: backendResult.Endpoint,
+                        Summary: $"{backendResult.Detail} :: {backendResult.PayloadPreview}",
+                        CapturedAt: trustTimestamp,
+                        Sensitivity: EvidenceSensitivity.Internal),
+                    SupportSessionBridge.AuditReference(evidence.Scope, EffectivePolicy.AuditHookTarget, trustTimestamp)
+                ];
+                DelegatedSessionState trustSession = SupportSessionBridge.BuildSessionState(
+                    ticket,
+                    guidedFix,
+                    EffectivePolicy,
+                    evidence.SupportSessionTtlMinutes,
+                    trustEstablishedAt);
+                DiagnosisScorecardBridge trustScorecard = SupportSessionBridge.BuildScorecard(
+                    scorecard,
+                    guidedFix.Confidence,
+                    trustScorecardEvidence);
+                EscalationRationale trustEscalation = SupportSessionBridge.BuildEscalationRationale(guidedFix);
+                SupportTicketTrust trust = new(trustSession, trustScorecard, trustEscalation);
+
                 BackendCallResult postResult = await supportGateway.PostDiagnosisAsync(
                     ticketId,
                     guidedFix,
                     evidence,
                     scorecard,
+                    trust,
                     cancellationToken);
 
                 processed++;
