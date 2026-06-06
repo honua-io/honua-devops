@@ -9,6 +9,11 @@ internal sealed class SupportGateway : IDisposable
 {
     private const string OperatorRoleHeader = "X-Operator-Role";
 
+    // Pinned schema version for the support-context-v1 contract carried on the auto-bundle
+    // request body (honua-support docs/contracts/support-context-v1.schema.json). Additive
+    // fields keep this at "1.0"; bump only on a breaking change.
+    private const string SupportContextSchemaVersion = "1.0";
+
     private readonly BackendConfiguration configuration;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
@@ -206,6 +211,7 @@ internal sealed class SupportGateway : IDisposable
         string ticketId,
         string? instanceUrl = null,
         string? apiKey = null,
+        SupportContext? context = null,
         CancellationToken cancellationToken = default)
     {
         if (configuration.SupportApiBaseUri is null)
@@ -239,9 +245,113 @@ internal sealed class SupportGateway : IDisposable
         return await SendAsync(
             HttpMethod.Post,
             relativePath,
-            payload: new { instanceUrl, apiKey },
+            BuildAutoBundlePayload(instanceUrl, apiKey, context),
             cancellationToken);
     }
+
+    // Build the auto-bundle request body as the support-context-v1 superset
+    // (honua-support docs/contracts/support-context-v1.schema.json). schemaVersion is the
+    // single required field; every other property is emitted only when known so honua-support
+    // never receives a fabricated value. instanceUrl + apiKey keep the legacy forwarding
+    // posture working: instanceUrl falls back to the context's value, and the forwarded key is
+    // carried both as the contract's `scopedKey` (read-only telemetry key, treated as a
+    // secret) and as the legacy `apiKey` field so an older honua-support stays compatible.
+    private static object BuildAutoBundlePayload(string? instanceUrl, string? apiKey, SupportContext? context)
+    {
+        string? effectiveInstanceUrl = Coalesce(instanceUrl, context?.InstanceUrl);
+        string? scopedKey = Coalesce(apiKey, context?.ScopedKey);
+
+        Dictionary<string, object?> payload = new(StringComparer.Ordinal)
+        {
+            ["schemaVersion"] = SupportContextSchemaVersion
+        };
+
+        AddIfPresent(payload, "user", BuildUser(context?.User));
+        AddIfPresent(payload, "tenant", BuildTenant(context?.Tenant));
+        AddIfPresent(payload, "envKind", Trimmed(context?.EnvKind));
+        AddIfPresent(payload, "appVersion", Trimmed(context?.AppVersion));
+        AddIfPresent(payload, "commit", Trimmed(context?.Commit));
+        AddIfPresent(payload, "route", Trimmed(context?.Route));
+        AddIfPresent(payload, "recentErrors", BuildRecentErrors(context?.RecentErrors));
+        AddIfPresent(payload, "instanceUrl", Trimmed(effectiveInstanceUrl));
+        // scopedKey is the contract's canonical telemetry-key field; apiKey preserves the
+        // existing wire field so the request stays backward compatible. Both carry the same
+        // forwarded value and are omitted when no key is available.
+        AddIfPresent(payload, "scopedKey", Trimmed(scopedKey));
+        AddIfPresent(payload, "apiKey", Trimmed(scopedKey));
+
+        return payload;
+    }
+
+    private static object? BuildUser(SupportContextUser? user)
+    {
+        if (user is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, object?> result = new(StringComparer.Ordinal);
+        AddIfPresent(result, "id", Trimmed(user.Id));
+        AddIfPresent(result, "email", Trimmed(user.Email));
+        AddIfPresent(result, "displayName", Trimmed(user.DisplayName));
+        return result.Count == 0 ? null : result;
+    }
+
+    private static object? BuildTenant(SupportContextTenant? tenant)
+    {
+        if (tenant is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, object?> result = new(StringComparer.Ordinal);
+        AddIfPresent(result, "id", Trimmed(tenant.Id));
+        AddIfPresent(result, "name", Trimmed(tenant.Name));
+        return result.Count == 0 ? null : result;
+    }
+
+    private static object? BuildRecentErrors(IReadOnlyList<SupportContextRecentError>? recentErrors)
+    {
+        if (recentErrors is null || recentErrors.Count == 0)
+        {
+            return null;
+        }
+
+        List<object> items = [];
+        foreach (SupportContextRecentError error in recentErrors)
+        {
+            Dictionary<string, object?> item = new(StringComparer.Ordinal);
+            AddIfPresent(item, "timestamp", Trimmed(error.Timestamp));
+            AddIfPresent(item, "message", Trimmed(error.Message));
+            AddIfPresent(item, "correlationId", Trimmed(error.CorrelationId));
+            AddIfPresent(item, "path", Trimmed(error.Path));
+            if (error.StatusCode is int statusCode and >= 100 and <= 599)
+            {
+                item["statusCode"] = statusCode;
+            }
+
+            if (item.Count > 0)
+            {
+                items.Add(item);
+            }
+        }
+
+        return items.Count == 0 ? null : items;
+    }
+
+    private static void AddIfPresent(Dictionary<string, object?> target, string key, object? value)
+    {
+        if (value is not null)
+        {
+            target[key] = value;
+        }
+    }
+
+    private static string? Trimmed(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? Coalesce(string? primary, string? fallback)
+        => string.IsNullOrWhiteSpace(primary) ? fallback : primary;
 
     private static bool TryValidateInstanceHost(
         string? instanceUrl,

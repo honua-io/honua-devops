@@ -7,7 +7,7 @@ internal static partial class Redaction
     private const string Placeholder = "<redacted>";
 
     [GeneratedRegex(
-        @"(?i)""?\b(api[_-]?key|x[_-]?api[_-]?key|authorization|access[_-]?token|token|secret|password|passwd)\b""?\s*(?<sep>[:=])\s*(?<value>""[^""\r\n]*""|'[^'\r\n]*'|[^,;&\s""']+)",
+        @"(?i)""?\b(api[_-]?key|x[_-]?api[_-]?key|scoped[_-]?key|authorization|access[_-]?token|token|secret|password|passwd)\b""?\s*(?<sep>[:=])\s*(?<value>""[^""\r\n]*""|'[^'\r\n]*'|[^,;&\s""']+)",
         RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveKeyValuePattern();
 
