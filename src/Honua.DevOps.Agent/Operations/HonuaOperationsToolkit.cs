@@ -1736,10 +1736,17 @@ internal sealed class HonuaOperationsToolkit(
                 BackendCallResult? autoBundleResult = null;
                 if (!string.IsNullOrWhiteSpace(instanceUrl))
                 {
+                    // Adopt the support-context-v1 superset (honua-console#170): carry the
+                    // structured context the console persisted on the ticket plus what devops
+                    // knows from triage (tenant/env, instanceUrl, the forwarded read-only key)
+                    // so honua-support's collector can scope the auto-bundle. instanceUrl + the
+                    // forwarded key stay populated for backward compatibility.
+                    SupportContext autoBundleContext = BuildAutoBundleContext(ticketElement, environment);
                     autoBundleResult = await supportGateway.TriggerAutoBundleAsync(
                         ticketId,
                         instanceUrl,
                         supportGateway.Configuration.SupportAutoBundleApiKey,
+                        autoBundleContext,
                         cancellationToken);
                 }
 
@@ -1961,6 +1968,176 @@ internal sealed class HonuaOperationsToolkit(
 
     private static string Normalize(string? value, string fallback)
         => DeploymentInputs.Normalize(value, fallback);
+
+    // Project a honua-support ticket onto the support-context-v1 superset (honua-console#170).
+    // Prefer the structured `context` block the console persisted on the ticket; fall back to
+    // the ticket's own top-level fields for what the console did not supply, and map the
+    // triage-resolved `environment` onto the contract's envKind enum. Only fields devops
+    // actually knows are populated — absent values are left null so SupportGateway omits them.
+    private static SupportContext BuildAutoBundleContext(
+        System.Text.Json.JsonElement ticketElement,
+        string environment)
+    {
+        bool hasContext = ticketElement.TryGetProperty("context", out System.Text.Json.JsonElement contextEl)
+            && contextEl.ValueKind == System.Text.Json.JsonValueKind.Object;
+
+        string? ContextString(string name)
+            => hasContext ? ReadString(contextEl, name) : null;
+
+        string? envKind = ContextString("envKind") ?? MapEnvKind(environment);
+        string? appVersion = ContextString("appVersion") ?? ReadString(ticketElement, "appVersion");
+        string? commit = ContextString("commit") ?? ReadString(ticketElement, "commit");
+        string? route = ContextString("route") ?? ReadString(ticketElement, "route");
+
+        SupportContextUser? user = null;
+        SupportContextTenant? tenant = null;
+        IReadOnlyList<SupportContextRecentError>? recentErrors = null;
+        if (hasContext)
+        {
+            user = BuildContextUser(contextEl);
+            tenant = BuildContextTenant(contextEl);
+            recentErrors = BuildContextRecentErrors(contextEl);
+        }
+
+        // Fall back to a top-level ticket `tenant` object/string when the console context did
+        // not carry one, so the owning customer still rides along when honua-support knows it.
+        tenant ??= BuildTopLevelTenant(ticketElement);
+
+        return new SupportContext(
+            User: user,
+            Tenant: tenant,
+            EnvKind: envKind,
+            AppVersion: appVersion,
+            Commit: commit,
+            Route: route,
+            RecentErrors: recentErrors,
+            InstanceUrl: ContextString("instanceUrl"),
+            ScopedKey: null);
+    }
+
+    private static SupportContextUser? BuildContextUser(System.Text.Json.JsonElement contextEl)
+    {
+        if (!contextEl.TryGetProperty("user", out System.Text.Json.JsonElement userEl)
+            || userEl.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        string? id = ReadString(userEl, "id");
+        string? email = ReadString(userEl, "email");
+        string? displayName = ReadString(userEl, "displayName");
+        if (id is null && email is null && displayName is null)
+        {
+            return null;
+        }
+
+        return new SupportContextUser(id, email, displayName);
+    }
+
+    private static SupportContextTenant? BuildContextTenant(System.Text.Json.JsonElement contextEl)
+    {
+        if (!contextEl.TryGetProperty("tenant", out System.Text.Json.JsonElement tenantEl)
+            || tenantEl.ValueKind != System.Text.Json.JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        string? id = ReadString(tenantEl, "id");
+        string? name = ReadString(tenantEl, "name");
+        return id is null && name is null ? null : new SupportContextTenant(id, name);
+    }
+
+    private static SupportContextTenant? BuildTopLevelTenant(System.Text.Json.JsonElement ticketElement)
+    {
+        if (ticketElement.TryGetProperty("tenant", out System.Text.Json.JsonElement tenantEl))
+        {
+            if (tenantEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                string? id = ReadString(tenantEl, "id");
+                string? name = ReadString(tenantEl, "name");
+                return id is null && name is null ? null : new SupportContextTenant(id, name);
+            }
+
+            if (tenantEl.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                string? value = tenantEl.GetString();
+                return string.IsNullOrWhiteSpace(value) ? null : new SupportContextTenant(Id: value);
+            }
+        }
+
+        return ReadString(ticketElement, "tenantId") is { } tenantId
+            ? new SupportContextTenant(Id: tenantId)
+            : null;
+    }
+
+    private static IReadOnlyList<SupportContextRecentError>? BuildContextRecentErrors(System.Text.Json.JsonElement contextEl)
+    {
+        if (!contextEl.TryGetProperty("recentErrors", out System.Text.Json.JsonElement errorsEl)
+            || errorsEl.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        List<SupportContextRecentError> errors = [];
+        foreach (System.Text.Json.JsonElement errorEl in errorsEl.EnumerateArray())
+        {
+            if (errorEl.ValueKind != System.Text.Json.JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            string? timestamp = ReadString(errorEl, "timestamp");
+            string? message = ReadString(errorEl, "message");
+            string? correlationId = ReadString(errorEl, "correlationId");
+            string? path = ReadString(errorEl, "path");
+            int? statusCode = errorEl.TryGetProperty("statusCode", out System.Text.Json.JsonElement statusEl)
+                && statusEl.ValueKind == System.Text.Json.JsonValueKind.Number
+                && statusEl.TryGetInt32(out int parsedStatus)
+                    ? parsedStatus
+                    : null;
+
+            if (timestamp is null && message is null && correlationId is null && path is null && statusCode is null)
+            {
+                continue;
+            }
+
+            errors.Add(new SupportContextRecentError(timestamp, message, correlationId, path, statusCode));
+        }
+
+        return errors.Count == 0 ? null : errors;
+    }
+
+    private static string? ReadString(System.Text.Json.JsonElement element, string name)
+        => element.TryGetProperty(name, out System.Text.Json.JsonElement value)
+            && value.ValueKind == System.Text.Json.JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(value.GetString())
+                ? value.GetString()!.Trim()
+                : null;
+
+    // Map a free-text ticket environment onto the support-context-v1 envKind enum
+    // (saas | on-prem | dedicated | dev | staging | production | unknown). Drives whether the
+    // honua-support collector pulls telemetry server-side or requests an on-prem bundle.
+    // Returns null for an absent/"unknown" environment so the field is omitted rather than
+    // asserting a topology devops cannot confirm.
+    private static string? MapEnvKind(string? environment)
+    {
+        if (string.IsNullOrWhiteSpace(environment))
+        {
+            return null;
+        }
+
+        return environment.Trim().ToLowerInvariant() switch
+        {
+            "saas" => "saas",
+            "on-prem" or "onprem" or "on_prem" => "on-prem",
+            "dedicated" => "dedicated",
+            "dev" or "development" => "dev",
+            "staging" or "stage" => "staging",
+            "prod" or "production" => "production",
+            "unknown" => null,
+            _ => null
+        };
+    }
 
     private string[] ParseEnvironments(string value)
         => DeploymentInputs.ParseEnvironments(value, runtime.AllowedEnvironments);

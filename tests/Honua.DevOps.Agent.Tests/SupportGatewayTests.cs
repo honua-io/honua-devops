@@ -449,8 +449,136 @@ public class SupportGatewayTests
         Assert.Equal("POST", captured.Method);
         Assert.Contains("/api/v1/tickets/T-005/auto-bundle", captured.Uri, StringComparison.Ordinal);
         using JsonDocument requestJson = JsonDocument.Parse(captured.Body!);
+        // support-context-v1: schemaVersion is always present; instanceUrl + the forwarded key
+        // stay populated (apiKey for backward compatibility, scopedKey as the contract field).
+        Assert.Equal("1.0", requestJson.RootElement.GetProperty("schemaVersion").GetString());
         Assert.Equal("http://localhost:8080", requestJson.RootElement.GetProperty("instanceUrl").GetString());
         Assert.Equal("admin-key", requestJson.RootElement.GetProperty("apiKey").GetString());
+        Assert.Equal("admin-key", requestJson.RootElement.GetProperty("scopedKey").GetString());
+    }
+
+    [Fact]
+    public async Task TriggerAutoBundleAsync_EmitsSupportContextV1Superset()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        BackendConfiguration config = CreateBackendConfiguration(
+            autoBundleEnabled: true,
+            autoBundleAllowedHosts: ["localhost"]);
+        using SupportGateway gateway = new(config, httpClient);
+
+        SupportContext context = new(
+            User: new SupportContextUser(Id: "u-1", Email: "ops@example.com", DisplayName: "Ops"),
+            Tenant: new SupportContextTenant(Id: "tenant-7", Name: "Acme"),
+            EnvKind: "production",
+            AppVersion: "2.4.1",
+            Commit: "abc123",
+            Route: "/admin/layers",
+            RecentErrors:
+            [
+                new SupportContextRecentError(
+                    Timestamp: "2026-06-05T12:00:00Z",
+                    Message: "boom",
+                    CorrelationId: "corr-1",
+                    Path: "/api/v1/admin/layers",
+                    StatusCode: 500)
+            ],
+            ScopedKey: "telemetry-key");
+
+        BackendCallResult result = await gateway.TriggerAutoBundleAsync(
+            "T-006",
+            "http://localhost:8080",
+            apiKey: null,
+            context);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        using JsonDocument doc = JsonDocument.Parse(captured.Body!);
+        JsonElement root = doc.RootElement;
+
+        Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("u-1", root.GetProperty("user").GetProperty("id").GetString());
+        Assert.Equal("ops@example.com", root.GetProperty("user").GetProperty("email").GetString());
+        Assert.Equal("Ops", root.GetProperty("user").GetProperty("displayName").GetString());
+        Assert.Equal("tenant-7", root.GetProperty("tenant").GetProperty("id").GetString());
+        Assert.Equal("Acme", root.GetProperty("tenant").GetProperty("name").GetString());
+        Assert.Equal("production", root.GetProperty("envKind").GetString());
+        Assert.Equal("2.4.1", root.GetProperty("appVersion").GetString());
+        Assert.Equal("abc123", root.GetProperty("commit").GetString());
+        Assert.Equal("/admin/layers", root.GetProperty("route").GetString());
+        Assert.Equal("http://localhost:8080", root.GetProperty("instanceUrl").GetString());
+
+        JsonElement error = Assert.Single(root.GetProperty("recentErrors").EnumerateArray().ToList());
+        Assert.Equal("2026-06-05T12:00:00Z", error.GetProperty("timestamp").GetString());
+        Assert.Equal("boom", error.GetProperty("message").GetString());
+        Assert.Equal("corr-1", error.GetProperty("correlationId").GetString());
+        Assert.Equal("/api/v1/admin/layers", error.GetProperty("path").GetString());
+        Assert.Equal(500, error.GetProperty("statusCode").GetInt32());
+
+        // The forwarded telemetry key rides both the contract field and the legacy field.
+        Assert.Equal("telemetry-key", root.GetProperty("scopedKey").GetString());
+        Assert.Equal("telemetry-key", root.GetProperty("apiKey").GetString());
+    }
+
+    [Fact]
+    public async Task TriggerAutoBundleAsync_OmitsAbsentContextFields()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        BackendConfiguration config = CreateBackendConfiguration(
+            autoBundleEnabled: true,
+            autoBundleAllowedHosts: ["localhost"]);
+        using SupportGateway gateway = new(config, httpClient);
+
+        // No context and no forwarded key: only schemaVersion + instanceUrl are present, and no
+        // key fields are fabricated.
+        BackendCallResult result = await gateway.TriggerAutoBundleAsync(
+            "T-007",
+            "http://localhost:8080",
+            apiKey: null,
+            context: null);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        using JsonDocument doc = JsonDocument.Parse(captured.Body!);
+        JsonElement root = doc.RootElement;
+
+        Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("http://localhost:8080", root.GetProperty("instanceUrl").GetString());
+        Assert.False(root.TryGetProperty("user", out _));
+        Assert.False(root.TryGetProperty("tenant", out _));
+        Assert.False(root.TryGetProperty("envKind", out _));
+        Assert.False(root.TryGetProperty("appVersion", out _));
+        Assert.False(root.TryGetProperty("recentErrors", out _));
+        Assert.False(root.TryGetProperty("scopedKey", out _));
+        Assert.False(root.TryGetProperty("apiKey", out _));
+    }
+
+    [Fact]
+    public async Task TriggerAutoBundleAsync_FallsBackToContextInstanceUrl()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        BackendConfiguration config = CreateBackendConfiguration(
+            autoBundleEnabled: true,
+            autoBundleAllowedHosts: ["localhost"]);
+        using SupportGateway gateway = new(config, httpClient);
+
+        // The explicit instanceUrl arg gates host validation; the context can also carry it and
+        // is used when the arg is empty (both resolve to the same allowlisted host here).
+        SupportContext context = new(InstanceUrl: "http://localhost:8080", ScopedKey: "ctx-key");
+
+        BackendCallResult result = await gateway.TriggerAutoBundleAsync(
+            "T-008",
+            "http://localhost:8080",
+            apiKey: null,
+            context);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        using JsonDocument doc = JsonDocument.Parse(captured.Body!);
+        Assert.Equal("http://localhost:8080", doc.RootElement.GetProperty("instanceUrl").GetString());
+        Assert.Equal("ctx-key", doc.RootElement.GetProperty("scopedKey").GetString());
     }
 
     [Fact]
@@ -613,7 +741,19 @@ public class SupportGatewayTests
                 allowedAccessMode = "read-only",
                 ttlMinutes = 60,
                 rollbackExpected = false,
-                instanceUrl = "http://localhost:8080"
+                instanceUrl = "http://localhost:8080",
+                context = new
+                {
+                    user = new { id = "u-9", email = "ops@acme.test", displayName = "Acme Ops" },
+                    tenant = new { id = "tenant-acme", name = "Acme" },
+                    appVersion = "3.1.0",
+                    commit = "deadbeef",
+                    route = "/admin/roads",
+                    recentErrors = new[]
+                    {
+                        new { timestamp = "2026-06-05T11:00:00Z", message = "pool exhausted", path = "/api/v1/roads", statusCode = 503 }
+                    }
+                }
             },
             new
             {
@@ -687,8 +827,23 @@ public class SupportGatewayTests
             supportHandler.CapturedRequests,
             r => r.Method == "POST" && r.Uri.Contains("/T-100/auto-bundle", StringComparison.Ordinal));
         using JsonDocument autoBundleJson = JsonDocument.Parse(autoBundlePost.Body!);
-        Assert.Equal("http://localhost:8080", autoBundleJson.RootElement.GetProperty("instanceUrl").GetString());
-        Assert.Equal("dedicated-bundle-key", autoBundleJson.RootElement.GetProperty("apiKey").GetString());
+        JsonElement autoBundleRoot = autoBundleJson.RootElement;
+        Assert.Equal("http://localhost:8080", autoBundleRoot.GetProperty("instanceUrl").GetString());
+        Assert.Equal("dedicated-bundle-key", autoBundleRoot.GetProperty("apiKey").GetString());
+        // The toolkit now adopts the support-context-v1 superset: schemaVersion is pinned, the
+        // forwarded dedicated key rides scopedKey, the console-supplied context block is
+        // forwarded verbatim, and the ticket's `prod` environment maps to envKind=production.
+        Assert.Equal("1.0", autoBundleRoot.GetProperty("schemaVersion").GetString());
+        Assert.Equal("dedicated-bundle-key", autoBundleRoot.GetProperty("scopedKey").GetString());
+        Assert.Equal("production", autoBundleRoot.GetProperty("envKind").GetString());
+        Assert.Equal("3.1.0", autoBundleRoot.GetProperty("appVersion").GetString());
+        Assert.Equal("deadbeef", autoBundleRoot.GetProperty("commit").GetString());
+        Assert.Equal("/admin/roads", autoBundleRoot.GetProperty("route").GetString());
+        Assert.Equal("tenant-acme", autoBundleRoot.GetProperty("tenant").GetProperty("id").GetString());
+        Assert.Equal("u-9", autoBundleRoot.GetProperty("user").GetProperty("id").GetString());
+        JsonElement recentError = Assert.Single(autoBundleRoot.GetProperty("recentErrors").EnumerateArray().ToList());
+        Assert.Equal(503, recentError.GetProperty("statusCode").GetInt32());
+        Assert.Equal("pool exhausted", recentError.GetProperty("message").GetString());
 
         CapturedRequest firstDiagnosisPost = Assert.Single(
             diagnosisPosts,
