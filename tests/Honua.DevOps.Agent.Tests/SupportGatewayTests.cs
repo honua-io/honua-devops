@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.Troubleshooting;
@@ -237,6 +238,195 @@ public class SupportGatewayTests
         Assert.Equal("support-triage:T-777", doc.RootElement.GetProperty("evidence").GetProperty("scope").GetString());
         Assert.Equal("FAULT-014", doc.RootElement.GetProperty("diagnosisScorecard").GetProperty("scenarioId").GetString());
         Assert.Equal("pass", doc.RootElement.GetProperty("diagnosisScorecard").GetProperty("overallResult").GetString());
+    }
+
+    [Fact]
+    public async Task PostDiagnosisAsync_OmitsTrustWhenNoTrustSupplied()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        GuidedFixResult diagnosis = new(
+            Mode: GuidedFixMode.ReadOnlyTriage,
+            DiagnosisSummary: "Test diagnosis summary",
+            Confidence: "high",
+            MissingEvidence: [],
+            RecommendedNextAction: "diagnosis-ready",
+            GuidedCommands: [],
+            ValidationSteps: [],
+            Escalation: null);
+
+        BackendCallResult result = await gateway.PostDiagnosisAsync("T-001", diagnosis);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        using JsonDocument doc = JsonDocument.Parse(captured.Body!);
+        // Backward compat: when no trust projection is supplied the whole object is null so
+        // honua-support's relay treats it as "no structured trust state".
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("trust").ValueKind);
+    }
+
+    [Fact]
+    public async Task PostDiagnosisAsync_RelaysStructuredTrustState()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        GuidedFixResult diagnosis = new(
+            Mode: GuidedFixMode.OperatorScoped,
+            DiagnosisSummary: "Operator-scoped remediation required.",
+            Confidence: "medium",
+            MissingEvidence: [],
+            RecommendedNextAction: "approval-required-escalation",
+            GuidedCommands: [],
+            ValidationSteps: [],
+            Escalation: new GuidedFixEscalation(
+                Justification: "Critical issue requires write remediation.",
+                AccessScope: "operator-scoped",
+                TtlMinutes: 30,
+                RollbackIntent: "rollback-prepared",
+                RequiredApprovalContext: ["approver-identity"],
+                Trigger: GuidedFixEscalation.MatchedFaultWriteRemediationTrigger,
+                Signal: "matched fault catalog entry requires write remediation"));
+
+        DelegatedSessionState session = new(
+            TicketId: "T-900",
+            AccessMode: DelegatedSessionAccess.OperatorScoped,
+            Posture: SupportPosture.OperatorScoped,
+            TtlMinutes: 30,
+            EstablishedAt: "2026-06-05T12:00:00.0000000Z",
+            ExpiresAt: "2026-06-05T12:30:00.0000000Z",
+            CustomerVisible: true,
+            Active: true,
+            RequiredApprovalContext: ["approver-identity"]);
+        DiagnosisScorecardBridge scorecard = new(
+            ScenarioId: "FAULT-014",
+            ScenarioName: "connection-pool exhaustion",
+            OverallResult: "fail",
+            CompositeScore: 71.25,
+            Confidence: "medium",
+            DiagnosisCorrect: true,
+            RemediationSafe: true,
+            PolicyCompliant: true,
+            RollbackGuidanceCorrect: true,
+            RecoveryVerified: false,
+            ServiceHealthRestored: false,
+            EvidenceQuality: 95,
+            FailureModes: ["unverified-recovery"],
+            Evidence:
+            [
+                new EvidenceRef(
+                    Type: "backend-troubleshoot",
+                    Source: "honua-server",
+                    RawRef: "http://localhost:8080/api/v1/admin/observability/errors",
+                    Url: "http://localhost:8080/api/v1/admin/observability/errors",
+                    Summary: "200 OK :: telemetry",
+                    CapturedAt: "2026-06-05T12:00:00.0000000Z",
+                    Sensitivity: EvidenceSensitivity.Internal)
+            ]);
+        EscalationRationale escalation = new(
+            Escalated: true,
+            Trigger: GuidedFixEscalation.MatchedFaultWriteRemediationTrigger,
+            Signal: "matched fault catalog entry requires write remediation",
+            Justification: "Critical issue requires write remediation.",
+            AccessScope: "operator-scoped",
+            TtlMinutes: 30,
+            RollbackIntent: "rollback-prepared",
+            RequiredApprovalContext: ["approver-identity"]);
+        SupportTicketTrust trust = new(session, scorecard, escalation);
+
+        BackendCallResult result = await gateway.PostDiagnosisAsync("T-900", diagnosis, evidence: null, diagnosisScorecard: null, trust);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        using JsonDocument doc = JsonDocument.Parse(captured.Body!);
+        JsonElement trustEl = doc.RootElement.GetProperty("trust");
+
+        JsonElement delegatedSession = trustEl.GetProperty("delegatedSession");
+        Assert.Equal("operator-scoped", delegatedSession.GetProperty("mode").GetString());
+        Assert.Equal("2026-06-05T12:00:00.0000000Z", delegatedSession.GetProperty("establishedAt").GetString());
+        Assert.Equal("2026-06-05T12:30:00.0000000Z", delegatedSession.GetProperty("expiresAt").GetString());
+        Assert.True(delegatedSession.GetProperty("customerVisible").GetBoolean());
+        Assert.True(delegatedSession.GetProperty("active").GetBoolean());
+
+        JsonElement scorecardEl = trustEl.GetProperty("scorecard");
+        Assert.Equal("fail", scorecardEl.GetProperty("overallResult").GetString());
+        Assert.Equal(71.25, scorecardEl.GetProperty("score").GetDouble());
+        Assert.Equal("medium", scorecardEl.GetProperty("confidence").GetString());
+        JsonElement criteria = scorecardEl.GetProperty("criteria");
+        Assert.Equal(6, criteria.GetArrayLength());
+        Assert.Contains(
+            criteria.EnumerateArray(),
+            criterion => criterion.GetProperty("name").GetString() == "recovery-verified"
+                && !criterion.GetProperty("passed").GetBoolean());
+        Assert.Contains(
+            criteria.EnumerateArray(),
+            criterion => criterion.GetProperty("name").GetString() == "diagnosis-correct"
+                && criterion.GetProperty("passed").GetBoolean());
+        Assert.Equal("unverified-recovery", scorecardEl.GetProperty("failureModes")[0].GetString());
+        Assert.Equal(
+            "http://localhost:8080/api/v1/admin/observability/errors",
+            scorecardEl.GetProperty("evidenceRefs")[0].GetString());
+
+        JsonElement escalationEl = trustEl.GetProperty("escalation");
+        Assert.True(escalationEl.GetProperty("escalated").GetBoolean());
+        Assert.Equal("matched-fault-write-remediation", escalationEl.GetProperty("trigger").GetString());
+        Assert.Equal(
+            "matched fault catalog entry requires write remediation",
+            escalationEl.GetProperty("signal").GetString());
+        Assert.Equal("Critical issue requires write remediation.", escalationEl.GetProperty("justification").GetString());
+        Assert.Equal("operator-scoped", escalationEl.GetProperty("accessScope").GetString());
+        Assert.Equal(30, escalationEl.GetProperty("ttlMinutes").GetInt32());
+        Assert.Equal("rollback-prepared", escalationEl.GetProperty("rollbackIntent").GetString());
+
+        // Backward compat: the flat escalation block the console already consumed is unchanged.
+        Assert.Equal(
+            "operator-scoped",
+            doc.RootElement.GetProperty("escalation").GetProperty("accessScope").GetString());
+    }
+
+    [Fact]
+    public async Task PostDiagnosisAsync_OmitsTrustSubObjectsThatAreAbsent()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using SupportGateway gateway = new(CreateBackendConfiguration(), httpClient);
+
+        GuidedFixResult diagnosis = new(
+            Mode: GuidedFixMode.ReadOnlyTriage,
+            DiagnosisSummary: "Read-only triage.",
+            Confidence: "low",
+            MissingEvidence: [],
+            RecommendedNextAction: "observe-only",
+            GuidedCommands: [],
+            ValidationSteps: [],
+            Escalation: null);
+
+        EscalationRationale escalation = new(
+            Escalated: false,
+            Trigger: "not-escalated",
+            Signal: "Ticket resolved to `read-only-triage`; no operator-scoped hand-off occurred.",
+            Justification: "Read-only triage.",
+            AccessScope: SupportPosture.ReadOnlyTriage,
+            TtlMinutes: 0,
+            RollbackIntent: "not-applicable",
+            RequiredApprovalContext: []);
+        // Only the escalation rationale is supplied: delegatedSession and scorecard must be
+        // emitted as null (omitted) rather than fabricated.
+        SupportTicketTrust trust = new(Session: null, Scorecard: null, Escalation: escalation);
+
+        BackendCallResult result = await gateway.PostDiagnosisAsync("T-901", diagnosis, evidence: null, diagnosisScorecard: null, trust);
+
+        Assert.True(result.IsSuccess);
+        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
+        using JsonDocument doc = JsonDocument.Parse(captured.Body!);
+        JsonElement trustEl = doc.RootElement.GetProperty("trust");
+        Assert.Equal(JsonValueKind.Null, trustEl.GetProperty("delegatedSession").ValueKind);
+        Assert.Equal(JsonValueKind.Null, trustEl.GetProperty("scorecard").ValueKind);
+        Assert.False(trustEl.GetProperty("escalation").GetProperty("escalated").GetBoolean());
+        Assert.Equal("not-escalated", trustEl.GetProperty("escalation").GetProperty("trigger").GetString());
     }
 
     [Fact]
@@ -510,6 +700,19 @@ public class SupportGatewayTests
             r.Uri.Contains("service=roads-api", StringComparison.Ordinal) &&
             r.Uri.Contains("environment=prod", StringComparison.Ordinal));
         Assert.True(diagnosisDoc.RootElement.GetProperty("diagnosisScorecard").TryGetProperty("scenarioId", out _));
+
+        // The structured TRUST relay (honua-support#23) travels end-to-end on the posted
+        // diagnosis: the delegated session, scorecard, and escalation rationale projections
+        // honua-devops already computed are nested under `trust` for honua-support to surface.
+        JsonElement trustEl = diagnosisDoc.RootElement.GetProperty("trust");
+        Assert.NotEqual(JsonValueKind.Null, trustEl.ValueKind);
+        // Session mode reflects the operator policy ceiling (default access here is disabled),
+        // not the ticket's requested allowedAccessMode — the projection is policy-bound.
+        Assert.True(trustEl.GetProperty("delegatedSession").TryGetProperty("mode", out _));
+        Assert.False(trustEl.GetProperty("delegatedSession").GetProperty("active").GetBoolean());
+        Assert.True(trustEl.GetProperty("scorecard").TryGetProperty("overallResult", out _));
+        Assert.Equal(6, trustEl.GetProperty("scorecard").GetProperty("criteria").GetArrayLength());
+        Assert.True(trustEl.GetProperty("escalation").TryGetProperty("escalated", out _));
     }
 
     [Fact]

@@ -293,6 +293,17 @@ internal sealed record SupportTicketConsoleView(
     IReadOnlyList<EvidenceRef> AuditReferences,
     string CreatedAt);
 
+// Carrier for the structured TRUST state relayed back to honua-support alongside a posted
+// diagnosis (honua-support#23). It bundles the same already-computed #70 projections the
+// SupportTicketConsoleView holds — delegated session, diagnosis scorecard, escalation
+// rationale — so SupportGateway can serialize the shared TRUST wire contract honua-support
+// consumes verbatim without recomputing any trust state. Every member is optional: omit the
+// whole carrier or any sub-projection when it does not apply to the ticket.
+internal sealed record SupportTicketTrust(
+    DelegatedSessionState? Session = null,
+    DiagnosisScorecardBridge? Scorecard = null,
+    EscalationRationale? Escalation = null);
+
 // Carried on OperationResponse (JSON-ignored, like GitOpsPlan) so the structured
 // projection is available in-process by object reference to callers that hold the
 // response (the Console-facing bridge surface), while the LLM-facing wire shape stays
