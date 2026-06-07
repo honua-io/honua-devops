@@ -362,6 +362,8 @@ Helper scripts:
 - `scripts/smoke-slo-release-gate.sh`
 - `scripts/slo-release-watch.sh`
 - `scripts/smoke-slo-release-watch.sh`
+- `scripts/compat-train-release-validation.sh`
+- `scripts/smoke-compat-train-release-validation.sh`
 - `scripts/compat-train-release-gate.sh`
 - `scripts/smoke-compat-train-release-gate.sh`
 - `scripts/validate-slo-assets.sh`

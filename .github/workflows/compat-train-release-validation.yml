@@ -18,6 +18,11 @@ jobs:
         run: |
           bash -n scripts/compat-train-release-gate.sh
           bash -n scripts/smoke-compat-train-release-gate.sh
+          bash -n scripts/compat-train-release-validation.sh
+          bash -n scripts/smoke-compat-train-release-validation.sh
 
-      - name: Compatibility-train release gate smoke
+      - name: Compatibility-train release gate smoke (per-repo live evidence)
         run: ./scripts/smoke-compat-train-release-gate.sh
+
+      - name: Compatibility-train release validation smoke (manifest-driven)
+        run: ./scripts/smoke-compat-train-release-validation.sh
