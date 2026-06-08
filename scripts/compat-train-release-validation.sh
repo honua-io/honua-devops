@@ -135,7 +135,7 @@ bundle="$(
     # Map an owning repo to its release surface.
     def surface_of($repo):
       (($repo // "") | sub("^honua-io/"; "")) as $r |
-      if   $r == "honua-server" or $r == "Honua.Server" then "server"
+      if   $r == "honua-server" or $r == "Honua.Server" or $r == "honua-esri-compat" then "server"
       elif ($r | test("^honua-sdk-")) or $r == "honua-mobile" then "sdk"
       elif $r == "honua-console" or $r == "honua-server-admin" then "admin"
       elif $r == "honua-helm" then "helm"

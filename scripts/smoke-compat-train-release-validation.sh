@@ -201,4 +201,23 @@ grep -q "compatibility-train release-candidate validation" "$WORKDIR/notes.md" \
 echo "[OK] release notes written"
 
 echo
+echo "Validating: an honua-esri-compat gate maps to the server surface"
+cat >"$WORKDIR/manifest-esri.json" <<'EOF'
+{
+  "releaseId": "honua-test-rc", "channel": "preview",
+  "candidate": { "ref": "deadbeef", "image": { "evidenceState": "passed" } },
+  "releaseGates": [
+    { "id": "server-esri-sdk-certification", "owningRepo": "honua-io/honua-esri-compat",
+      "requirement": "Esri SDKs certify.", "evidenceState": "passed", "blockers": [] }
+  ],
+  "repositoryLanes": [], "releaseLaneCriteria": []
+}
+EOF
+COMPAT_TRAIN_BUNDLE_OUTPUT="$BUNDLE" COMPAT_TRAIN_MODE=advisory \
+  "$VALIDATE" "$WORKDIR/manifest-esri.json" >/dev/null
+jq -e '.checks[] | select(.id=="server-esri-sdk-certification") | .surface=="server"' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] honua-esri-compat gate did not map to the server surface" >&2; exit 1; }
+echo "[OK] esri-compat maps to server surface"
+
+echo
 echo "Compatibility-train release-candidate validation smoke check passed."
