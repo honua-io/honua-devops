@@ -1,0 +1,420 @@
+{
+  "schemaVersion": 1,
+  "kind": "compat-train-release-validation",
+  "generatedFrom": "honua-io/honua-server:release/honua-2026-05-preview.json",
+  "releaseId": "honua-2026-05-preview",
+  "channel": "preview",
+  "environment": "preview",
+  "observedAt": "2026-05-07T22:31:02Z",
+  "mode": "advisory",
+  "candidate": {
+    "ref": "41544093e432b36b5c5680e8c89618b283389578",
+    "refSource": "feature/938",
+    "image": {
+      "repository": "ghcr.io/honua-io/honua-server",
+      "tag": null,
+      "digest": null,
+      "evidenceState": "blocked",
+      "blockers": [
+        {
+          "repo": "honua-io/honua-devops",
+          "number": 41,
+          "url": "https://github.com/honua-io/honua-devops/issues/41",
+          "reason": "Release-candidate image validation surface must publish the immutable image tag and digest before image-backed compatibility evidence can be accepted."
+        }
+      ]
+    }
+  },
+  "verdict": "fail",
+  "summary": {
+    "checks": 16,
+    "passed": 6,
+    "waived": 0,
+    "blocked": 10,
+    "requiredSurfaces": [
+      "server",
+      "sdk",
+      "admin",
+      "helm",
+      "terraform"
+    ],
+    "surfacesCovered": [
+      "server",
+      "sdk"
+    ],
+    "surfacesMissing": [
+      "admin",
+      "helm",
+      "terraform"
+    ]
+  },
+  "surfaceCoverage": [
+    {
+      "surface": "server",
+      "covered": true,
+      "passing": 2,
+      "total": 5,
+      "checks": [
+        "server-sdk-compatibility",
+        "server-real-client-interop",
+        "server-security-nightly",
+        "server-license-activation",
+        "candidate-image"
+      ]
+    },
+    {
+      "surface": "sdk",
+      "covered": true,
+      "passing": 3,
+      "total": 4,
+      "checks": [
+        "sdk-js-trunk-ci",
+        "sdk-js-quickstart-staging",
+        "sdk-python-staging-integration",
+        "mobile-dotnet-sdk-train"
+      ]
+    },
+    {
+      "surface": "admin",
+      "covered": false,
+      "passing": 0,
+      "total": 1,
+      "checks": [
+        "admin-docs-supported-surfaces"
+      ]
+    },
+    {
+      "surface": "helm",
+      "covered": false,
+      "passing": 0,
+      "total": 1,
+      "checks": [
+        "helm-release-candidate-metadata"
+      ]
+    },
+    {
+      "surface": "terraform",
+      "covered": false,
+      "passing": 0,
+      "total": 0,
+      "checks": []
+    }
+  ],
+  "checks": [
+    {
+      "id": "server-sdk-compatibility",
+      "name": "SDK Server Compatibility",
+      "kind": "releaseGate",
+      "owningRepo": "honua-io/honua-server",
+      "surface": "server",
+      "requirement": "Green for the release-candidate server ref, or covered by an approved release waiver.",
+      "evidenceState": "passed",
+      "state": "passed",
+      "followUps": []
+    },
+    {
+      "id": "server-real-client-interop",
+      "name": "Real-Client Interop Matrix",
+      "kind": "releaseGate",
+      "owningRepo": "honua-io/honua-server",
+      "surface": "server",
+      "requirement": "Green with zero baseline regressions for the release-candidate server ref, or covered by an approved release waiver.",
+      "evidenceState": "passed",
+      "state": "passed",
+      "followUps": []
+    },
+    {
+      "id": "server-security-nightly",
+      "name": "Security Nightly",
+      "kind": "releaseGate",
+      "owningRepo": "honua-io/honua-server",
+      "surface": "server",
+      "requirement": "Green for the release-candidate server ref, or covered by an approved release waiver.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-server/issues/939",
+          "repo": "honua-io/honua-server",
+          "number": 939,
+          "reason": "Security Nightly is failing; tracked by the bounded release blocker."
+        }
+      ]
+    },
+    {
+      "id": "server-license-activation",
+      "name": "Ed25519 license activation",
+      "kind": "releaseGate",
+      "owningRepo": "honua-io/honua-server",
+      "surface": "server",
+      "requirement": "Entitlements activate end-to-end through the marketplace path, or an approved Preview waiver is recorded.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-server/issues/338",
+          "repo": "honua-io/honua-server",
+          "number": 338,
+          "reason": "License key infrastructure is still open; release readiness cannot be claimed from docs alone."
+        }
+      ]
+    },
+    {
+      "id": "sdk-js-trunk-ci",
+      "name": "sdk-js-trunk-ci",
+      "kind": "repositoryLane",
+      "owningRepo": "honua-io/honua-sdk-js",
+      "surface": "sdk",
+      "requirement": "Trunk SDK CI is green.",
+      "evidenceState": "passed",
+      "state": "passed",
+      "followUps": []
+    },
+    {
+      "id": "sdk-js-quickstart-staging",
+      "name": "sdk-js-quickstart-staging",
+      "kind": "repositoryLane",
+      "owningRepo": "honua-io/honua-sdk-js",
+      "surface": "sdk",
+      "requirement": "Quickstart staging is green.",
+      "evidenceState": "passed",
+      "state": "passed",
+      "followUps": []
+    },
+    {
+      "id": "sdk-python-staging-integration",
+      "name": "sdk-python-staging-integration",
+      "kind": "repositoryLane",
+      "owningRepo": "honua-io/honua-sdk-python",
+      "surface": "sdk",
+      "requirement": "Staging integration is configured and green.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-sdk-python/issues/50",
+          "repo": "honua-io/honua-sdk-python",
+          "number": 50,
+          "reason": "Python SDK staging integration is failing; tracked by the bounded SDK Python release blocker."
+        }
+      ]
+    },
+    {
+      "id": "mobile-dotnet-sdk-train",
+      "name": "mobile-dotnet-sdk-train",
+      "kind": "repositoryLane",
+      "owningRepo": "honua-io/honua-mobile",
+      "surface": "sdk",
+      "requirement": "Mobile consumes the current .NET SDK train and passes contract/integration tests.",
+      "evidenceState": "passed",
+      "state": "passed",
+      "followUps": []
+    },
+    {
+      "id": "helm-release-candidate-metadata",
+      "name": "helm-release-candidate-metadata",
+      "kind": "repositoryLane",
+      "owningRepo": "honua-io/honua-helm",
+      "surface": "helm",
+      "requirement": "Chart appVersion and image metadata point at the release candidate rather than placeholder/latest metadata.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-helm/issues/1",
+          "repo": "honua-io/honua-helm",
+          "number": 1,
+          "reason": "Helm chart extraction/versioned release pipeline remains open; release-candidate chart metadata evidence is not attached."
+        }
+      ]
+    },
+    {
+      "id": "admin-docs-supported-surfaces",
+      "name": "admin-docs-supported-surfaces",
+      "kind": "repositoryLane",
+      "owningRepo": "honua-io/honua-server-admin",
+      "surface": "admin",
+      "requirement": "Admin docs distinguish production-supported surfaces from stubs and future work.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-server-admin/issues/78",
+          "repo": "honua-io/honua-server-admin",
+          "number": 78,
+          "reason": "Preview release admin coverage remains open; admin documentation evidence is not attached."
+        }
+      ]
+    },
+    {
+      "id": "release-train-scoreboard",
+      "name": "release-train-scoreboard",
+      "kind": "repositoryLane",
+      "owningRepo": "honua-io/honua-devops",
+      "surface": "tooling",
+      "requirement": "A release-train matrix is published and referenced by server, admin, SDK, devops, and docs release notes.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-devops/issues/41",
+          "repo": "honua-io/honua-devops",
+          "number": 41,
+          "reason": "Devops-owned release-candidate validation scoreboard remains open."
+        }
+      ]
+    },
+    {
+      "id": "release-candidate-image-compatibility",
+      "name": "release-candidate-image-compatibility",
+      "kind": "releaseLaneCriteria",
+      "owningRepo": "honua-io/honua-devops",
+      "surface": "cross-cutting",
+      "requirement": "Cross-repo compatibility train passes against the release-candidate image.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-devops/issues/41",
+          "repo": "honua-io/honua-devops",
+          "number": 41,
+          "reason": "Release-candidate image tag/digest and image-backed smoke evidence are not yet published."
+        }
+      ]
+    },
+    {
+      "id": "release-evidence-pack",
+      "name": "release-evidence-pack",
+      "kind": "releaseLaneCriteria",
+      "owningRepo": "honua-io/honua-devops",
+      "surface": "cross-cutting",
+      "requirement": "Release manifest, smoke results, and source-backed feature map are attached to release evidence.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-devops/issues/41",
+          "repo": "honua-io/honua-devops",
+          "number": 41,
+          "reason": "Smoke results and release evidence pack are not yet attached."
+        }
+      ]
+    },
+    {
+      "id": "license-marketplace-entitlements",
+      "name": "license-marketplace-entitlements",
+      "kind": "releaseLaneCriteria",
+      "owningRepo": "honua-io/honua-server",
+      "surface": "cross-cutting",
+      "requirement": "Ed25519 license key infrastructure activates entitlements end-to-end with the marketplace path.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-server/issues/338",
+          "repo": "honua-io/honua-server",
+          "number": 338,
+          "reason": "Marketplace entitlement activation cannot be claimed until license-key infrastructure lands or an approved waiver is recorded."
+        }
+      ]
+    },
+    {
+      "id": "candidate-image",
+      "name": "Release-candidate image published",
+      "kind": "candidateImage",
+      "owningRepo": "ghcr.io/honua-io/honua-server",
+      "surface": "server",
+      "requirement": "Immutable release-candidate image tag and digest are published.",
+      "evidenceState": "blocked",
+      "state": "blocked",
+      "followUps": [
+        {
+          "url": "https://github.com/honua-io/honua-devops/issues/41",
+          "repo": "honua-io/honua-devops",
+          "number": 41,
+          "reason": "Release-candidate image validation surface must publish the immutable image tag and digest before image-backed compatibility evidence can be accepted."
+        }
+      ]
+    },
+    {
+      "id": "client-compatibility-scoreboard",
+      "name": "Client compatibility scoreboard",
+      "kind": "scoreboard",
+      "owningRepo": "honua-io/honua-devops",
+      "surface": "cross-cutting",
+      "requirement": "Latest scoreboard release has no failing clients.",
+      "evidenceState": "passed",
+      "state": "passed",
+      "followUps": []
+    }
+  ],
+  "scoreboard": {
+    "release": "2026.03.1",
+    "summary": {
+      "pass": 8,
+      "pending": 0,
+      "fail": 0
+    }
+  },
+  "followUps": [
+    {
+      "url": null,
+      "repo": null,
+      "number": null,
+      "reason": "No admin lane/evidence present in the release manifest; add release-candidate evidence for the admin surface."
+    },
+    {
+      "url": null,
+      "repo": null,
+      "number": null,
+      "reason": "No helm lane/evidence present in the release manifest; add release-candidate evidence for the helm surface."
+    },
+    {
+      "url": null,
+      "repo": null,
+      "number": null,
+      "reason": "No terraform lane/evidence present in the release manifest; add release-candidate evidence for the terraform surface."
+    },
+    {
+      "url": "https://github.com/honua-io/honua-devops/issues/41",
+      "repo": "honua-io/honua-devops",
+      "number": 41,
+      "reason": "Devops-owned release-candidate validation scoreboard remains open."
+    },
+    {
+      "url": "https://github.com/honua-io/honua-helm/issues/1",
+      "repo": "honua-io/honua-helm",
+      "number": 1,
+      "reason": "Helm chart extraction/versioned release pipeline remains open; release-candidate chart metadata evidence is not attached."
+    },
+    {
+      "url": "https://github.com/honua-io/honua-sdk-python/issues/50",
+      "repo": "honua-io/honua-sdk-python",
+      "number": 50,
+      "reason": "Python SDK staging integration is failing; tracked by the bounded SDK Python release blocker."
+    },
+    {
+      "url": "https://github.com/honua-io/honua-server-admin/issues/78",
+      "repo": "honua-io/honua-server-admin",
+      "number": 78,
+      "reason": "Preview release admin coverage remains open; admin documentation evidence is not attached."
+    },
+    {
+      "url": "https://github.com/honua-io/honua-server/issues/338",
+      "repo": "honua-io/honua-server",
+      "number": 338,
+      "reason": "License key infrastructure is still open; release readiness cannot be claimed from docs alone."
+    },
+    {
+      "url": "https://github.com/honua-io/honua-server/issues/939",
+      "repo": "honua-io/honua-server",
+      "number": 939,
+      "reason": "Security Nightly is failing; tracked by the bounded release blocker."
+    }
+  ],
+  "references": {
+    "manifest": "honua-io/honua-server:release/honua-2026-05-preview.json",
+    "roadmapProject": "https://github.com/orgs/honua-io/projects/2",
+    "ownedBy": "https://github.com/honua-io/honua-devops/issues/41"
+  }
+}
