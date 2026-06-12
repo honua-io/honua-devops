@@ -4,7 +4,7 @@ internal static class AuditSinkFactory
 {
     private const string FilePrefix = "file://";
 
-    internal static IAuditSink Create(string auditHookTarget)
+    internal static IAuditSink Create(string auditHookTarget, bool reserveStdout = false)
     {
         string trimmed = auditHookTarget?.Trim() ?? string.Empty;
         if (string.Equals(trimmed, "none", StringComparison.OrdinalIgnoreCase) ||
@@ -25,7 +25,15 @@ internal static class AuditSinkFactory
             return JsonlAuditSink.ForFile(path);
         }
 
+        if (string.Equals(trimmed, "stderr-evidence", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonlAuditSink.ForStderr();
+        }
+
         // "stdout-evidence", "jsonl-stdout", anything else → JSONL on stdout.
-        return JsonlAuditSink.ForStdout();
+        // When stdout is reserved for a wire protocol (MCP stdio), evidence is
+        // re-routed to stderr instead of being dropped so every tool call still
+        // emits exactly one JSONL audit record.
+        return reserveStdout ? JsonlAuditSink.ForStderr() : JsonlAuditSink.ForStdout();
     }
 }

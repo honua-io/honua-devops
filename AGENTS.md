@@ -21,6 +21,9 @@ submit, or roll back deploy operations on its own.
 
 - .NET 10 (`net10.0`), C# with `ImplicitUsings` and `Nullable` enabled.
 - Microsoft Agent Framework: `Microsoft.Agents.AI.OpenAI` 1.0.0-rc3, `OpenAI` 2.8.0.
+- MCP server mode: `ModelContextProtocol.Core` 1.4.0 (official MCP C# SDK) hosting
+  the toolset over stdio via `--mcp`; `Microsoft.Extensions.AI` is pinned to match
+  the abstractions floor it pulls in.
 - Provider-pluggable AI runtime over OpenAI-compatible adapters: `codex`,
   `claude`, `local-llama` (NVIDIA NIM / vLLM / Ollama / TGI). Default `codex`.
 - Tests: xUnit 2.9.3, `Microsoft.NET.Test.Sdk` 17.14.1, `coverlet.collector`,
@@ -64,6 +67,9 @@ Common CLI modes (all via `dotnet run --project src/Honua.DevOps.Agent -- ...`):
 - `--listen` — signed honua-support escalation receiver (needs `HONUA_DEVOPS_WEBHOOK_SECRET`)
 - `--list-operations --limit 50` / `--show-operation <id>` — operation journal
   (requires `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///path/to/audit.jsonl`)
+- `--mcp` — MCP stdio server exposing the full operator toolset 1:1 to MCP
+  clients (Claude Code / Codex); same gates and audit, no provider key needed
+  (see `docs/QUICKSTART-MCP.md`)
 - `--list-tools`, `--help`
 
 Test:
