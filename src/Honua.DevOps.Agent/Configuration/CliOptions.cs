@@ -11,7 +11,8 @@ internal sealed record CliOptions(
     bool ListOperations,
     string? ShowOperation,
     int OperationLimit,
-    bool Listen)
+    bool Listen,
+    bool Mcp)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
@@ -23,6 +24,7 @@ internal sealed record CliOptions(
     private const string ShowOperationFlag = "--show-operation";
     private const string LimitFlag = "--limit";
     private const string ListenFlag = "--listen";
+    private const string McpFlag = "--mcp";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
 
     internal const string HelpText = """
@@ -41,6 +43,9 @@ Options:
   --show-operation <id>       Print a single operation record by operation id.
   --limit <n>                 Limit --list-operations to the n most recent records (default 20).
   --listen                    Run the escalation webhook receiver. Requires HONUA_DEVOPS_WEBHOOK_SECRET.
+  --mcp                       Run the operator toolset as an MCP stdio server (for Claude Code, Codex,
+                              and other MCP clients). No model provider key is required; gates and
+                              audit follow the same HONUA_DEVOPS_* runtime controls. See docs/QUICKSTART-MCP.md.
   -h, --help                  Show this help and exit.
 
 Environment (--listen):
@@ -56,6 +61,7 @@ Examples:
   honua-devops --list-operations --limit 50
   honua-devops --show-operation 7d2b9f...
   honua-devops --listen
+  honua-devops --mcp
 """;
 
     internal static CliOptions Parse(string[] args)
@@ -69,6 +75,7 @@ Examples:
         string? showOperation = null;
         int operationLimit = 20;
         bool listen = false;
+        bool mcp = false;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -137,6 +144,12 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(McpFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                mcp = true;
+                continue;
+            }
+
             if (argument.Equals(LimitFlag, StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 >= args.Length || !int.TryParse(args[index + 1], out int parsedLimit) || parsedLimit < 1)
@@ -150,10 +163,10 @@ Examples:
             }
 
             throw new InvalidOperationException(
-                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, or {HelpFlag}.");
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {McpFlag}, or {HelpFlag}.");
         }
 
-        if (help || listTools || listOperations || showOperation is not null)
+        if (help || listTools || listOperations || showOperation is not null || mcp)
         {
             return new CliOptions(
                 ProviderKind.Codex,
@@ -164,7 +177,8 @@ Examples:
                 listOperations,
                 showOperation,
                 operationLimit,
-                listen);
+                listen,
+                mcp);
         }
 
         string selectedProvider = providerValue ??
@@ -186,6 +200,7 @@ Examples:
             listOperations,
             showOperation,
             operationLimit,
-            listen);
+            listen,
+            mcp);
     }
 }

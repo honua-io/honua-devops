@@ -47,6 +47,7 @@ open-core runtime promise.
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 - Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`) projecting stable, evidence-linked proposal/operation/brief and read-only release-explanation contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
+- MCP stdio server mode (`--mcp`) exposing the full 24-tool operator surface 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
 
 ## Provider Configuration
 
@@ -272,6 +273,29 @@ Customer requirement analysis example:
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --provider codex --prompt "Analyze requirements for a state GIS portal and recommend deployment topology, scaling, and GitOps rollout across dev/staging/prod."
 ```
+
+## MCP Server Mode
+
+Run the operator toolset as a Model Context Protocol stdio server for Claude
+Code, Codex CLI, or any MCP client (no model provider key required — the
+client LLM drives the tools):
+
+```bash
+dotnet run --project src/Honua.DevOps.Agent -- --mcp
+```
+
+Register with Claude Code:
+
+```bash
+claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
+```
+
+All 24 operator tools are exposed 1:1 with the interactive agent — same
+handlers, same execution-mode/approval/edition gates, and one JSONL audit
+record per tool call (stdout-targeted audit evidence moves to stderr because
+stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
+for Codex registration, required environment, worked examples, and the safety
+model notes.
 
 ## Customer Adoption
 

@@ -9,6 +9,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc3" />
+    <!--
+      Keep Microsoft.Extensions.AI aligned with the Microsoft.Extensions.AI.Abstractions
+      floor pulled in by ModelContextProtocol.Core. A split train (AI 10.3.x with
+      Abstractions 10.5.x) causes TypeLoadException in FunctionInvokingChatClient.
+    -->
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.2" />
+    <PackageReference Include="ModelContextProtocol.Core" Version="1.4.0" />
     <PackageReference Include="OpenAI" Version="2.8.0" />
   </ItemGroup>
 
