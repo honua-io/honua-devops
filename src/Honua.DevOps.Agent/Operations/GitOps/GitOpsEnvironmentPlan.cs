@@ -7,4 +7,5 @@ internal sealed record GitOpsEnvironmentPlan(
     string DiffStatus,
     string GateStatus,
     IReadOnlyList<GitOpsDriftStatus> Drift,
-    IReadOnlyList<GitOpsCommandPlan> Commands);
+    IReadOnlyList<GitOpsCommandPlan> Commands,
+    string? MetadataTargetStatus = null);
