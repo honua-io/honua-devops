@@ -25,6 +25,7 @@ internal sealed class ConsoleOperationBridge(
 {
     private const string OperationKind = "gitops-deploy";
     private const int MaxReadableKeyLength = 200;
+    private const string AgentIdentity = "honua-devops";
 
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 
@@ -78,7 +79,21 @@ internal sealed class ConsoleOperationBridge(
                 Evidence: [],
                 SuggestedActions: [ConfigureTargetSuggestion()],
                 CreatedAt: timestamp,
-                UpdatedAt: timestamp);
+                UpdatedAt: timestamp,
+                Kind: OperationKind,
+                Requester: normalizedOwner,
+                Agent: AgentIdentity,
+                // No durable target means the proposal cannot enter the lifecycle yet; stay
+                // Planned (the lifecycle entry state) rather than asserting an approval state.
+                ProposalStatus: ProposalLifecycle.Planned,
+                Plan: BuildProposalPlan(
+                    normalizedService,
+                    environments,
+                    normalizedRevision,
+                    normalizedAction,
+                    approvalRequired,
+                    targetsProd,
+                    blockingReasons: ["HONUA_DEVOPS_DEPLOY_TARGET_ID is not configured; cannot create a durable server operation."]));
             return BuildProposalResponse(
                 blocked,
                 backendSteps: null,
@@ -118,8 +133,16 @@ internal sealed class ConsoleOperationBridge(
             cancellationToken);
 
         string? operationId = created.Payload is null ? null : ExtractOperationId(created.Payload.RootElement);
+        string? serverStatus = created.Payload is null ? null : ExtractStatus(created.Payload.RootElement);
         bool createdOperation = created.CallResult.IsSuccess && !string.IsNullOrWhiteSpace(operationId);
         string status = createdOperation ? BridgeStatus.Proposed : BridgeStatus.ContractUnavailable;
+        // Canonical lifecycle value (1:1 with the server WorkflowOperationStatus). A recorded
+        // proposal that the server has not advanced sits at AwaitingApproval when approval is
+        // required, otherwise Planned; an unreadable/missing status falls back to Planned so
+        // the proposal still enters the lifecycle rather than reporting unknown on create.
+        string proposalStatus = createdOperation
+            ? MapProposalLifecycle(serverStatus, approvalRequired)
+            : ProposalLifecycle.Planned;
 
         List<OperationBackendStep> steps =
         [
@@ -174,7 +197,21 @@ internal sealed class ConsoleOperationBridge(
             Evidence: evidence,
             SuggestedActions: suggestedActions,
             CreatedAt: timestamp,
-            UpdatedAt: timestamp);
+            UpdatedAt: timestamp,
+            Kind: OperationKind,
+            Requester: normalizedOwner,
+            Agent: AgentIdentity,
+            ProposalStatus: proposalStatus,
+            Plan: BuildProposalPlan(
+                normalizedService,
+                environments,
+                normalizedRevision,
+                normalizedAction,
+                approvalRequired,
+                targetsProd,
+                blockingReasons: createdOperation
+                    ? []
+                    : ["honua-server deploy-control did not return a durable operation id; proposal is blocked, no operation invented."]));
 
         return BuildProposalResponse(
             proposal,
@@ -195,6 +232,7 @@ internal sealed class ConsoleOperationBridge(
 
         bool found = result.CallResult.IsSuccess && root is not null;
         string status = found ? BridgeStatus.Proposed : BridgeStatus.ContractUnavailable;
+        string? serverStatus = root is null ? null : ExtractStatus(root.Value);
         string desiredRevision = (root is null ? null : TryGetString(root.Value, "desiredRevision", "desired_revision", "revision")) ?? "unknown";
         string? currentRevision = root is null ? null : TryGetString(root.Value, "currentRevision", "current_revision");
         string serviceName = (root is null ? null : TryGetParameter(root.Value, "service")) ?? "unknown";
@@ -222,6 +260,10 @@ internal sealed class ConsoleOperationBridge(
         suggestedActions.Add(ReviewEvidenceSuggestion(found ? normalizedOperationId : null));
 
         bool targetsProd = environments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        bool approvalRequired = EffectivePolicy.ApprovalMode != ApprovalMode.DirectAllowed || targetsProd;
+        string proposalStatus = found
+            ? MapProposalLifecycle(serverStatus, approvalRequired)
+            : ProposalLifecycle.Unknown;
         GitOpsProposalBridge proposal = new(
             ProposalId: normalizedOperationId,
             OperationId: found ? normalizedOperationId : null,
@@ -234,17 +276,168 @@ internal sealed class ConsoleOperationBridge(
             RequestedAction: action,
             EffectiveAction: "propose",
             Owner: owner,
-            ApprovalRequired: EffectivePolicy.ApprovalMode != ApprovalMode.DirectAllowed || targetsProd,
+            ApprovalRequired: approvalRequired,
             WorkflowLinks: links,
             Evidence: evidence,
             SuggestedActions: suggestedActions,
             CreatedAt: timestamp,
-            UpdatedAt: timestamp);
+            UpdatedAt: timestamp,
+            Kind: OperationKind,
+            Requester: owner,
+            Agent: AgentIdentity,
+            ProposalStatus: proposalStatus,
+            Plan: BuildProposalPlan(
+                serviceName,
+                environments,
+                desiredRevision,
+                action,
+                approvalRequired,
+                targetsProd,
+                blockingReasons: found
+                    ? []
+                    : [$"No durable deploy-control operation found for `{normalizedOperationId}`."]));
 
         return BuildProposalResponse(
             proposal,
             [ToStep("deploy-operation-status", result.CallResult, mutatesState: false)],
             blockingReason: found ? null : $"No durable deploy-control operation found for `{normalizedOperationId}`.");
+    }
+
+    [Description("Record an auditable approve or reject decision against a GitOps proposal by its stable operationId. The decision captures the deciding actor and a free-form reason (consistent with the honua-server decision audit), and projects the proposal with its canonical lifecycle moved toward Submitted (approve) or Rejected (reject). The bridge records the decision only; it never submits, executes, or rolls back. An approve decision surfaces the governed submit suggestion that still requires an explicit governed submit. Returns a blocked projection if the operation cannot be read.")]
+    public async Task<OperationResponse> RecordProposalDecisionAsync(
+        string operationId,
+        string decision,
+        string actor,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedOperationId = ValidateOperationId(operationId);
+        string normalizedDecision = NormalizeDecision(decision);
+        string normalizedActor = DeploymentInputs.SanitizeFreeText(actor, "unassigned");
+        string normalizedReason = DeploymentInputs.SanitizeFreeText(reason, "not provided");
+        string timestamp = Timestamp();
+
+        using BackendJsonResult result = await gateway.GetDeployOperationJsonAsync(normalizedOperationId, cancellationToken);
+        JsonElement? root = result.Payload?.RootElement;
+        bool found = result.CallResult.IsSuccess && root is not null;
+        string? serverStatus = root is null ? null : ExtractStatus(root.Value);
+        string desiredRevision = (root is null ? null : TryGetString(root.Value, "desiredRevision", "desired_revision", "revision")) ?? "unknown";
+        string? currentRevision = root is null ? null : TryGetString(root.Value, "currentRevision", "current_revision");
+        string serviceName = (root is null ? null : TryGetParameter(root.Value, "service")) ?? "unknown";
+        string action = (root is null ? null : TryGetParameter(root.Value, "action")) ?? "unknown";
+        string owner = (root is null ? null : TryGetParameter(root.Value, "owner")) ?? "unknown";
+        string[] environments = SplitCsv(root is null ? null : TryGetParameter(root.Value, "environments"));
+        bool targetsProd = environments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        bool approvalRequired = EffectivePolicy.ApprovalMode != ApprovalMode.DirectAllowed || targetsProd;
+
+        bool isApprove = normalizedDecision == ProposalDecisionKind.Approve;
+        string resultingStatus = !found
+            ? ProposalLifecycle.Unknown
+            : isApprove ? ProposalLifecycle.Submitted : ProposalLifecycle.Rejected;
+        string governedAction = isApprove ? "submit" : "none";
+        ProposalDecision decisionRecord = new(
+            Decision: normalizedDecision,
+            Actor: normalizedActor,
+            Reason: normalizedReason,
+            DecidedAt: timestamp,
+            ResultingStatus: resultingStatus,
+            GovernedAction: governedAction);
+
+        string bridgeStatus = found ? BridgeStatus.Proposed : BridgeStatus.ContractUnavailable;
+        List<EvidenceRef> evidence = [EvidenceFromCall("deploy-operation", result.CallResult)];
+        List<WorkflowLink> links = [SelfLink(found ? normalizedOperationId : null)];
+        List<SuggestedAction> suggestedActions = [];
+        if (found)
+        {
+            evidence.Add(ServerOperationEvidence(normalizedOperationId));
+            links.Add(ServerOperationLink(normalizedOperationId));
+            // An approve decision authorizes the governed submit; a reject decision never
+            // surfaces a mutating action. Either way the bridge records only — it never runs it.
+            if (isApprove)
+            {
+                links.Add(GovernedLink("submit", "Submit proposal for execution", normalizedOperationId, "submit"));
+                suggestedActions.Add(SubmitSuggestion(normalizedOperationId));
+            }
+        }
+        suggestedActions.Add(ReviewEvidenceSuggestion(found ? normalizedOperationId : null));
+
+        GitOpsProposalBridge proposal = new(
+            ProposalId: normalizedOperationId,
+            OperationId: found ? normalizedOperationId : null,
+            IdempotencyKey: "server-managed",
+            Status: bridgeStatus,
+            Service: serviceName,
+            TargetEnvironments: environments,
+            DesiredRevision: desiredRevision,
+            CurrentRevision: currentRevision,
+            RequestedAction: action,
+            EffectiveAction: "propose",
+            Owner: owner,
+            ApprovalRequired: approvalRequired,
+            WorkflowLinks: links,
+            Evidence: evidence,
+            SuggestedActions: suggestedActions,
+            CreatedAt: timestamp,
+            UpdatedAt: timestamp,
+            Kind: OperationKind,
+            Requester: owner,
+            Agent: AgentIdentity,
+            ProposalStatus: resultingStatus,
+            Plan: BuildProposalPlan(
+                serviceName,
+                environments,
+                desiredRevision,
+                action,
+                approvalRequired,
+                targetsProd,
+                blockingReasons: found
+                    ? []
+                    : [$"No durable deploy-control operation found for `{normalizedOperationId}`."]),
+            Decision: decisionRecord);
+
+        ConsoleBridgeProjection projection = new("gitops-proposal", Proposal: proposal);
+
+        List<string> findings =
+        [
+            $"Operation id: {proposal.OperationId ?? "none (blocked)"}",
+            $"Decision: {decisionRecord.Decision}",
+            $"Decision actor: {decisionRecord.Actor}",
+            $"Decision reason: {decisionRecord.Reason}",
+            $"Decided at: {decisionRecord.DecidedAt}",
+            $"Resulting lifecycle status: {decisionRecord.ResultingStatus}",
+            $"Governed action authorized: {decisionRecord.GovernedAction}"
+        ];
+        if (!found)
+        {
+            findings.Add($"Blocked: No durable deploy-control operation found for `{normalizedOperationId}`.");
+        }
+
+        return new OperationResponse(
+            Status: bridgeStatus,
+            Summary: $"Recorded {decisionRecord.Decision} decision for proposal `{normalizedOperationId}` by {decisionRecord.Actor}.",
+            Findings: findings,
+            Actions:
+            [
+                "Decision is recorded for audit only; the bridge never auto-submits or rolls back.",
+                isApprove
+                    ? "Approval authorizes a separate governed submit through the deploy-control approval path."
+                    : "Rejection records the terminal decision; no governed action is authorized.",
+                .. suggestedActions.Select(suggested =>
+                    $"Suggested action `{suggested.Id}`: {suggested.Title} (requiresApproval={suggested.RequiresApproval}, mutatesState={suggested.MutatesState}).")
+            ],
+            ValidationChecks:
+            [
+                "decision-audit-actor-and-reason",
+                "decision-records-only-no-auto-execute",
+                "lifecycle-aligned-with-server-status"
+            ],
+            Risks:
+            [
+                "A recorded approval still requires an explicit governed submit; the bridge never executes it.",
+                "Decision reflects proposal scope at decision time and can drift if submitted much later."
+            ],
+            BackendSteps: [ToStep("deploy-operation-read", result.CallResult, mutatesState: false)],
+            ConsoleBridge: projection);
     }
 
     [Description("Get the unified DevOps operation status for a stable operationId. Projects the honua-server deploy-control workflow status into proposal, PR, CI, promotion, smoke, SLO-watch, rollback-readiness, and rollback-execution sections that all share the same operationId. PR/CI sections are marked evidence-missing rather than scraping GitHub or CI.")]
@@ -592,6 +785,77 @@ internal sealed class ConsoleOperationBridge(
             "rolledback" or "rolled-back" => ("rolled-back", "rollback"),
             "manualinterventionrequired" or "manual-intervention-required" => ("manual-intervention-required", "blocked"),
             _ => (BridgeStatus.Unknown, BridgeStatus.Unknown)
+        };
+    }
+
+    // Maps a honua-server WorkflowOperationStatus (any casing, hyphenated or PascalCase) onto
+    // the canonical ProposalLifecycle value Console aggregates across both proposal sources
+    // (issue #78). The mapping is 1:1 with the server enum; the only synthesis is the
+    // unreadable case, where a recorded proposal is reported as AwaitingApproval when approval
+    // is required (the safe default the deploy target enforces) or Planned otherwise, so a
+    // freshly recorded proposal still enters the lifecycle rather than reporting unknown.
+    // Rejected has no distinct server enum member and is only produced by a recorded reject
+    // decision, never by reading a server status.
+    internal static string MapProposalLifecycle(string? serverStatus, bool approvalRequired)
+    {
+        return (serverStatus ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "planned" => ProposalLifecycle.Planned,
+            "awaitingapproval" or "awaiting-approval" => ProposalLifecycle.AwaitingApproval,
+            "submitted" => ProposalLifecycle.Submitted,
+            "reconciling" => ProposalLifecycle.Reconciling,
+            "succeeded" => ProposalLifecycle.Succeeded,
+            "failed" => ProposalLifecycle.Failed,
+            "rollbackrequested" or "rollback-requested" => ProposalLifecycle.RollbackRequested,
+            "rolledback" or "rolled-back" => ProposalLifecycle.RolledBack,
+            "manualinterventionrequired" or "manual-intervention-required" => ProposalLifecycle.ManualInterventionRequired,
+            _ => approvalRequired ? ProposalLifecycle.AwaitingApproval : ProposalLifecycle.Planned
+        };
+    }
+
+    // Builds the provider-neutral proposal plan (diff + dry-run + risk + blocking reasons).
+    // Proposals are always recorded with submitImmediately=false, so DryRun is always true: the
+    // create call records a durable operation but executes nothing. Risk is a coarse, derived
+    // classification (prod-targeting destructive actions are high; prod-targeting syncs are
+    // elevated; everything else is standard) so Console can colour the approval surface without
+    // re-deriving it from prose.
+    private static ProposalPlan BuildProposalPlan(
+        string service,
+        IReadOnlyList<string> environments,
+        string revision,
+        string action,
+        bool approvalRequired,
+        bool targetsProd,
+        IReadOnlyList<string> blockingReasons)
+    {
+        string envs = environments.Count == 0 ? "(none)" : string.Join(", ", environments);
+        string diffSummary = $"{action} {service} -> {envs} @ {revision}";
+        bool destructive = action is "rollback" or "delete" or "destroy";
+        string risk = targetsProd
+            ? destructive ? "high" : "elevated"
+            : destructive ? "elevated" : "standard";
+        List<string> warnings = [];
+        if (targetsProd)
+        {
+            warnings.Add("Targets a production environment; governed approval is required before submission.");
+        }
+
+        return new ProposalPlan(
+            DiffSummary: diffSummary,
+            DryRun: true,
+            RequiresApproval: approvalRequired,
+            Risk: risk,
+            BlockingReasons: blockingReasons,
+            Warnings: warnings);
+    }
+
+    private static string NormalizeDecision(string? value)
+    {
+        return DeploymentInputs.Normalize(value, string.Empty).ToLowerInvariant() switch
+        {
+            "approve" or "approved" or "accept" => ProposalDecisionKind.Approve,
+            "reject" or "rejected" or "deny" or "decline" => ProposalDecisionKind.Reject,
+            _ => throw new InvalidOperationException("Decision must be 'approve' or 'reject'.")
         };
     }
 

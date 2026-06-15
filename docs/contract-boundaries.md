@@ -43,6 +43,7 @@ cross-referenced to the existing document that defines each:
 - Operator policy (approval, support, break-glass): `docs/operator-policy-and-delegated-ops.md`
 - GitOps engine planning: `docs/honua-gitops-engine.md`
 - Console-facing AI DevOps operation bridge (GitOps proposal / operation-status / advisory-brief projections over honua-server deploy-control): `docs/console-ai-devops-bridge.md`
+- GitOps proposal contract aligned with the honua-server `OperationProposal` shape for single-surface console aggregation: `docs/gitops-proposal-contract.md`
 - ServiceBundle reconciliation: `docs/service-bundle-reconciliation.md`
 - Azure operator orchestration host: `docs/azure-operator-orchestration-host.md`
 - AI agent prompts and tool definitions

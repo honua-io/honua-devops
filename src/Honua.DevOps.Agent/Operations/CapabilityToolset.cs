@@ -124,6 +124,11 @@ internal static class CapabilityToolset
                 "get_gitops_proposal",
                 "View an existing GitOps proposal by stable operationId as a projection over the honua-server deploy-control operation, with raw evidence references and governed suggestions. Never scrapes Git or CI."),
             CreateTool(
+                (string operationId, string decision, string actor, string reason)
+                    => consoleBridge.RecordProposalDecisionAsync(operationId, decision, actor, reason),
+                "record_gitops_proposal_decision",
+                "Record an auditable approve or reject decision against a GitOps proposal by stable operationId, capturing the deciding actor and a reason consistent with the honua-server decision audit. Moves the proposal's canonical lifecycle toward Submitted (approve) or Rejected (reject). Records only; never submits, executes, or rolls back. Approval surfaces the governed submit suggestion that still requires an explicit governed submit."),
+            CreateTool(
                 (string operationId)
                     => consoleBridge.GetDevOpsOperationStatusAsync(operationId),
                 "get_devops_operation_status",
