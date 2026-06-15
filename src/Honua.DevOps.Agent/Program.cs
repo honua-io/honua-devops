@@ -5,6 +5,7 @@ using Honua.DevOps.Agent.Mcp;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.WorkIntake;
 using Honua.DevOps.Agent.Prompts;
 using Honua.DevOps.Agent.Providers;
 using Microsoft.Agents.AI;
@@ -89,6 +90,41 @@ try
             (payload, token) => reporter.ReportAsync(payload, token));
         await using EscalationWebhookListener listener = new(listenerConfiguration, webhookHandler);
         await listener.RunAsync(cancellationTokenSource.Token);
+        return;
+    }
+
+    if (options.IntakeListen)
+    {
+        WorkIntakeConfiguration intakeConfiguration = WorkIntakeConfiguration.Load();
+        if (!intakeConfiguration.IsEnabled)
+        {
+            Console.Error.WriteLine(
+                "intake-disabled: set HONUA_DEVOPS_INTAKE_PROVIDER=jira (and HONUA_DEVOPS_INTAKE_WEBHOOK_SECRET) to enable the work-intake listener.");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        // Founder decision: the intake capability is Enterprise. Detect the edition
+        // from the connected server and refuse to bind below Enterprise.
+        string intakeEdition = await EditionDetector.DetectAsync(backendGateway, cancellationTokenSource.Token);
+        if (!WorkIntakeEditionGate.IsAllowed(intakeEdition))
+        {
+            OperationResponse refusal = WorkIntakeEditionGate.BuildRefusal(intakeEdition);
+            Console.Error.WriteLine($"{refusal.Status}: {refusal.Summary}");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        IIntakeSignatureVerifier intakeVerifier = new JiraCloudSignatureVerifier(intakeConfiguration.WebhookSecret);
+        using JiraConnector jiraConnector = new(intakeConfiguration, sharedHttpClient);
+        WorkIntakeReporter intakeReporter = new(jiraConnector);
+        WorkIntakeWebhookHandler intakeHandler = new(
+            intakeVerifier,
+            provider: WorkItem.JiraProvider,
+            projectFilter: intakeConfiguration.ProjectFilter,
+            onAccepted: (workItem, token) => intakeReporter.ReportAsync(workItem, token));
+        await using WorkIntakeWebhookListener intakeListener = new(intakeConfiguration, intakeHandler);
+        await intakeListener.RunAsync(cancellationTokenSource.Token);
         return;
     }
 
