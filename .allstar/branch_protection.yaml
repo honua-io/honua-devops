@@ -1,0 +1,17 @@
+# Allstar — Branch Protection policy opt-out for this repository.
+#
+# honua-devops is a private repository on a GitHub plan that does not expose
+# branch protection (branch protection requires a public repo or a paid plan).
+# Allstar therefore files a recurring "Branch Protection not available" policy
+# violation (see honua-io/honua-devops#75) that cannot be remediated here.
+#
+# This opts the repository out of the Branch Protection policy so Allstar stops
+# raising an unactionable violation. Re-enable by removing this file once the
+# repository is public or on a plan that supports protected branches.
+#
+# NOTE: a per-repo opt-out only takes effect if the org-level Allstar config
+# (the honua-io/.allstar repo) permits repo override (optOutStrategy with
+# disableRepoOverride: false). If the org disables overrides, this same opt-out
+# must instead be set for this repo in the org-level .allstar config.
+optConfig:
+  optOut: true
