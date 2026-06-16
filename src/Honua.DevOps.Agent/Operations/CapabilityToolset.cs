@@ -119,6 +119,11 @@ internal static class CapabilityToolset
                 "honua_auto_remediation_plan",
                 "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls."),
             CreateTool(
+                (string workItemId, string kind, string currentState, string lowerEnvironment, string publishEnvironment, string previewUrl, string edition)
+                    => toolkit.PlanDeliverableLifecycleAsync(workItemId, kind, currentState, lowerEnvironment, publishEnvironment, previewUrl, edition),
+                "plan_deliverable_lifecycle",
+                "Plan a deliverable's draft->preview->approved->published lifecycle (issue #77) bound to environments. Read-only planner: produces the lifecycle plan (ordered transitions, per-step target environment, gate, required evidence, edition requirement, and the governed Console approval action) and never generates the artifact, executes promotion, or mutates state. Single-environment draft->preview->approved is Pro; cross-environment approved->published (prod through deploy-control gated-promotion) is Enterprise — below the required edition the step is surfaced as edition-gated. Preview->Approved is emitted as a governed SuggestedAction (requiresApproval=true) via the Console approval surface; Approved->Published reuses the release-orchestration gated-promotion engine (approval-record + lower-env-evidence + smoke-contract + slo-gate-evidence). dryRun is always true."),
+            CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary, string owner)
                     => consoleBridge.CreateGitOpsProposalAsync(service, environmentsCsv, revision, action, changeSummary, owner),
                 "create_gitops_proposal",
