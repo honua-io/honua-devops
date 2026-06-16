@@ -1,8 +1,11 @@
 # Console-Facing AI DevOps Operation Bridge
 
-Tracked by `honua-devops#59`. This document defines the Console-facing AI DevOps
-bridge that `honua-devops` owns: stable, evidence-linked projections for GitOps
-proposals, unified operation status, and advisory AI briefs.
+Tracked by `honua-devops#59` (proposal-contract alignment in `honua-devops#78`). This
+document defines the Console-facing AI DevOps bridge that `honua-devops` owns: stable,
+evidence-linked projections for GitOps proposals, unified operation status, and advisory AI
+briefs. The field-for-field alignment with the honua-server `OperationProposal` contract that
+lets `honua-console` aggregate server + devops proposals on one approval surface is specified
+in `docs/gitops-proposal-contract.md`.
 
 ## Purpose
 
@@ -63,8 +66,17 @@ rollback, or write-capable runbooks. Returns a `GitOpsProposalBridge`:
 - `service`, `targetEnvironments`, `desiredRevision`, `currentRevision`
 - `requestedAction`, `effectiveAction` (`propose`), `owner`, `approvalRequired`
 - `workflowLinks`, `evidence`, `suggestedActions`, `createdAt`, `updatedAt`
+- `kind`, `requester`, `agent`, `proposalStatus`, `plan`, `decision` — the canonical
+  honua-server `OperationProposal` alignment fields (issue #78). `proposalStatus` is the
+  canonical lifecycle value (1:1 with the server `WorkflowOperationStatus`); `plan` carries
+  diff/dry-run/risk/blocking-reasons; `decision` is the recorded approve/reject audit (null
+  until a decision is recorded). See `docs/gitops-proposal-contract.md` for the full
+  field-for-field and lifecycle mapping tables.
 
-`status` is `proposed`, `target-unconfigured`, or `contract-unavailable`.
+`status` (the bridge-local projection) is `proposed`, `target-unconfigured`, or
+`contract-unavailable`; `proposalStatus` (the canonical lifecycle) is a
+`WorkflowOperationStatus` value such as `Planned`, `AwaitingApproval`, `Submitted`,
+`Succeeded`, `Failed`, or `Rejected`.
 
 ### `get_gitops_proposal`
 
@@ -76,6 +88,20 @@ Never scrapes Git or CI. When the operation is not found or the contract is unav
 the projection stays blocked (`contract-unavailable`, `operationId` null) and omits the
 server-operation link and governed submit/rollback suggestions, so it never advertises
 mutating actions against an operation that does not exist.
+
+### `record_gitops_proposal_decision`
+
+Records an auditable approve/reject decision against a proposal by stable `operationId`,
+consistent with the honua-server decision audit (issue #78). Captures the deciding `actor`
+and a free-form `reason` (redaction-scrubbed) and returns the `GitOpsProposalBridge` with a
+populated `decision` (`ProposalDecision`: `decision`, `actor`, `reason`, `decidedAt`,
+`resultingStatus`, `governedAction`). An `approve` moves the canonical lifecycle toward
+`Submitted` and authorizes (but never invokes) the governed `submit`; a `reject` is terminal
+(`Rejected`) and surfaces no mutating action. The bridge records the decision only — it never
+submits, executes, or rolls back. When the operation cannot be read the projection stays
+blocked (`contract-unavailable`, `proposalStatus` `unknown`) while still recording the
+decision for audit. See `docs/gitops-proposal-contract.md` for the decision-audit and
+lifecycle mapping.
 
 ### `get_devops_operation_status`
 

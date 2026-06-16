@@ -25,6 +25,72 @@ internal static class BridgeStatus
     internal const string Unknown = "unknown";
 }
 
+// Canonical proposal lifecycle Console aggregates across honua-server and honua-devops
+// proposals (issue #78). These values map 1:1 onto the honua-server WorkflowOperationStatus
+// enum (Honua.Core.Features.ControlPlane.Domain.WorkflowOperationStatus) so a console can
+// render and resolve proposals from both systems on one timeline without a per-source fork.
+// The lifecycle the issue states — Planned -> AwaitingApproval -> Submitted ->
+// Succeeded/Failed/Rejected — is the spine; the additional Reconciling/RollbackRequested/
+// RolledBack/ManualInterventionRequired values are carried verbatim so the projection never
+// loses fidelity against the server enum. Rejected is the devops-side decision terminal a
+// rejected approval resolves to (no execution); it has no distinct server enum member, so
+// the mapping documents it as a decision-audit state layered on AwaitingApproval.
+internal static class ProposalLifecycle
+{
+    internal const string Planned = "Planned";
+    internal const string AwaitingApproval = "AwaitingApproval";
+    internal const string Submitted = "Submitted";
+    internal const string Reconciling = "Reconciling";
+    internal const string Succeeded = "Succeeded";
+    internal const string Failed = "Failed";
+    internal const string Rejected = "Rejected";
+    internal const string RollbackRequested = "RollbackRequested";
+    internal const string RolledBack = "RolledBack";
+    internal const string ManualInterventionRequired = "ManualInterventionRequired";
+
+    // Used when the deploy-control status cannot be read; never a server enum value, so
+    // Console can render the gap instead of a fabricated lifecycle state.
+    internal const string Unknown = "unknown";
+}
+
+// Approve/reject decision kinds recorded against a proposal.
+internal static class ProposalDecisionKind
+{
+    internal const string Approve = "approve";
+    internal const string Reject = "reject";
+}
+
+// Auditable approve/reject decision recorded against a proposal. Mirrors the honua-server
+// decision-audit fields (OperationAuditInfo.RequestedBy + Reason, plus the deploy-control
+// submit/rollback request `reason`): every decision carries the deciding actor, a free-form
+// reason, and the decision timestamp so Console can aggregate server + devops decisions on
+// one audit trail. Decision is "approve" or "reject"; ResultingStatus is the canonical
+// ProposalLifecycle value the decision moves the proposal toward (Submitted for approve,
+// Rejected for reject). GovernedAction names the governed deploy-control verb the decision
+// authorizes (submit for approve, none for reject); the bridge records the decision but never
+// invokes that verb itself.
+internal sealed record ProposalDecision(
+    string Decision,
+    string Actor,
+    string Reason,
+    string DecidedAt,
+    string ResultingStatus,
+    string GovernedAction);
+
+// Provider-neutral proposal plan Console renders without scraping CI or Git: the human-
+// readable diff/change summary, whether the create call was a dry-run (proposals are always
+// recorded with submitImmediately=false, so DryRun is true), whether approval is required, a
+// coarse risk classification, and the blocking reasons that prevent submission. Aligns with
+// the server DeployPlan (RequiresApproval/BlockingReasons/Warnings) plus the change diff the
+// console approval surface needs.
+internal sealed record ProposalPlan(
+    string DiffSummary,
+    bool DryRun,
+    bool RequiresApproval,
+    string Risk,
+    IReadOnlyList<string> BlockingReasons,
+    IReadOnlyList<string> Warnings);
+
 // Release-readiness classification surfaced on an explanation. These are the scenario
 // buckets Console renders (issue #58 fixtures): everything green; advisory warnings that
 // do not block; a hard block; missing/unparseable evidence; and a release whose safe path
@@ -103,6 +169,22 @@ internal sealed record WorkflowStageStatus(
     string Detail,
     IReadOnlyList<EvidenceRef> Evidence);
 
+// Console-facing GitOps proposal projection aligned with the honua-server OperationProposal
+// contract (issue #78). The leading fields are the bridge-local projection honua-console
+// already consumes; the trailing fields (Kind, Requester, Agent, ProposalStatus, Plan,
+// Decision) are the canonical OperationProposal fields the issue requires so Console can
+// aggregate server + devops proposals on one approval surface:
+//   * Kind        — proposal kind, always "gitops-deploy" for this bridge (server: deploy/
+//                   rollback/migration/metadata-release).
+//   * Requester   — the human/owner that requested the proposal (server OperationAuditInfo
+//                   .RequestedBy). Mirrors Owner for this bridge.
+//   * Agent       — the agent identity that recorded the proposal ("honua-devops").
+//   * ProposalStatus — the canonical ProposalLifecycle value (1:1 with the server
+//                   WorkflowOperationStatus enum); Status stays the bridge-local projection
+//                   value (proposed/target-unconfigured/contract-unavailable) for back-compat.
+//   * Plan        — diff + dry-run + risk + blocking reasons (ProposalPlan).
+//   * Decision    — the recorded approve/reject decision audit (actor + reason), null until a
+//                   decision is recorded.
 internal sealed record GitOpsProposalBridge(
     string ProposalId,
     string? OperationId,
@@ -120,7 +202,13 @@ internal sealed record GitOpsProposalBridge(
     IReadOnlyList<EvidenceRef> Evidence,
     IReadOnlyList<SuggestedAction> SuggestedActions,
     string CreatedAt,
-    string UpdatedAt);
+    string UpdatedAt,
+    string Kind,
+    string Requester,
+    string Agent,
+    string ProposalStatus,
+    ProposalPlan Plan,
+    ProposalDecision? Decision = null);
 
 internal sealed record AiDevOpsBrief(
     string BriefId,
