@@ -34,7 +34,7 @@ public class JsonlAuditSinkTests
     }
 
     [Fact]
-    public void Factory_DispatchesByTarget()
+    public async Task Factory_DispatchesByTarget()
     {
         Assert.IsType<NullAuditSink>(AuditSinkFactory.Create("none"));
         Assert.IsType<NullAuditSink>(AuditSinkFactory.Create("disabled"));
@@ -46,9 +46,14 @@ public class JsonlAuditSinkTests
         string tempPath = Path.Combine(Path.GetTempPath(), $"honua-audit-target-{Guid.NewGuid():n}.jsonl");
         try
         {
-            IAuditSink fileSink = AuditSinkFactory.Create($"file://{tempPath}");
-            Assert.IsType<JsonlAuditSink>(fileSink);
-            Assert.StartsWith("file:", fileSink.Target);
+            // A file-target sink opens (and holds) a FileStream on tempPath. Dispose it before
+            // deleting: on Windows the open handle blocks File.Delete with a sharing violation
+            // (POSIX permits unlinking an open file, which masked this leak on Linux/CI).
+            await using (IAuditSink fileSink = AuditSinkFactory.Create($"file://{tempPath}"))
+            {
+                Assert.IsType<JsonlAuditSink>(fileSink);
+                Assert.StartsWith("file:", fileSink.Target);
+            }
         }
         finally
         {
