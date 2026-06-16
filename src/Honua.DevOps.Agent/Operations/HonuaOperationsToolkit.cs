@@ -763,6 +763,158 @@ internal sealed class HonuaOperationsToolkit(
             MetadataReleaseChangeSet: changeSet));
     }
 
+    [Description(
+        "Plan a metadata-release-aware honua-gitops run from a validated metadata release package (issue #57 fast-follow). " +
+        "Input is the same server-supplied release-package JSON consumed by generate_metadata_release_changeset. Fuses the " +
+        "PR-ready change set with the honua-gitops planner so a single read-only output carries BOTH the desired-state change " +
+        "set AND a metadata-release-aware gitops plan: per-environment diff/drift/state transitions tagged in-scope vs " +
+        "not-targeted, plus a metadata-release summary (semantic resources, compatibility verdict, breaking-change count, " +
+        "script coverage, rollback classification, known-good revision, blocking reasons). Default-safe and deterministic: it " +
+        "never calls the backend, submits, rolls back, or mutates state; merge/reconcile runs through the governed " +
+        "GitOps/approval path. Returns a blocked plan (surfacing blocking reasons) when compatibility flags breaking changes, " +
+        "and a graceful unknown response when the release-package document cannot be parsed.")]
+    public Task<OperationResponse> PlanMetadataReleaseGitOpsAsync(
+        string releasePackageJson,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        if (!MetadataReleaseChangeSetBuilder.TryBuild(releasePackageJson, out MetadataReleaseChangeSet changeSet, out string? error))
+        {
+            return Task.FromResult(new OperationResponse(
+                Status: MetadataChangeSetReadiness.Unknown,
+                Summary: "Metadata release package could not be turned into a gitops plan: the supplied document was empty or malformed.",
+                Findings:
+                [
+                    $"Parse error: {error ?? "unknown"}",
+                    "No change set and no gitops plan were produced."
+                ],
+                Actions:
+                [
+                    "Supply a valid metadata release-package JSON document (server compatibility report, semantic resources, environments, rollback policy).",
+                    "No Git artifacts were produced and no backend call was made; nothing was written."
+                ],
+                ValidationChecks:
+                [
+                    "release-package-json-required",
+                    "metadata-release-gitops-plan-read-only-no-backend-call"
+                ],
+                Risks:
+                [
+                    "Readiness is unknown because no release-package evidence could be interpreted."
+                ]));
+        }
+
+        // Project the change set's service / target environments / desired revision onto the
+        // existing honua-gitops planner. This is read-only and backend-free: an offline backend
+        // result (no manifest export, no capability probe) feeds the planner so the plan is fully
+        // derived from the supplied release package and deterministic for a given input.
+        string normalizedGitOpsTool = ValidateGitOpsTool(runtime.GitOpsTool);
+        string planService = ValidateServiceName(changeSet.Service);
+        string planRevision = ValidateRevision(changeSet.DesiredRevision, "desired revision");
+        IReadOnlyList<string> planEnvironments = changeSet.TargetEnvironments;
+        const string policyGate = "metadata-release-gitops-plan";
+
+        using GitOpsDeployBackendResult backendResult = BuildOfflineGitOpsBackendResult();
+
+        RuntimeAdapterRequest adapterRequest = new(
+            Service: planService,
+            Environments: planEnvironments,
+            Revision: planRevision,
+            Action: "plan",
+            ChangeSummary: $"metadata release {changeSet.ReleasePackageId}",
+            GitOpsTool: normalizedGitOpsTool,
+            TerraformRepository: SanitizePayloadValue(runtime.TerraformRepository, "terraform repository"),
+            TerraformRef: ValidateRevision(runtime.TerraformRef, "terraform ref"),
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            DryRun: true,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry
+            .ResolveMany(ValidateDeploymentTargets(runtime.TerraformDeploymentTargets))
+            .Select(adapter => adapter.BuildWorkflow(adapterRequest))
+            .ToArray();
+
+        ReleaseOrchestrationPlan releaseOrchestration = ReleaseOrchestrationPlanner.Build(
+            adapterWorkflows,
+            planEnvironments,
+            requestedAction: "plan",
+            dryRun: true,
+            policyGate);
+        ServiceBundleReconciliationPlan serviceBundleReconciliation = ServiceBundleReconciliationPlanner.Build(
+            planService,
+            planEnvironments,
+            gateway.Configuration,
+            backendResult.CapabilitiesPayload,
+            backendResult.CapabilitiesResult.PayloadPreview,
+            backendResult.ExportPayload,
+            backendResult.ExportResult.PayloadPreview);
+        GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
+            planService,
+            planEnvironments,
+            planRevision,
+            requestedAction: "plan",
+            normalizedGitOpsTool,
+            dryRun: true,
+            policyGate,
+            backendResult,
+            releaseOrchestration,
+            serviceBundleReconciliation);
+        gitOpsPlan = GitOpsPlanner.AttachMetadataRelease(gitOpsPlan, changeSet);
+        GitOpsMetadataReleaseSummary metadataRelease = gitOpsPlan.MetadataRelease!;
+
+        List<string> findings =
+        [
+            $"Release package: {changeSet.ReleasePackageId} ({changeSet.Service} -> {string.Join(", ", changeSet.TargetEnvironments)} @ {changeSet.DesiredRevision})",
+            $"Readiness: {changeSet.Readiness}",
+            $"Semantic resources: {metadataRelease.SemanticResources.Count}",
+            $"Compatibility: {metadataRelease.CompatibilityStatus} (breaking={metadataRelease.BreakingChanges}, warnings={metadataRelease.Warnings}).",
+            $"Script coverage: {metadataRelease.ScriptCoverage}.",
+            $"Rollback classification: {metadataRelease.RollbackClassification}; known-good revision: {metadataRelease.KnownGoodRevision ?? "unknown"}.",
+            $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
+            $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
+            $"GitOps actual state source: {gitOpsPlan.ActualStateSource}."
+        ];
+        findings.AddRange(changeSet.BlockingReasons.Select(reason => $"Blocking: {reason}"));
+
+        List<string> actions =
+        [
+            "Metadata-release gitops plan is read-only; honua-devops fuses the change set with the planner in-process and never writes Git, opens a PR, applies manifests, calls the backend, or creates a server operation.",
+            $"Review the metadata-release-aware plan, then route merge/reconcile for branch `{changeSet.BranchName}` through the governed GitOps/approval path."
+        ];
+        actions.AddRange(BuildMetadataReleasePlanActions(metadataRelease));
+        actions.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
+
+        return Task.FromResult(new OperationResponse(
+            Status: changeSet.Readiness,
+            Summary: $"Metadata-release gitops plan for `{changeSet.Service}` {changeSet.DesiredRevision} -> {string.Join(", ", changeSet.TargetEnvironments)} ({changeSet.Readiness}; compatibility {metadataRelease.CompatibilityStatus}).",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "metadata-release-gitops-plan-read-only-no-backend-call",
+                "plan-derived-from-release-package-deterministic",
+                "compatibility-report-interpreted-not-computed",
+                "metadata-target-status-tagged-per-environment",
+                ..gitOpsPlan.RequiredEvidence,
+                "Review state transitions before approving any write-capable GitOps path."
+            ],
+            Risks:
+            [
+                changeSet.Readiness == MetadataChangeSetReadiness.Blocked
+                    ? "Plan is blocked by the supplied compatibility report; do not reconcile until the breaking change is resolved."
+                    : "Plan reflects the supplied release-package evidence and can drift before merge.",
+                metadataRelease.RollbackClassification == MetadataRollbackClass.Irreversible
+                    ? "Rollback is classified irreversible; only a forward fix can recover this release."
+                    : "Acting on the plan still requires the governed approval/submit path.",
+                "Snapshot-only planning can drift from reality if actual state changes before apply."
+            ],
+            GitOpsPlan: gitOpsPlan,
+            ReleaseOrchestration: releaseOrchestration,
+            ServiceBundleReconciliation: serviceBundleReconciliation,
+            MetadataReleaseChangeSet: changeSet));
+    }
+
     [Description("Analyze customer requirements through Honua API and generate deployment recommendations.")]
     public async Task<OperationResponse> AnalyzeCustomerRequirementsAsync(
         string customerRequirements,
@@ -2456,6 +2608,56 @@ internal sealed class HonuaOperationsToolkit(
             yield return $"ServiceBundle reconcile `{operation.Surface}` ({operation.Availability}): read `{operation.ReadSource}` -> write `{operation.WriteTarget}`";
             yield return $"ServiceBundle diff `{operation.Surface}`: {operation.DiffSummary}";
         }
+    }
+
+    // Surface the metadata-release projection as plan action lines so an agent/Console reading the
+    // response sees the compatibility verdict, semantic resources, script coverage, rollback posture,
+    // and any blocking reasons alongside the gitops diff/drift/transition lines.
+    private static IEnumerable<string> BuildMetadataReleasePlanActions(GitOpsMetadataReleaseSummary summary)
+    {
+        yield return $"Metadata release `{summary.ReleasePackageId}` readiness: {summary.Readiness}; compatibility: {summary.CompatibilityStatus} (breaking={summary.BreakingChanges}, warnings={summary.Warnings}).";
+        yield return $"Metadata release script coverage: {summary.ScriptCoverage}.";
+        yield return $"Metadata release rollback classification: {summary.RollbackClassification}; known-good revision: {summary.KnownGoodRevision ?? "unknown"}.";
+
+        foreach (MetadataResourceSummary resource in summary.SemanticResources)
+        {
+            yield return $"Metadata semantic resource `{resource.Kind}/{resource.Name}`: {resource.Action}.";
+        }
+
+        foreach (string reason in summary.BlockingReasons)
+        {
+            yield return $"Metadata release blocking reason: {reason}";
+        }
+    }
+
+    // Build an offline gitops backend result for the metadata-release plan path: no manifest export,
+    // no capability probe, no network. The planner treats the absent payloads as actual-state-pending
+    // so the plan is derived solely from the supplied release package and is deterministic.
+    private GitOpsDeployBackendResult BuildOfflineGitOpsBackendResult()
+    {
+        BackendCallResult exportSkipped = new(
+            IsSuccess: false,
+            Endpoint: BackendGateway.BuildEndpoint(gateway.Configuration.HonuaApiBaseUri, gateway.Configuration.HonuaManifestExportPath).ToString(),
+            Detail: "metadata-release plan: manifest export skipped (read-only, no backend call)",
+            PayloadPreview: "export not requested");
+        BackendCallResult capabilitiesSkipped = new(
+            IsSuccess: false,
+            Endpoint: BackendGateway.BuildEndpoint(gateway.Configuration.HonuaApiBaseUri, gateway.Configuration.HonuaAdminCapabilitiesPath).ToString(),
+            Detail: "metadata-release plan: capability probe skipped (read-only, no backend call)",
+            PayloadPreview: "capabilities not requested");
+        BackendCallResult applySkipped = new(
+            IsSuccess: true,
+            Endpoint: BackendGateway.BuildEndpoint(gateway.Configuration.HonuaApiBaseUri, gateway.Configuration.HonuaManifestApplyPath).ToString(),
+            Detail: "metadata-release plan: manifest apply skipped (read-only)",
+            PayloadPreview: "apply not requested");
+
+        return new GitOpsDeployBackendResult(
+            ApplyResult: applySkipped,
+            ExportResult: exportSkipped,
+            CapabilitiesResult: capabilitiesSkipped,
+            CombinedResult: exportSkipped,
+            ExportPayload: null,
+            CapabilitiesPayload: null);
     }
 
     private static IEnumerable<string> BuildGitOpsPlanActions(GitOpsPlan plan)
