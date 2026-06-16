@@ -493,7 +493,10 @@ internal static class MetadataReleaseChangeSetBuilder
         {
             foreach (MetadataResourceSummary resource in resources)
             {
-                builder.Append($"- `{resource.Kind}/{resource.Name}` ({resource.Action})\n");
+                // Resource kind/name are operator-supplied free text and can carry secrets
+                // (e.g. an api_key=... fragment smuggled into a name); scrub before they land
+                // in the PR body, the same redaction guarantee the YAML manifests already get.
+                builder.Append($"- `{Redaction.Scrub(resource.Kind)}/{Redaction.Scrub(resource.Name)}` ({Redaction.Scrub(resource.Action)})\n");
             }
 
             builder.Append('\n');
