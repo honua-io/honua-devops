@@ -191,6 +191,7 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         "honua_explain_slow_queries",
         "honua_runbook_execute",
         "honua_auto_remediation_plan",
+        "plan_deliverable_lifecycle",
         "create_gitops_proposal",
         "get_gitops_proposal",
         "get_devops_operation_status",

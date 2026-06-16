@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
+using Honua.DevOps.Agent.Operations.Deliverable;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
@@ -27,4 +28,5 @@ internal sealed record OperationResponse(
     [property: JsonIgnore] ServiceBundleReconciliationPlan? ServiceBundleReconciliation = null,
     [property: JsonIgnore] IReadOnlyList<OperationBackendStep>? BackendSteps = null,
     [property: JsonIgnore] ConsoleBridgeProjection? ConsoleBridge = null,
-    [property: JsonIgnore] MetadataReleaseChangeSet? MetadataReleaseChangeSet = null);
+    [property: JsonIgnore] MetadataReleaseChangeSet? MetadataReleaseChangeSet = null,
+    [property: JsonIgnore] DeliverableProjection? DeliverableLifecycle = null);
