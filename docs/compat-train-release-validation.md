@@ -92,6 +92,23 @@ the success path and every blocking path (blocked gate, uncovered surface,
 waiver accept/reject, advisory mode, failing scoreboard, bundle shape). It runs
 in CI via `.github/workflows/compat-train-release-validation.yml`.
 
+### Attaching the evidence bundle to the release gate
+
+The same workflow has a `workflow_dispatch` lane (`release-validation-dispatch`)
+that runs the **real** validator and **attaches the evidence bundle to the run**,
+satisfying the `honua-devops#41` criterion "evidence bundle output is attached to
+the release gate". Trigger it with a `manifest_url` (the canonical
+`honua-server/release/honua-<id>.json`) and a `mode` (`advisory`, the default, or
+`live`). With no `manifest_url` it re-derives an advisory bundle from the
+committed 2026-05 Preview example
+(`compatibility/scoreboard/release-validation-2026-05-preview.json`) so the
+dispatch is self-contained. The lane writes `release-validation-bundle.json` and
+`release-validation-notes.md`, appends the release-notes block to the run's step
+summary, and uploads both as the `compat-train-release-validation-<run_id>`
+artifact — the machine-readable evidence that can be linked from the Honua
+Roadmap Project. This mirrors the conformance gate's dispatch lane, which
+uploads its `compat-train-conformance-<run_id>` evidence the same way.
+
 ## Per-repo live-evidence gate (`compat-train-release-gate.sh`)
 
 This gate evaluates the per-repo release-candidate evidence plus the published
