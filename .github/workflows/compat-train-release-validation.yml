@@ -39,12 +39,17 @@ jobs:
           bash -n scripts/smoke-compat-train-release-gate.sh
           bash -n scripts/compat-train-release-validation.sh
           bash -n scripts/smoke-compat-train-release-validation.sh
+          bash -n scripts/compat-train-live-probe.sh
+          bash -n scripts/smoke-compat-train-live-probe.sh
 
       - name: Compatibility-train release gate smoke (per-repo live evidence)
         run: ./scripts/smoke-compat-train-release-gate.sh
 
       - name: Compatibility-train release validation smoke (manifest-driven)
         run: ./scripts/smoke-compat-train-release-validation.sh
+
+      - name: Compatibility-train live-probe smoke (active re-verification)
+        run: ./scripts/smoke-compat-train-live-probe.sh
 
   release-validation-dispatch:
     name: Validate a candidate manifest and attach the evidence bundle
@@ -88,11 +93,40 @@ jobs:
             ./scripts/compat-train-release-validation.sh
           fi
 
+      - name: Active live-probe re-verification of the candidate
+        # The manifest evaluator above transcribes the manifest's recorded
+        # evidenceState. This step ACTIVELY re-verifies what the runner can
+        # actually reach: it re-fetches every cited GitHub Actions run conclusion
+        # with the runner's GITHUB_TOKEN, and (when a base URL / chart is wired)
+        # smokes the server/Helm surfaces. Surfaces needing live cloud/creds are
+        # reported BLOCKED with their missing dependency — never faked green.
+        # Runs only when a real manifest_url is supplied (the reconstructed
+        # example manifest carries no live run URLs to re-verify).
+        if: ${{ github.event.inputs.manifest_url != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HONUA_PROBE_MANIFEST_URL: ${{ github.event.inputs.manifest_url }}
+          HONUA_PROBE_MODE: ${{ github.event.inputs.mode || 'advisory' }}
+          HONUA_PROBE_BUNDLE_OUTPUT: live-probe-bundle.json
+          # Wire these to activate the creds-gated probes once infra exists:
+          HONUA_PROBE_BASE_URL: ${{ vars.HONUA_PROBE_BASE_URL }}
+          HONUA_PROBE_HELM_CHART: ${{ vars.HONUA_PROBE_HELM_CHART }}
+        run: ./scripts/compat-train-live-probe.sh
+
       - name: Append release notes to step summary
         if: ${{ always() }}
         run: |
           if [[ -f release-validation-notes.md ]]; then
             cat release-validation-notes.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if [[ -f live-probe-bundle.json ]]; then
+            {
+              echo ""
+              echo "## Active live-probe re-verification"
+              jq -r '"- probes: \(.summary.passed) passed, \(.summary.failed) failed, \(.summary.blocked) blocked"' live-probe-bundle.json
+              echo ""
+              jq -r '.probes[] | "- [" + (.state|ascii_upcase) + "] (" + .surface + ") " + .id + " — " + (.detail // "") + (if .missing then " [needs: " + .missing + "]" else "" end)' live-probe-bundle.json
+            } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
       - name: Upload release-validation evidence bundle + notes
@@ -104,3 +138,4 @@ jobs:
           path: |
             release-validation-bundle.json
             release-validation-notes.md
+            live-probe-bundle.json
