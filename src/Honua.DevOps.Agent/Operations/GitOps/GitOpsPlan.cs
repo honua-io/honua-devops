@@ -11,4 +11,5 @@ internal sealed record GitOpsPlan(
     IReadOnlyList<string> SupportedOperations,
     IReadOnlyList<string> RequiredEvidence,
     IReadOnlyList<GitOpsEnvironmentPlan> Environments,
-    IReadOnlyList<GitOpsStateTransitionPlan> StateTransitions);
+    IReadOnlyList<GitOpsStateTransitionPlan> StateTransitions,
+    GitOpsMetadataReleaseSummary? MetadataRelease = null);
