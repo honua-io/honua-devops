@@ -65,6 +65,11 @@ internal static class CapabilityToolset
                 "generate_metadata_release_changeset",
                 "Generate a PR-ready desired-state change set from a validated metadata release package: deterministic branch name, commit message, PR title/body with evidence links, repo-relative file path -> content map (metadata manifests, environment overlays, optional data-script coverage, validation evidence, rollback policy), rollback commands derived from the rollback classification and known-good revision, and an overall ready/warning/blocked/unknown readiness. Read-only: renders Git artifacts in-process and never writes Git, opens a PR, applies manifests, or creates a server operation; merge/reconcile runs through the governed GitOps/approval path. Blocked when compatibility flags breaking changes."),
             CreateTool(
+                (string releasePackageJson)
+                    => toolkit.PlanMetadataReleaseGitOpsAsync(releasePackageJson),
+                "plan_metadata_release_gitops",
+                "Plan a metadata-release-aware honua-gitops run from a validated metadata release package. Fuses the PR-ready change set with the honua-gitops planner so a single read-only output carries BOTH the desired-state change set AND a metadata-release-aware gitops plan: per-environment diff/drift/state transitions tagged in-scope vs not-targeted, plus a metadata-release summary (semantic resources, compatibility verdict, breaking-change count, script coverage, rollback classification, known-good revision, blocking reasons). Default-safe and deterministic: never calls the backend, submits, rolls back, or mutates state; merge/reconcile runs through the governed GitOps/approval path. Returns a blocked plan surfacing blocking reasons when compatibility flags breaking changes, and a graceful unknown response when the document cannot be parsed."),
+            CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary)
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),
                 "deploy_service_gitops",
