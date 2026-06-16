@@ -2,6 +2,7 @@ using System.ComponentModel;
 
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
+using Honua.DevOps.Agent.Operations.Deliverable;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -1410,6 +1411,175 @@ internal sealed class HonuaOperationsToolkit(
             BackendSteps: remediationResult is null
                 ? null
                 : [ToBackendStep("auto-remediation", remediationResult, mutatesState: !string.IsNullOrWhiteSpace(operationId))]);
+    }
+
+    [Description(
+        "Plan a deliverable's draft->preview->approved->published lifecycle (issue #77) bound to environments. " +
+        "Read-only planner: it produces the lifecycle plan (ordered transitions, per-step target environment, gate, " +
+        "required evidence, edition requirement, and the governed Console approval action) and does NOT generate the " +
+        "deliverable artifact, execute promotion, or mutate state. Inputs: workItemId + kind identify the deliverable; " +
+        "currentState (draft/preview/approved/published, default draft) is where the lifecycle starts; lowerEnvironment " +
+        "is the preview/approval target; publishEnvironment (default prod) is the cross-environment promotion target. " +
+        "Edition gating: single-environment draft->preview->approved is Pro; cross-environment approved->published " +
+        "(prod through deploy-control gated-promotion) is Enterprise — below the required edition the corresponding " +
+        "step is surfaced as edition-gated rather than executed. The Preview->Approved gate is emitted as a governed " +
+        "SuggestedAction with requiresApproval=true via the Console approval surface; Approved->Published reuses the " +
+        "release-orchestration gated-promotion engine (approval-record + lower-env-evidence + smoke-contract + " +
+        "slo-gate-evidence). dryRun is always true.")]
+    public Task<OperationResponse> PlanDeliverableLifecycleAsync(
+        string workItemId,
+        string kind,
+        string currentState,
+        string lowerEnvironment,
+        string publishEnvironment,
+        string previewUrl,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        string normalizedWorkItemId = SanitizePayloadValue(workItemId, "work item ID");
+        string normalizedKind = Normalize(kind, "deliverable").Trim().ToLowerInvariant();
+        DeliverableLifecycleState currentLifecycleState = DeliverableLifecycleStateExtensions.ParseOrDraft(currentState);
+        string normalizedEdition = NormalizeEdition(edition);
+
+        // Pro is the floor for the single-environment lifecycle (draft->preview->approved).
+        if (!EditionAtLeast(normalizedEdition, "pro"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("plan_deliverable_lifecycle", normalizedEdition, "pro"));
+        }
+
+        // Resolve the lower (preview/approval) and publish (promotion) environments against
+        // the allowed set; never plan against an environment the runtime does not permit.
+        string normalizedLowerEnvironment = ParseEnvironments(lowerEnvironment).First();
+        string normalizedPublishEnvironment = ParseEnvironments(Normalize(publishEnvironment, "prod")).First();
+        string? normalizedPreviewUrl = string.IsNullOrWhiteSpace(previewUrl)
+            ? null
+            : SanitizePayloadValue(previewUrl, "preview URL");
+
+        string deliverableId = $"{normalizedWorkItemId}:{normalizedKind}";
+        string approvalOperationId = $"deliverable-lifecycle:{deliverableId}";
+
+        bool enterpriseUnlocked = EditionAtLeast(normalizedEdition, "enterprise");
+
+        // Reuse the release-orchestration gated-promotion engine for Approved->Published
+        // rather than writing a new promotion engine. Only build it when the cross-env step
+        // is both planned (from Approved or earlier) and unlocked at Enterprise; below
+        // Enterprise the step is surfaced as edition-gated with no executable plan.
+        bool crossEnvPlanned = currentLifecycleState <= DeliverableLifecycleState.Approved;
+        ReleaseOrchestrationPlan? promotionPlan = null;
+        if (crossEnvPlanned && enterpriseUnlocked)
+        {
+            string[] promotionEnvironments = new[] { normalizedLowerEnvironment, normalizedPublishEnvironment }
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            RuntimeAdapterRequest adapterRequest = new(
+                Service: deliverableId,
+                Environments: promotionEnvironments,
+                Revision: "deliverable-artifact",
+                Action: "promote",
+                ChangeSummary: $"publish deliverable `{deliverableId}` from `{normalizedLowerEnvironment}` to `{normalizedPublishEnvironment}`",
+                GitOpsTool: ValidateGitOpsTool(runtime.GitOpsTool),
+                TerraformRepository: SanitizePayloadValue(runtime.TerraformRepository, "terraform repository"),
+                TerraformRef: ValidateRevision(runtime.TerraformRef, "terraform ref"),
+                TerraformLocalPath: runtime.TerraformLocalPath,
+                DryRun: true,
+                ExecutionMode: runtime.ExecutionMode,
+                ExecutionTier: runtime.ExecutionTier);
+            IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry
+                .ResolveMany(ValidateDeploymentTargets(runtime.TerraformDeploymentTargets))
+                .Select(adapter => adapter.BuildWorkflow(adapterRequest))
+                .ToArray();
+            promotionPlan = ReleaseOrchestrationPlanner.Build(
+                adapterWorkflows,
+                promotionEnvironments,
+                "promote",
+                dryRun: true,
+                "deliverable-publish-gated-promotion");
+        }
+
+        Operations.Deliverable.Deliverable deliverable = new(
+            DeliverableId: deliverableId,
+            WorkItemId: normalizedWorkItemId,
+            Kind: normalizedKind,
+            State: currentLifecycleState,
+            Environment: normalizedLowerEnvironment,
+            PreviewUrl: normalizedPreviewUrl,
+            Provenance:
+            [
+                new EvidenceRef(
+                    Type: "work-item",
+                    Source: "work-intake",
+                    RawRef: normalizedWorkItemId,
+                    Url: null,
+                    Summary: $"Deliverable `{deliverableId}` references work item `{normalizedWorkItemId}`.",
+                    CapturedAt: "planner",
+                    Sensitivity: EvidenceSensitivity.Internal)
+            ]);
+
+        IDeliverableApprovalTrigger approvalTrigger = new ConsoleApprovalTrigger();
+        DeliverableLifecyclePlan lifecyclePlan = DeliverableLifecyclePlanner.Build(
+            deliverable,
+            normalizedLowerEnvironment,
+            normalizedPublishEnvironment,
+            normalizedEdition,
+            approvalTrigger,
+            promotionPlan,
+            approvalOperationId);
+        DeliverableProjection projection = DeliverableProjection.From(lifecyclePlan, deliverable);
+        SuggestedAction? approvalAction = DeliverableLifecyclePlanner.FindApprovalAction(lifecyclePlan);
+
+        List<string> findings =
+        [
+            $"Deliverable: {deliverableId} (kind={normalizedKind}, work item={normalizedWorkItemId}).",
+            $"Current state: {currentLifecycleState.ToConfigValue()}; lower env={normalizedLowerEnvironment}; publish env={normalizedPublishEnvironment}.",
+            $"Caller edition: {normalizedEdition}; cross-env promotion planned={crossEnvPlanned}, unlocked={enterpriseUnlocked}.",
+            $"Preview link available: {!string.IsNullOrWhiteSpace(normalizedPreviewUrl)} (never fabricated)."
+        ];
+        findings.AddRange(lifecyclePlan.Transitions.Select(transition =>
+            $"Transition {transition.FromState.ToConfigValue()} -> {transition.ToState.ToConfigValue()}: " +
+            $"env={transition.TargetEnvironment}, gate={transition.Gate}, edition={transition.RequiredEdition}, " +
+            $"evidence=[{string.Join(", ", transition.RequiredEvidence)}]."));
+
+        List<string> actions =
+        [
+            "Lifecycle is plan-only: honua-devops does not generate the artifact, execute promotion, or mutate deliverable state here.",
+            $"Draft -> Preview renders in lower environment `{normalizedLowerEnvironment}` (Pro); write the preview link and provenance card back to the work item.",
+            "Preview -> Approved routes the governed Console approval action through the approval surface; honua-devops never approves on its own."
+        ];
+        if (approvalAction is not null)
+        {
+            actions.Add($"Approval action `{approvalAction.Id}` (requiresApproval={approvalAction.RequiresApproval}, source={projection.Transitions.First(t => t.ToState == "approved").ApprovalSource}).");
+        }
+        if (crossEnvPlanned && enterpriseUnlocked)
+        {
+            actions.Add($"Approved -> Published promotes to `{normalizedPublishEnvironment}` via the gated-promotion engine (Enterprise); requires {string.Join(" + ", DeliverableLifecyclePlanner.PublishEvidence)}.");
+        }
+        else if (crossEnvPlanned)
+        {
+            actions.Add($"Approved -> Published is edition-gated: cross-environment promotion to `{normalizedPublishEnvironment}` requires Enterprise (current edition `{normalizedEdition}`).");
+        }
+
+        return Task.FromResult(new OperationResponse(
+            Status: "deliverable-lifecycle-plan",
+            Summary: $"Deliverable lifecycle plan for `{deliverableId}` ({currentLifecycleState.ToConfigValue()} -> published) across `{normalizedLowerEnvironment}` -> `{normalizedPublishEnvironment}`.",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "deliverable-lifecycle-read-only-no-artifact-generation",
+                "deliverable-lifecycle-no-promotion-execution",
+                "preview-link-not-fabricated",
+                "preview-to-approved-requires-governed-approval",
+                .. DeliverableLifecyclePlanner.FlattenEvidenceRequirements(lifecyclePlan)
+            ],
+            Risks:
+            [
+                "Plan reflects the supplied work item and environments and can drift before the artifact is built.",
+                "Cross-environment promotion to prod must remain Enterprise-gated and routed through the governed deploy-control path.",
+                "Preview -> Approved must clear the Console approval surface; never auto-advance the lifecycle."
+            ],
+            DeliverableLifecycle: projection));
     }
 
     [Description("Triage a support ticket with read-only diagnosis, guided-fix commands, or operator-scoped escalation.")]
