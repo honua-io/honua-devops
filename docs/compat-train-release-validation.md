@@ -109,6 +109,95 @@ artifact — the machine-readable evidence that can be linked from the Honua
 Roadmap Project. This mirrors the conformance gate's dispatch lane, which
 uploads its `compat-train-conformance-<run_id>` evidence the same way.
 
+## Active live-probe re-verification (`compat-train-live-probe.sh`)
+
+The manifest-driven validator above is a *transcriber*: it trusts the
+`evidenceState` each signal records in the manifest. honua-devops#41 also asks
+the pipeline to **execute smoke checks across the named surfaces** — to
+independently re-verify, not just re-read. `compat-train-live-probe.sh` is that
+active layer. Given the same release-train manifest it runs a set of **pluggable,
+honest probes**, each of which runs only what the environment can actually reach:
+
+| Probe | Verifies | When BLOCKED (documented missing dependency) |
+| --- | --- | --- |
+| `github-run` | re-fetches the conclusion of every GitHub Actions run URL the manifest cites and confirms it is still `success` | no `gh` auth and no `GITHUB_TOKEN` -> `needs gh auth login OR GITHUB_TOKEN` |
+| `candidate-image` | the candidate image tag+digest are published | manifest `candidate.image.tag/digest` still null -> `needs a published RC image tag+digest` |
+| `server-health` | HTTP smoke (`/healthz/ready`, `/healthz/live`) against a live candidate | no `HONUA_PROBE_BASE_URL` -> `needs a real external staging target` (the honua-sdk-python#53 / #41 staging-URL gap) |
+| `helm-metadata` | the chart `appVersion` points at the candidate, not a placeholder | no `HONUA_PROBE_HELM_CHART` / chart unversioned -> `needs a versioned chart (honua-helm#1)` |
+| `terraform-plan` | a candidate IaC plan applies against the seeded demo | no live target/creds -> `needs honua-iac#30 + cloud creds` |
+
+**Correctness rule (the #41 contract):** a probe that cannot truly run reports
+state `blocked` with a `missing` dependency. It **never emits a green it did not
+verify**. A probe state is one of `passed` (actively re-verified green), `failed`
+(actively re-verified and *not* green — a real regression the manifest may have
+under-reported), or `blocked` (a documented gap). A surface rolls up to
+`verified` only with >=1 `passed` and zero `failed` probes; a surface with only
+blocked probes is `blocked`, never silently green.
+
+Default-safe and read-only (per `AGENTS.md`): the probe performs only GET
+requests and read-only status lookups; it never deploys, promotes, submits, or
+rolls back. In the default `advisory` mode it always exits 0 (so it can be folded
+into the evaluator's bundle and run on a still-gapped preview). In
+`HONUA_PROBE_MODE=live` it exits non-zero only when a probe that *actually ran*
+came back `failed` — blocked-on-missing-dependency probes are gaps, not
+regressions, and never fail the run.
+
+```bash
+# Active re-verification against the canonical manifest (re-checks every cited
+# GitHub run; server/helm/terraform stay BLOCKED until their infra is wired).
+GITHUB_TOKEN=... \
+HONUA_PROBE_BUNDLE_OUTPUT=live-probe-bundle.json \
+  ./scripts/compat-train-live-probe.sh \
+  ../honua-server/release/honua-2026-05-preview.json
+
+# Activate the creds-gated probes once the infra exists:
+HONUA_PROBE_BASE_URL=https://staging.honua.example \
+HONUA_PROBE_HELM_CHART=path/to/Chart.yaml \
+  ./scripts/compat-train-live-probe.sh ../honua-server/release/honua-2026-05-preview.json
+```
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HONUA_PROBE_MANIFEST` / arg / `HONUA_PROBE_MANIFEST_URL` | _(required)_ | Release-train manifest path or URL |
+| `HONUA_PROBE_MODE` | `advisory` | `live` exits non-zero on a real failed probe; `advisory` always exits 0 |
+| `HONUA_PROBE_BASE_URL` | _(none)_ | Live candidate base URL for the `server-health` probe |
+| `HONUA_PROBE_HELM_CHART` | _(none)_ | Path/dir of a `Chart.yaml` for the `helm-metadata` probe |
+| `HONUA_PROBE_BUNDLE_OUTPUT` | `live-probe-bundle.json` | Where to write the probe bundle |
+| `HONUA_PROBE_MAX_RUNS` | `40` | Cap on cited GitHub runs to re-verify |
+| `GITHUB_TOKEN` | _(none)_ | Enables the `github-run` probe when `gh` is not authed |
+
+Against the live 2026-05 Preview manifest this probe re-verifies all seven cited
+GitHub runs (five still green; `server-security-nightly` and
+`sdk-python-staging-integration` confirmed *failing*, matching their manifest
+blockers) and reports the image, server-health, Helm, and Terraform surfaces as
+BLOCKED on their named dependencies. The `release-validation-dispatch` workflow
+lane runs this probe with the runner's `GITHUB_TOKEN` and folds the
+`live-probe-bundle.json` into the uploaded evidence artifact. Its self-test
+`scripts/smoke-compat-train-live-probe.sh` proves the BLOCKED-not-faked contract
+fully offline and runs in CI.
+
+### Probe-bundle schema (`compat-train-live-probe`)
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "kind": "compat-train-live-probe",
+  "generatedFrom": "<manifest path/url>",
+  "releaseId": "...", "channel": "...", "candidateRef": "...", "mode": "advisory",
+  "summary": { "probes": N, "passed": N, "failed": N, "blocked": N },
+  "surfaceProbeCoverage": [
+    { "surface": "server", "passed": N, "failed": N, "blocked": N,
+      "status": "verified | failed | blocked" }
+  ],
+  "probes": [
+    { "id": "github-run:<signal>", "surface": "server", "state": "passed | failed | blocked",
+      "detail": "...", "missing": null /* or the missing dependency string */ }
+  ],
+  "references": { "manifest": "...", "ownedBy": ".../issues/41",
+                  "evaluator": "scripts/compat-train-release-validation.sh" }
+}
+```
+
 ## Per-repo live-evidence gate (`compat-train-release-gate.sh`)
 
 This gate evaluates the per-repo release-candidate evidence plus the published
