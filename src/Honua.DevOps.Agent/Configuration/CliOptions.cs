@@ -13,7 +13,8 @@ internal sealed record CliOptions(
     int OperationLimit,
     bool Listen,
     bool IntakeListen,
-    bool Mcp)
+    bool Mcp,
+    string? AwaitApproval)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
@@ -27,6 +28,7 @@ internal sealed record CliOptions(
     private const string ListenFlag = "--listen";
     private const string IntakeListenFlag = "--intake-listen";
     private const string McpFlag = "--mcp";
+    private const string AwaitApprovalFlag = "--await-approval";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
 
     internal const string HelpText = """
@@ -51,6 +53,11 @@ Options:
   --mcp                       Run the operator toolset as an MCP stdio server (for Claude Code, Codex,
                               and other MCP clients). No model provider key is required; gates and
                               audit follow the same HONUA_DEVOPS_* runtime controls. See docs/QUICKSTART-MCP.md.
+  --await-approval <id>       Wait for a paused deploy-control operation to leave AwaitingApproval.
+                              Polls the honua-server deploy-control operation until an operator approves
+                              it in Console (Submitted/terminal) or HONUA_DEVOPS_APPROVAL_TIMEOUT_SECONDS
+                              (default 3600) elapses. pr-first/break-glass-only wait read-only; direct-allowed
+                              may submit per policy. Reports the final status and exits non-zero on timeout/error.
   -h, --help                  Show this help and exit.
 
 Environment (--listen):
@@ -80,6 +87,7 @@ Examples:
   honua-devops --listen
   honua-devops --intake-listen
   honua-devops --mcp
+  honua-devops --await-approval 7d2b9f...
 """;
 
     internal static CliOptions Parse(string[] args)
@@ -95,6 +103,7 @@ Examples:
         bool listen = false;
         bool intakeListen = false;
         bool mcp = false;
+        string? awaitApproval = null;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -175,6 +184,17 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(AwaitApprovalFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 >= args.Length)
+                {
+                    throw new InvalidOperationException($"{AwaitApprovalFlag} requires a deploy-control operation id.");
+                }
+
+                awaitApproval = args[++index];
+                continue;
+            }
+
             if (argument.Equals(LimitFlag, StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 >= args.Length || !int.TryParse(args[index + 1], out int parsedLimit) || parsedLimit < 1)
@@ -188,7 +208,7 @@ Examples:
             }
 
             throw new InvalidOperationException(
-                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {McpFlag}, or {HelpFlag}.");
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {McpFlag}, {AwaitApprovalFlag}, or {HelpFlag}.");
         }
 
         if (help || listTools || listOperations || showOperation is not null || mcp)
@@ -204,7 +224,8 @@ Examples:
                 operationLimit,
                 listen,
                 intakeListen,
-                mcp);
+                mcp,
+                awaitApproval);
         }
 
         string selectedProvider = providerValue ??
@@ -228,6 +249,7 @@ Examples:
             operationLimit,
             listen,
             intakeListen,
-            mcp);
+            mcp,
+            awaitApproval);
     }
 }
