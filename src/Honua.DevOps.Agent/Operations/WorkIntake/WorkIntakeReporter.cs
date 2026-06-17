@@ -71,8 +71,12 @@ internal sealed class WorkIntakeReporter
     }
 
     internal static string BuildProvenanceMessage(WorkItem workItem)
+        // The title is external free text lifted straight off the source ticket and can carry
+        // secrets (e.g. an api_key=... fragment smuggled into a Jira summary). Scrub it before
+        // it is posted back to the ticket as a durable comment — the same redaction guarantee
+        // the GitOps PR body and generated manifests already apply to operator-supplied text.
         => $"Received by honua-devops — work item {workItem.Provider}:{workItem.ExternalId} "
-            + $"('{workItem.Title}') entered the GIS-department queue. "
+            + $"('{Redaction.Scrub(workItem.Title)}') entered the GIS-department queue. "
             + "Status: intake (plan-only). No deliverable has been drafted yet.";
 
     private void WriteHeader(WorkItem workItem)
