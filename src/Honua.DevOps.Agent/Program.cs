@@ -4,6 +4,7 @@ using Honua.DevOps.Agent.Configuration;
 using Honua.DevOps.Agent.Mcp;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Audit;
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.WorkIntake;
 using Honua.DevOps.Agent.Prompts;
@@ -77,6 +78,27 @@ try
             backendConfiguration,
             backendGateway,
             cancellationTokenSource.Token);
+        return;
+    }
+
+    if (options.AwaitApproval is not null)
+    {
+        ApprovalWaiter waiter = new(backendGateway, policy);
+        Console.WriteLine(
+            $"Waiting for deploy-control operation `{options.AwaitApproval}` to leave AwaitingApproval "
+            + $"(approval={policy.ApprovalMode.ToConfigValue()}, timeout={waiter.Timeout.TotalSeconds:0}s).");
+
+        ApprovalWaitResult waitResult = await waiter.WaitAsync(options.AwaitApproval, cancellationTokenSource.Token);
+
+        Console.WriteLine(waitResult.Summary);
+        if (waitResult.FinalStatus is not null)
+        {
+            Console.WriteLine($"Final status: {waitResult.FinalStatus} (polls={waitResult.Polls}).");
+        }
+
+        // Resolved == the operation left AwaitingApproval (approved or, under direct-allowed,
+        // submitted by the waiter). Timeout/not-found/error are non-zero so callers/CI can gate on it.
+        Environment.ExitCode = waitResult.Outcome == ApprovalWaitOutcome.Resolved ? 0 : 1;
         return;
     }
 
