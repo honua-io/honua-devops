@@ -208,28 +208,11 @@ internal sealed class BackendGateway : IDisposable
             requestBody,
             cancellationToken);
 
-        if (!dryRun && !string.IsNullOrWhiteSpace(deployTargetId))
-        {
-            deployOperationResult = await CreateDeployOperationAsync(
-                deployTargetId,
-                revision,
-                currentRevision: null,
-                reason: changeSummary,
-                submitImmediately: true,
-                idempotencyKey: $"honua-devops:{service}:{string.Join("-", environments)}:{revision}:{action}",
-                correlationId: $"honua-devops:{NormalizeResourceToken(service, "service")}",
-                priority: environments.Any(environment => environment.Equals("prod", StringComparison.OrdinalIgnoreCase))
-                    ? "high"
-                    : "normal",
-                parameters: new Dictionary<string, string>
-                {
-                    ["service"] = service,
-                    ["environments"] = string.Join(",", environments),
-                    ["action"] = action,
-                    ["manifestApply"] = applyResult.IsSuccess ? "success" : "failed"
-                },
-                cancellationToken);
-        }
+        // Deploy-control operation creation/submission is owned by the GitOps actuation
+        // executors (GitOpsExecutor / PromotionExecutor), which create the operation with
+        // submitImmediately=false and only submit when EXECUTION_MODE=execute AND the approval
+        // gate is satisfied. This combined backend path no longer creates an operation here,
+        // so it never issues the old unguarded submitImmediately=true create.
 
         List<BackendCallResult> combinedCalls =
         [
@@ -435,12 +418,40 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
+    // JSON-returning submit variant used by the GitOps executors: after a submit the
+    // orchestrator must read the post-submit workflow status (and any blockingReasons)
+    // from the durable server operation, not just a truncated payload preview.
+    internal Task<BackendJsonResult> SubmitDeployOperationJsonAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        return PostJsonToHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/submit",
+            new { reason },
+            cancellationToken);
+    }
+
     internal Task<BackendCallResult> RollbackDeployOperationAsync(
         string operationId,
         string reason,
         CancellationToken cancellationToken)
     {
         return PostToHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
+            new { reason },
+            cancellationToken);
+    }
+
+    // JSON-returning rollback variant: the executor needs the server's resulting status
+    // and, when the OperatorApprovalGate denies a data-affecting rollback, the structured
+    // 403 body so it can surface the approval requirement instead of inventing one.
+    internal Task<BackendJsonResult> RollbackDeployOperationJsonAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        return PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
             new { reason },
             cancellationToken);

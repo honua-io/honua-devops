@@ -1,9 +1,21 @@
 using System.Text.Json;
 
+using Honua.DevOps.Agent.Operations.RuntimeAdapters;
+
 namespace Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
 
 internal static class ServiceBundleReconciliationPlanner
 {
+    // Real drift verdicts the service-state scope resolves to (issue: ServiceBundle drift was
+    // a stub of "check-required"/"export-required"). These mirror the GitOps drift vocabulary.
+    internal static class DriftVerdicts
+    {
+        internal const string DriftDetected = "drift-detected";
+        internal const string NoDrift = "no-drift";
+        internal const string Unreconcilable = "unreconcilable";
+        internal const string Indeterminate = "drift-indeterminate";
+    }
+
     internal static ServiceBundleReconciliationPlan Build(
         string service,
         IReadOnlyList<string> environments,
@@ -12,9 +24,42 @@ internal static class ServiceBundleReconciliationPlanner
         string capabilitiesPreview,
         JsonDocument? exportPayload,
         string exportPreview)
+        => Build(
+            service,
+            environments,
+            configuration,
+            capabilitiesPayload,
+            capabilitiesPreview,
+            exportPayload,
+            exportPreview,
+            adapterWorkflows: [],
+            desiredRevision: null);
+
+    // Drift-aware overload: when the caller has resolved runtime adapters (via
+    // RuntimeAdapterRegistry.ResolveMany) and a desired revision, the service-state drift scope
+    // is given a REAL verdict computed from the adapters' drift capability and the control-plane
+    // actual-state export vs the desired revision, instead of the old "check-required" stub.
+    internal static ServiceBundleReconciliationPlan Build(
+        string service,
+        IReadOnlyList<string> environments,
+        BackendConfiguration configuration,
+        JsonDocument? capabilitiesPayload,
+        string capabilitiesPreview,
+        JsonDocument? exportPayload,
+        string exportPreview,
+        IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows,
+        string? desiredRevision)
     {
         string serviceToken = service.Trim().ToLowerInvariant();
         string environmentSummary = string.Join(",", environments);
+
+        (string serviceStateVerdict, string serviceStateDetail) = EvaluateServiceStateDrift(
+            exportPayload,
+            exportPreview,
+            serviceToken,
+            environments,
+            adapterWorkflows,
+            desiredRevision);
 
         List<ServiceBundleDriftScope> driftScopes =
         [
@@ -34,7 +79,9 @@ internal static class ServiceBundleReconciliationPlanner
                 [
                     "service-state-export",
                     "service-drift-read"
-                ]),
+                ],
+                DriftVerdict: serviceStateVerdict,
+                DriftDetail: serviceStateDetail),
             new(
                 Scope: "metadata",
                 ExportSource: $"/{configuration.HonuaManifestExportPath}",
@@ -232,6 +279,141 @@ internal static class ServiceBundleReconciliationPlanner
             .Concat(plan.DriftScopes.SelectMany(scope => scope.EvidenceRequirements))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    // Compute a real service-state drift verdict from the runtime adapters' drift capability
+    // and the control-plane actual-state export vs the desired revision:
+    //   * If no adapter can detect drift / export actual state -> unreconcilable (we cannot
+    //     prove drift either way through the adapter surface).
+    //   * Else if the export yields no comparable actual revision for the service -> when a
+    //     desired revision is known and adapters CAN export, the desired state is not reflected
+    //     in actual state -> drift-detected; otherwise indeterminate (no evidence to compare).
+    //   * Else compare exported actual revision(s) to the desired revision:
+    //       any mismatch -> drift-detected; all match -> no-drift.
+    private static (string Verdict, string Detail) EvaluateServiceStateDrift(
+        JsonDocument? exportPayload,
+        string exportPreview,
+        string serviceToken,
+        IReadOnlyList<string> environments,
+        IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows,
+        string? desiredRevision)
+    {
+        bool adaptersCanDetect = adapterWorkflows.Any(workflow => workflow.Capability.SupportsDrift);
+        bool adaptersCanExport = adapterWorkflows.Any(workflow => workflow.Capability.SupportsActualStateExport);
+
+        // No adapter surface to compare against, and no desired revision to anchor on: the
+        // service-state scope cannot be reconciled through the adapters in this request.
+        if (adapterWorkflows.Count > 0 && !adaptersCanDetect && !adaptersCanExport)
+        {
+            return (
+                DriftVerdicts.Unreconcilable,
+                $"No resolved runtime adapter advertises drift detection or actual-state export for `{serviceToken}`; service-state drift cannot be reconciled through the adapter surface.");
+        }
+
+        IReadOnlyDictionary<string, string> actualRevisions = ExtractActualRevisions(exportPayload, serviceToken);
+        string desired = string.IsNullOrWhiteSpace(desiredRevision) ? string.Empty : desiredRevision.Trim();
+
+        // Restrict the comparison to the targeted environments where the export gave a revision.
+        List<KeyValuePair<string, string>> comparable = actualRevisions
+            .Where(pair => environments.Contains(pair.Key, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        if (comparable.Count == 0)
+        {
+            // No comparable actual revision was exported. If we have a concrete desired revision
+            // and adapters CAN export actual state, the desired state is simply not present in
+            // the actual export -> that is drift. Without a desired revision (or export
+            // capability) we have nothing to compare -> indeterminate, surfaced honestly.
+            if (!string.IsNullOrEmpty(desired) && adaptersCanExport)
+            {
+                return (
+                    DriftVerdicts.DriftDetected,
+                    $"Desired revision `{desired}` for `{serviceToken}` has no matching exported actual revision across `{string.Join(", ", environments)}`; treating the missing actual state as drift.");
+            }
+
+            return (
+                DriftVerdicts.Indeterminate,
+                string.IsNullOrEmpty(desired)
+                    ? $"No desired revision supplied for `{serviceToken}`; service-state drift cannot be evaluated yet."
+                    : $"No exported actual revision for `{serviceToken}`; capture an actual-state export before asserting drift.");
+        }
+
+        if (string.IsNullOrEmpty(desired))
+        {
+            return (
+                DriftVerdicts.Indeterminate,
+                $"Exported actual revisions present ({string.Join(", ", comparable.Select(pair => $"{pair.Key}={pair.Value}"))}) but no desired revision was supplied to compare against.");
+        }
+
+        string[] mismatches = comparable
+            .Where(pair => !pair.Value.Equals(desired, StringComparison.OrdinalIgnoreCase))
+            .Select(pair => $"{pair.Key}={pair.Value}")
+            .ToArray();
+
+        if (mismatches.Length > 0)
+        {
+            return (
+                DriftVerdicts.DriftDetected,
+                $"Desired revision `{desired}` differs from exported actual revision(s) {string.Join(", ", mismatches)} for `{serviceToken}`.");
+        }
+
+        return (
+            DriftVerdicts.NoDrift,
+            $"All exported actual revisions for `{serviceToken}` match desired revision `{desired}` across `{string.Join(", ", comparable.Select(pair => pair.Key))}`.");
+    }
+
+    // Read service/environment/revision triples from the control-plane manifest export. Mirrors
+    // the shape GitOpsPlanner consumes (spec.deployment.* or metadata.* fallbacks).
+    private static IReadOnlyDictionary<string, string> ExtractActualRevisions(
+        JsonDocument? exportPayload,
+        string serviceToken)
+    {
+        Dictionary<string, string> revisions = new(StringComparer.OrdinalIgnoreCase);
+        if (exportPayload is null)
+        {
+            return revisions;
+        }
+
+        JsonElement root = exportPayload.RootElement;
+        JsonElement resources = root;
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("resources", out JsonElement resourcesElement))
+        {
+            resources = resourcesElement;
+        }
+        else if (root.ValueKind == JsonValueKind.Object &&
+                 root.TryGetProperty("items", out JsonElement itemsElement))
+        {
+            resources = itemsElement;
+        }
+
+        if (resources.ValueKind != JsonValueKind.Array)
+        {
+            return revisions;
+        }
+
+        foreach (JsonElement resource in resources.EnumerateArray())
+        {
+            string? resourceService = ReadNestedString(resource, "spec", "deployment", "service")
+                ?? ReadNestedString(resource, "metadata", "labels", "service");
+            if (!string.Equals(resourceService, serviceToken, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string? environment = ReadNestedString(resource, "spec", "deployment", "environment")
+                ?? ReadNestedString(resource, "metadata", "namespace");
+            string? revision = ReadNestedString(resource, "spec", "deployment", "revision")
+                ?? ReadNestedString(resource, "metadata", "annotations", "honua.devops/revision");
+            if (string.IsNullOrWhiteSpace(environment) || string.IsNullOrWhiteSpace(revision))
+            {
+                continue;
+            }
+
+            revisions[environment] = revision;
+        }
+
+        return revisions;
     }
 
     private static string ResolveAvailability(JsonDocument? capabilitiesPayload, string capabilitiesPreview, params string[] probes)
