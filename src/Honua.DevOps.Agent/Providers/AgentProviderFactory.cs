@@ -23,6 +23,20 @@ internal static class AgentProviderFactory
         OpenAIClientOptions? clientOptionsOverride)
     {
         ProviderConfiguration configuration = ProviderConfiguration.Load(provider);
+
+        // Bedrock speaks the Converse API (not OpenAI-compatible chat completions), so it is
+        // wrapped as an IChatClient adapter and flows through the IChatClient AsAIAgent
+        // overload. The OpenAI-compatible providers keep their existing ChatClient path.
+        if (provider == ProviderKind.Bedrock)
+        {
+            IChatClient bedrockClient = BedrockChatClientAdapter.FromConfiguration(configuration);
+            return bedrockClient.AsAIAgent(
+                instructions: systemPrompt,
+                name: $"honua-devops-{configuration.Name}",
+                description: "Honua operations and solution engineering agent",
+                tools: tools);
+        }
+
         ChatClient client = CreateChatClient(configuration, clientOptionsOverride);
 
         return client.AsAIAgent(

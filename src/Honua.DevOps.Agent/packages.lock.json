@@ -2,6 +2,15 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
+      "AWSSDK.BedrockRuntime": {
+        "type": "Direct",
+        "requested": "[4.0.21.1, )",
+        "resolved": "4.0.21.1",
+        "contentHash": "ec1uHKBW3JusA4HzBqk9OlDDMlnq0bDUj/JWSrTFV8goQHD4ysx95bIYPwhJmJ1T+Q6IgpWDVsuViRNoR+3KkQ==",
+        "dependencies": {
+          "AWSSDK.Core": "[4.0.9.4, 5.0.0)"
+        }
+      },
       "Microsoft.Agents.AI.OpenAI": {
         "type": "Direct",
         "requested": "[1.0.0-rc3, )",
@@ -50,6 +59,11 @@
         "dependencies": {
           "System.ClientModel": "1.8.1"
         }
+      },
+      "AWSSDK.Core": {
+        "type": "Transitive",
+        "resolved": "4.0.9.4",
+        "contentHash": "bpxzv4e0WjOVmKiYkjkNWeKvwyzoIVFS+u5zYnsryM2qTyhkfeLGQ4LPqDo+m/7OIJlGWr6V9zkc3V9bb0QmYg=="
       },
       "Microsoft.Agents.AI": {
         "type": "Transitive",

@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="AWSSDK.BedrockRuntime" Version="4.0.21.1" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc3" />
     <!--
       Keep Microsoft.Extensions.AI aligned with the Microsoft.Extensions.AI.Abstractions
