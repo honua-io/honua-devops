@@ -219,9 +219,26 @@ public class HonuaOperationsToolkitDeployTests
     }
 
     [Fact]
-    public async Task DeployServiceWithGitOpsAsync_CreatesRealHonuaDeployOperationWhenExecutionEnabled()
+    public async Task DeployServiceWithGitOpsAsync_CreatesAndSubmitsRealHonuaDeployOperationWhenExecutionEnabledAndApproved()
     {
-        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        // execute + direct-allowed (pre-authorized) + a server that returns a durable
+        // operationId and drives it to Succeeded: the executor creates the operation with
+        // submitImmediately=false, then submits and polls to a terminal status.
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-promote", status = "Planned" });
+            }
+
+            if (request.Method == HttpMethod.Post && path.EndsWith("/submit", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-promote", status = "Succeeded" });
+            }
+
+            return TestHttpMessageHandler.JsonOk(new { status = "ok" });
+        });
         using HttpClient httpClient = new(handler)
         {
             Timeout = TimeSpan.FromSeconds(5)
@@ -244,22 +261,35 @@ public class HonuaOperationsToolkitDeployTests
             changeSummary: "promote through deploy-control",
             cancellationToken: CancellationToken.None);
 
-        Assert.Equal("execute-enabled", response.Status);
+        Assert.Equal("execute-succeeded", response.Status);
 
+        // The operation is created with submitImmediately=false (the executor owns submission).
         CapturedRequest operationRequest = Assert.Single(
             handler.CapturedRequests,
             request => request.Method == "POST" &&
-                       request.Uri.Contains("/api/v1/admin/deploy/operations", StringComparison.Ordinal));
+                       request.Uri.EndsWith("/api/v1/admin/deploy/operations", StringComparison.Ordinal));
         using JsonDocument operationJson = JsonDocument.Parse(operationRequest.Body!);
         Assert.Equal("prod-api", operationJson.RootElement.GetProperty("targetId").GetString());
         Assert.Equal("release/2026.03", operationJson.RootElement.GetProperty("desiredRevision").GetString());
-        Assert.True(operationJson.RootElement.GetProperty("submitImmediately").GetBoolean());
+        Assert.False(operationJson.RootElement.GetProperty("submitImmediately").GetBoolean());
         Assert.Equal("high", operationJson.RootElement.GetProperty("priority").GetString());
         Assert.Equal("promote through deploy-control", operationJson.RootElement.GetProperty("reason").GetString());
 
+        // Submission happened as a separate governed step.
+        Assert.Contains(handler.CapturedRequests, request =>
+            request.Method == "POST" && request.Uri.EndsWith("/op-promote/submit", StringComparison.Ordinal));
+
         Assert.NotNull(response.BackendSteps);
-        Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-operation" && step.MutatesState);
+        Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-operation-create" && step.MutatesState);
+        Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-operation-submit" && step.MutatesState);
     }
+
+    // Note: at the deploy_service_gitops entry point, execute + pr-first is rejected upfront by
+    // AuthorizeDeployment (see DeployServiceWithGitOpsAsync_BlocksDirectExecutionWhenApprovalModeIsPrFirst),
+    // so the executor's pr-first create-and-pause path is exercised directly in GitOpsExecutorTests
+    // (ExecuteSyncAsync_ExecutePrFirst_CreatesButDoesNotSubmit). The pr-first "create a durable
+    // operation with submitImmediately=false and pause" product flow at the tool surface is owned
+    // by create_gitops_proposal (ConsoleOperationBridge).
 
     [Fact]
     public async Task PlanGitOpsEngineAsync_UsesSnapshotsOnlyAndEmitsTypedPlan()
@@ -443,7 +473,11 @@ public class HonuaOperationsToolkitDeployTests
         using JsonDocument requestJson = JsonDocument.Parse(applyRequest.Body!);
         string serialized = requestJson.RootElement.ToString();
 
-        Assert.Equal("execute-enabled", response.Status);
+        // No deploy target is configured here, so the actuation cannot enter the deploy-control
+        // lifecycle and reports contract-unavailable (no operation id is invented) while the
+        // write-enabled plan/evidence below are still produced. With a target this becomes
+        // awaiting-approval/execute-succeeded (covered by the dedicated executor tests).
+        Assert.Equal("contract-unavailable", response.Status);
         Assert.Contains("\"dryRun\":false", serialized, StringComparison.Ordinal);
         Assert.Contains("\"honua.devops/execution-tier\":\"promote-prod\"", serialized, StringComparison.Ordinal);
         Assert.Contains("\"promotionRef\"", serialized, StringComparison.Ordinal);

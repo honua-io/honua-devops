@@ -73,7 +73,12 @@ internal static class CapabilityToolset
                 (string service, string environmentsCsv, string revision, string action, string changeSummary)
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),
                 "deploy_service_gitops",
-                "Generate GitOps deployment actions across environments."),
+                "Generate GitOps deployment actions across environments, and (only when EXECUTION_MODE=execute and the approval gate is satisfied) actuate sync/promote THROUGH the honua-server deploy-control endpoints: validate (preflight+plan), create a durable operation (submitImmediately=false), pause for external approval under pr-first or when the server requires approval, and only submit+poll to terminal when policy/approval allows. Default plan posture mutates nothing."),
+            CreateTool(
+                (string operationId, string reason)
+                    => toolkit.RollbackGitOpsOperationAsync(operationId, reason),
+                "rollback_gitops_operation",
+                "Roll back a durable honua-server deploy-control operation to its prior known-good revision by operationId. Safety-gated: EXECUTION_MODE=plan (default) issues nothing; a data-affecting rollback (rollbackPlan.IsDataAffecting / non-MetadataOnly class, or unknown classification) ALWAYS requires explicit governed approval and is refused rather than auto-issued; only a non-data-affecting rollback under direct-allowed/break-glass actuates, and the server's OperatorApprovalGate is still honored (a 403 surfaces as approval-required). Never bypasses the approval gate."),
             CreateTool(
                 (string customerRequirements, string scaleProfile, string complianceNeeds, string budgetProfile, string preferredCloud)
                     => toolkit.AnalyzeCustomerRequirementsAsync(customerRequirements, scaleProfile, complianceNeeds, budgetProfile, preferredCloud),

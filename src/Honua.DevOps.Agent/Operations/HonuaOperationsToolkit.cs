@@ -442,7 +442,9 @@ internal sealed class HonuaOperationsToolkit(
             backendResult.CapabilitiesPayload,
             backendResult.CapabilitiesResult.PayloadPreview,
             backendResult.ExportPayload,
-            backendResult.ExportResult.PayloadPreview);
+            backendResult.ExportResult.PayloadPreview,
+            adapterWorkflows,
+            normalizedRevision);
         GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
             normalizedService,
             targetEnvironments,
@@ -454,6 +456,20 @@ internal sealed class HonuaOperationsToolkit(
             backendResult,
             releaseOrchestration,
             serviceBundleReconciliation);
+
+        // Phase 1 actuation spine: for the mutating actions (sync/apply/promote) actuate
+        // THROUGH the server deploy-control endpoints via the GitOps executors. The executor
+        // re-derives the safety decision from EXECUTION_MODE + approval mode + the per-request
+        // dry-run verdict, so with the default plan posture this returns plan-only and touches
+        // nothing. Read-only actions (plan/dry-run) and dryRun authorizations skip actuation.
+        GitOpsExecutionResult? execution = await MaybeActuateGitOpsAsync(
+            normalizedService,
+            targetEnvironments,
+            normalizedRevision,
+            normalizedAction,
+            normalizedChangeSummary,
+            authorization,
+            cancellationToken);
 
         List<string> actionsList =
         [
@@ -471,34 +487,53 @@ internal sealed class HonuaOperationsToolkit(
         actionsList.AddRange(BuildServiceBundleReconciliationActions(serviceBundleReconciliation));
         actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
 
+        List<string> deployFindings =
+        [
+            $"Honua API endpoint: {backendResult.CombinedResult.Endpoint}",
+            $"Backend result: {backendResult.CombinedResult.Detail}",
+            $"Response excerpt: {backendResult.CombinedResult.PayloadPreview}",
+            $"Change summary: {normalizedChangeSummary}.",
+            $"Runtime adapter families: {string.Join(", ", adapterCapabilities.Select(capability => $"{capability.Target}={capability.Family}"))}.",
+            $"Release strategy: {releaseOrchestration.Strategy}.",
+            $"Migration mode: {releaseOrchestration.MigrationMode}.",
+            $"Promotion gate: {releaseOrchestration.PromotionPolicy.Gate}.",
+            $"Rollback fallback mode: {releaseOrchestration.RollbackPolicy.FallbackMode}.",
+            $"ServiceBundle reconciliation strategy: {serviceBundleReconciliation.Strategy}.",
+            $"ServiceBundle export mode: {serviceBundleReconciliation.ExportMode}.",
+            $"ServiceBundle current state: {serviceBundleReconciliation.CurrentStateSummary}.",
+            $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
+            $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
+            $"GitOps actual state source: {gitOpsPlan.ActualStateSource}.",
+            $"Deploy-control target: {Normalize(runtime.DeployTargetId, "not configured")}.",
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+            $"Audit hook target: {EffectivePolicy.AuditHookTarget}.",
+            $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
+            $"Execution tier `{runtime.ExecutionTier.ToConfigValue()}` resolved to {(authorization.DryRun ? "dry-run" : "write-enabled")} behavior."
+        ];
+        if (execution is not null)
+        {
+            deployFindings.Add($"GitOps actuation status: {execution.Status} (mutated={execution.Mutated}).");
+            deployFindings.AddRange(execution.Findings.Select(finding => $"Actuation: {finding}"));
+        }
+
+        // The response Status reflects the actuation outcome when one ran; otherwise it keeps
+        // the prior plan-only / execute-enabled / backend-error contract.
+        string responseStatus = !backendResult.CombinedResult.IsSuccess
+            ? "backend-error"
+            : execution is not null
+                ? MapActuationStatus(execution.Status)
+                : runtime.ExecutionMode == ExecutionMode.Execute ? "execute-enabled" : "plan-only";
+
+        IReadOnlyList<OperationBackendStep> backendSteps = BuildGitOpsBackendSteps(backendResult, authorization.DryRun);
+        if (execution is not null && execution.BackendSteps.Count > 0)
+        {
+            backendSteps = [.. backendSteps, .. execution.BackendSteps];
+        }
+
         return new OperationResponse(
-            Status: backendResult.CombinedResult.IsSuccess
-                ? runtime.ExecutionMode == ExecutionMode.Execute ? "execute-enabled" : "plan-only"
-                : "backend-error",
+            Status: responseStatus,
             Summary: $"GitOps deployment plan for `{normalizedService}` across {string.Join(", ", targetEnvironments)}.",
-            Findings:
-            [
-                $"Honua API endpoint: {backendResult.CombinedResult.Endpoint}",
-                $"Backend result: {backendResult.CombinedResult.Detail}",
-                $"Response excerpt: {backendResult.CombinedResult.PayloadPreview}",
-                $"Change summary: {normalizedChangeSummary}.",
-                $"Runtime adapter families: {string.Join(", ", adapterCapabilities.Select(capability => $"{capability.Target}={capability.Family}"))}.",
-                $"Release strategy: {releaseOrchestration.Strategy}.",
-                $"Migration mode: {releaseOrchestration.MigrationMode}.",
-                $"Promotion gate: {releaseOrchestration.PromotionPolicy.Gate}.",
-                $"Rollback fallback mode: {releaseOrchestration.RollbackPolicy.FallbackMode}.",
-                $"ServiceBundle reconciliation strategy: {serviceBundleReconciliation.Strategy}.",
-                $"ServiceBundle export mode: {serviceBundleReconciliation.ExportMode}.",
-                $"ServiceBundle current state: {serviceBundleReconciliation.CurrentStateSummary}.",
-                $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
-                $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
-                $"GitOps actual state source: {gitOpsPlan.ActualStateSource}.",
-                $"Deploy-control target: {Normalize(runtime.DeployTargetId, "not configured")}.",
-                $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
-                $"Audit hook target: {EffectivePolicy.AuditHookTarget}.",
-                $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
-                $"Execution tier `{runtime.ExecutionTier.ToConfigValue()}` resolved to {(authorization.DryRun ? "dry-run" : "write-enabled")} behavior."
-            ],
+            Findings: deployFindings,
             Actions: actionsList,
             ValidationChecks:
             [
@@ -534,7 +569,155 @@ internal sealed class HonuaOperationsToolkit(
             GitOpsPlan: gitOpsPlan,
             ReleaseOrchestration: releaseOrchestration,
             ServiceBundleReconciliation: serviceBundleReconciliation,
-            BackendSteps: BuildGitOpsBackendSteps(backendResult, authorization.DryRun));
+            BackendSteps: backendSteps);
+    }
+
+    // Decide whether this deploy request should actuate through the deploy-control executors,
+    // and run the matching executor when it should. Returns null when no actuation applies
+    // (read-only actions, or actions that are not yet wired to an executor); a non-null result
+    // always carries the actuation status + backend steps to fold into the response. The
+    // executors themselves stay default-safe: with EXECUTION_MODE=plan they return plan-only
+    // and never touch the backend, so this is a no-op mutation-wise in the default posture.
+    private async Task<GitOpsExecutionResult?> MaybeActuateGitOpsAsync(
+        string service,
+        IReadOnlyList<string> environments,
+        string revision,
+        string action,
+        string reason,
+        DeploymentAuthorization authorization,
+        CancellationToken cancellationToken)
+    {
+        // Only sync/apply and promote create-and-submit through the executor here. Rollback is
+        // surfaced through the dedicated RollbackGitOpsOperationAsync tool because it operates
+        // on an existing operationId. plan/dry-run never actuate.
+        bool isPromote = action.Equals("promote", StringComparison.OrdinalIgnoreCase);
+        bool isSync = action is "sync" or "apply";
+        if (!isPromote && !isSync)
+        {
+            return null;
+        }
+
+        string idempotencyKey = ConsoleOperationBridge.BuildProposalIdempotencyKey(
+            Normalize(runtime.DeployTargetId, "unconfigured"),
+            service,
+            environments,
+            revision,
+            action);
+        string correlationId = $"honua-devops:{action}:{service}";
+        bool targetsProd = environments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        string priority = targetsProd ? "high" : "normal";
+        Dictionary<string, string> parameters = new(StringComparer.Ordinal)
+        {
+            ["service"] = service,
+            ["environments"] = string.Join(",", environments),
+            ["action"] = action,
+            ["source"] = $"honua-devops:{action}"
+        };
+
+        if (isPromote)
+        {
+            PromotionExecutor promotionExecutor = new(runtime, gateway, EffectivePolicy);
+            return await promotionExecutor.ExecutePromotionAsync(
+                revision,
+                currentRevision: null,
+                reason,
+                idempotencyKey,
+                correlationId,
+                priority,
+                parameters,
+                authorization.DryRun,
+                authorization.PolicyGate,
+                cancellationToken);
+        }
+
+        GitOpsExecutor executor = new(runtime, gateway, EffectivePolicy);
+        return await executor.ExecuteSyncAsync(
+            revision,
+            currentRevision: null,
+            reason,
+            idempotencyKey,
+            correlationId,
+            priority,
+            parameters,
+            authorization.DryRun,
+            authorization.PolicyGate,
+            cancellationToken);
+    }
+
+    // Maps the executor's actuation status onto the tool's response Status vocabulary.
+    private static string MapActuationStatus(string actuationStatus)
+        => actuationStatus switch
+        {
+            GitOpsExecutionStatus.PlanOnly => "plan-only",
+            GitOpsExecutionStatus.AwaitingApproval => "awaiting-approval",
+            GitOpsExecutionStatus.Succeeded => "execute-succeeded",
+            GitOpsExecutionStatus.RolledBack => "rolled-back",
+            GitOpsExecutionStatus.Failed => "execute-failed",
+            GitOpsExecutionStatus.ApprovalRequired => "approval-required",
+            GitOpsExecutionStatus.ContractUnavailable => "contract-unavailable",
+            _ => "execute-enabled"
+        };
+
+    [Description("Roll back a durable honua-server deploy-control operation to its prior known-good revision by operationId. Safety-gated: with EXECUTION_MODE=plan (default) nothing is issued; a data-affecting rollback (rollbackPlan.IsDataAffecting / non-MetadataOnly class, or an unknown classification) ALWAYS requires explicit governed approval and is refused here rather than auto-issued; only a non-data-affecting rollback under a direct-allowed/break-glass approval mode is issued, and even then the server's OperatorApprovalGate is honored (a 403 surfaces as approval-required). Emits backend steps and the rollback classification as evidence.")]
+    public async Task<OperationResponse> RollbackGitOpsOperationAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedOperationId = DeploymentInputs.Normalize(operationId, string.Empty);
+        if (normalizedOperationId.Length is < 1 or > 200 ||
+            normalizedOperationId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
+        {
+            throw new InvalidOperationException("Operation id must be 1-200 characters with no whitespace or control characters.");
+        }
+
+        string normalizedReason = SanitizeFreeText(reason, "not provided");
+        // Rollback authorization mirrors a destructive action: never treated as plan/dry-run by
+        // request shape; the executor folds EXECUTION_MODE + approval mode + tier into its decision.
+        DeploymentAuthorization authorization = AuthorizeDeployment(["prod"], "rollback");
+
+        RollbackExecutor rollbackExecutor = new(runtime, gateway, EffectivePolicy);
+        GitOpsExecutionResult execution = await rollbackExecutor.ExecuteRollbackAsync(
+            normalizedOperationId,
+            normalizedReason,
+            authorization.DryRun,
+            authorization.PolicyGate,
+            cancellationToken);
+
+        List<string> findings =
+        [
+            $"Rollback target operation: {normalizedOperationId}.",
+            $"Actuation status: {execution.Status} (mutated={execution.Mutated}).",
+            ..execution.Findings,
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+            $"Audit hook target: {EffectivePolicy.AuditHookTarget}."
+        ];
+
+        return new OperationResponse(
+            Status: MapActuationStatus(execution.Status),
+            Summary: $"GitOps rollback for deploy-control operation `{normalizedOperationId}` ({execution.Status}).",
+            Findings: findings,
+            Actions:
+            [
+                "Rollback actuates through the deploy-control rollback endpoint; the agent never bypasses the OperatorApprovalGate.",
+                execution.Status == GitOpsExecutionStatus.ApprovalRequired
+                    ? "Surface the operationId and rollback classification for governed approval before retrying."
+                    : "Verify post-rollback health and capture rollback evidence.",
+                .. execution.BlockingReasons.Select(reasonText => $"Blocking: {reasonText}.")
+            ],
+            ValidationChecks:
+            [
+                "rollback-actuates-through-deploy-control",
+                "data-affecting-rollback-requires-explicit-approval",
+                "plan-mode-issues-no-rollback",
+                "operator-approval-gate-never-bypassed"
+            ],
+            Risks:
+            [
+                "A data-affecting rollback can lose or rewrite data; only governed, evidenced approval should authorize it.",
+                "Rolling back after long reconcile windows can diverge from the last known-good revision."
+            ],
+            BackendSteps: execution.BackendSteps);
     }
 
     [Description("Plan the internal honua-gitops engine state transitions, diff, and drift without applying desired state.")]
@@ -596,7 +779,9 @@ internal sealed class HonuaOperationsToolkit(
             backendResult.CapabilitiesPayload,
             backendResult.CapabilitiesResult.PayloadPreview,
             backendResult.ExportPayload,
-            backendResult.ExportResult.PayloadPreview);
+            backendResult.ExportResult.PayloadPreview,
+            adapterWorkflows,
+            normalizedRevision);
         GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
             normalizedService,
             targetEnvironments,

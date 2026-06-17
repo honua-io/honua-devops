@@ -68,6 +68,9 @@ internal static class GitOpsPlanner
                         ? "in-sync"
                         : "revision-diff";
 
+                ServiceBundleReconciliation.ServiceBundleDriftScope? serviceStateScope = serviceBundleReconciliation.DriftScopes
+                    .FirstOrDefault(scope => scope.Scope.Equals("service-state", StringComparison.OrdinalIgnoreCase));
+
                 GitOpsDriftStatus[] drift =
                 [
                     new(
@@ -80,12 +83,13 @@ internal static class GitOpsPlanner
                         Detail: actualRevision == "unknown"
                             ? "Manifest export did not expose a comparable current revision."
                             : $"Desired revision `{desiredRevision}` compared against exported revision `{actualRevision}`."),
+                    // Service-state drift now carries the REAL verdict computed by the
+                    // ServiceBundleReconciliationPlanner (drift-detected/no-drift/unreconcilable),
+                    // not the old exported/export-required stub.
                     new(
                         Scope: "service-state",
-                        Status: serviceStateKnown ? "exported" : "export-required",
-                        Detail: serviceStateKnown
-                            ? serviceBundleReconciliation.CurrentStateSummary
-                            : $"Evaluate {string.Join(", ", serviceBundleReconciliation.DriftScopes.Select(scope => scope.Scope))} drift from control-plane exports.")
+                        Status: serviceStateScope?.DriftVerdict ?? (serviceStateKnown ? "exported" : "export-required"),
+                        Detail: serviceStateScope?.DriftDetail ?? serviceBundleReconciliation.CurrentStateSummary)
                 ];
 
                 return new GitOpsEnvironmentPlan(
