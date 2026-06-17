@@ -41,6 +41,19 @@
         "resolved": "16.3.0",
         "contentHash": "SgMOdxbz8X65z8hraIs6hOEdnkH6hESTAIUa7viEngHOYaH+6q5XJmwr1+yb9vJpNQ19hCQY69xbFsLtXpobQA=="
       },
+      "AWSSDK.BedrockRuntime": {
+        "type": "Transitive",
+        "resolved": "4.0.21.1",
+        "contentHash": "ec1uHKBW3JusA4HzBqk9OlDDMlnq0bDUj/JWSrTFV8goQHD4ysx95bIYPwhJmJ1T+Q6IgpWDVsuViRNoR+3KkQ==",
+        "dependencies": {
+          "AWSSDK.Core": "[4.0.9.4, 5.0.0)"
+        }
+      },
+      "AWSSDK.Core": {
+        "type": "Transitive",
+        "resolved": "4.0.9.4",
+        "contentHash": "bpxzv4e0WjOVmKiYkjkNWeKvwyzoIVFS+u5zYnsryM2qTyhkfeLGQ4LPqDo+m/7OIJlGWr6V9zkc3V9bb0QmYg=="
+      },
       "Microsoft.Agents.AI": {
         "type": "Transitive",
         "resolved": "1.0.0-rc3",
@@ -291,6 +304,7 @@
       "honua.devops.agent": {
         "type": "Project",
         "dependencies": {
+          "AWSSDK.BedrockRuntime": "[4.0.21.1, )",
           "Microsoft.Agents.AI.OpenAI": "[1.0.0-rc3, )",
           "Microsoft.Extensions.AI": "[10.5.2, )",
           "ModelContextProtocol.Core": "[1.4.0, )",

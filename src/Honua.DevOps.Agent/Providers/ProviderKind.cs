@@ -4,7 +4,8 @@ internal enum ProviderKind
 {
     Codex,
     Claude,
-    LocalLlama
+    LocalLlama,
+    Bedrock
 }
 
 internal static class ProviderKindExtensions
@@ -39,6 +40,13 @@ internal static class ProviderKindExtensions
             return true;
         }
 
+        if (normalized.Equals("bedrock", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("aws-bedrock", StringComparison.OrdinalIgnoreCase))
+        {
+            provider = ProviderKind.Bedrock;
+            return true;
+        }
+
         provider = default;
         return false;
     }
@@ -50,6 +58,7 @@ internal static class ProviderKindExtensions
             ProviderKind.Codex => "HONUA_DEVOPS_CODEX",
             ProviderKind.Claude => "HONUA_DEVOPS_CLAUDE",
             ProviderKind.LocalLlama => "HONUA_DEVOPS_LOCAL_LLAMA",
+            ProviderKind.Bedrock => "HONUA_DEVOPS_BEDROCK",
             _ => throw new InvalidOperationException($"Provider `{provider}` is not supported.")
         };
     }
@@ -61,6 +70,7 @@ internal static class ProviderKindExtensions
             ProviderKind.Codex => "codex",
             ProviderKind.Claude => "claude",
             ProviderKind.LocalLlama => "local-llama",
+            ProviderKind.Bedrock => "bedrock",
             _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unsupported provider.")
         };
     }

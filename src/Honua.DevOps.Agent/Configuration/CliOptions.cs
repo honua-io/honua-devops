@@ -35,9 +35,10 @@ honua-devops — AI operator for Honua
 Usage: honua-devops [options]
 
 Options:
-  --provider <codex|claude|local-llama>
+  --provider <codex|claude|local-llama|bedrock>
                               Pick the model provider. Defaults to HONUA_DEVOPS_PROVIDER or codex.
                               local-llama covers NVIDIA NIM and other OpenAI-compatible local endpoints.
+                              bedrock runs Claude on Amazon Bedrock (Converse API, AWS IAM credential chain).
   --prompt <text>             Single-shot prompt; agent runs once, prints, and exits.
   --preflight                 Validate config and backends without launching the agent.
   --list-tools                Print the operator tool catalogue and exit.
@@ -102,7 +103,7 @@ Examples:
             {
                 if (index + 1 >= args.Length)
                 {
-                    throw new InvalidOperationException($"{ProviderFlag} requires a value: codex, claude, or local-llama.");
+                    throw new InvalidOperationException($"{ProviderFlag} requires a value: codex, claude, local-llama, or bedrock.");
                 }
 
                 providerValue = args[++index];
@@ -213,7 +214,7 @@ Examples:
         if (!ProviderKindExtensions.TryParse(selectedProvider, out ProviderKind provider))
         {
             throw new InvalidOperationException(
-                $"Invalid provider `{selectedProvider}`. Supported values: codex, claude, local-llama.");
+                $"Invalid provider `{selectedProvider}`. Supported values: codex, claude, local-llama, bedrock.");
         }
 
         return new CliOptions(
