@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1",
+  "name": "honua-ai-representative-eval-corpus",
+  "version": "0.1.0",
+  "description": "Versioned, representative regression corpus for Honua's AI across two surfaces: Studio (8 generation capabilities) and DevOps (operator tool surface). This is the permanent regression harness referenced by the AI architecture plan (eval + example-library + gap-finder). The corpus DEFINITION uses no AI; only a bounded sample RUN calls a model. It complements (does not replace) the deterministic multi-model operator-eval lanes in eval/model-matrix.json, which gate releases against honua-server's server-side eval report.",
+  "surfaces": [
+    { "id": "studio", "scenarios": "scenarios/studio.json", "areaKey": "capability" },
+    { "id": "devops", "scenarios": "scenarios/devops.json", "areaKey": "operationArea" }
+  ],
+  "scenarioSchema": {
+    "id": "Stable unique scenario id.",
+    "surface": "studio | devops (inherited from file).",
+    "capability/operation/operationArea": "Capability or operation grouping the scenario stresses.",
+    "difficulty": "happy | variation | vague | jargon | verbose.",
+    "phrasing": "terse | verbose | jargon | vague (phrasing-diversity axis).",
+    "prompt": "The natural-language operator/author prompt.",
+    "expected_behavior": "Canonical outcome category: generated | needs-clarification | unsupported | description | diagnosis | analysis | proposal | changeset.",
+    "pass_criteria": "Human/LLM-judgeable success statement.",
+    "held_out": "When true: eval-only. Never use for tuning, prompt few-shot examples, or the example-library."
+  },
+  "heldOutPolicy": "~20% of scenarios per surface are held_out. Held-out scenarios are the regression tripwire and must never feed back into prompts, fine-tuning, or the example-library.",
+  "runPolicy": {
+    "definition": "Zero AI calls. `run_corpus.py --validate` only parses/validates/reports coverage.",
+    "sample": "`run_corpus.py --run-sample` performs the BOUNDED measured run (<= ~30 model calls, no retries). It must not actuate any DevOps action and must not touch the live demo alias.",
+    "budget": "Studio: ~2-3 scenarios per capability across the difficulty range. DevOps: ~4-6 scenarios. Total <= 30 Bedrock calls."
+  }
+}
