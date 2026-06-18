@@ -162,6 +162,8 @@ Honua endpoint contract overrides (defaults map to implemented `honua-server` ro
 - `HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH` (`/api/v1/admin/deploy/preflight`)
 - `HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH` (`/api/v1/admin/deploy/plan`)
 - `HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH` (`/api/v1/admin/deploy/operations`)
+- `HONUA_DEVOPS_HONUA_METADATA_RELEASE_OPERATIONS_PATH` (`/api/v1/admin/metadata/releases/operations`) — create an additive metadata-release layer-evolution operation (Demo B safe-rollback)
+- `HONUA_DEVOPS_HONUA_METADATA_RELEASE_BY_PACKAGE_PATH` (`/api/v1/admin/metadata/releases`) — read a metadata-release operation by package id (the `inspect_metadata_release` detect tool)
 - `HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH` (`/api/v1/admin/manifest/drift`)
 - `HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH` (`/api/v1/admin/manifest/versions`)
 

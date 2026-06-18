@@ -205,6 +205,61 @@ internal static class DeployOperationReader
         return false;
     }
 
+    // ---- Metadata-release detect helpers (Demo B safe-rollback loop) ----
+    // The DevOps AI loop reads these from a metadata-release operation to confirm the deploy was
+    // health-gated and rolled back (metadata + DB down-script) before it diagnoses + proposes a
+    // resolve. They are tolerant of missing fields so a partial read still yields a useful signal.
+
+    internal static bool IsManualInterventionRequired(string? status)
+        => Normalize(status ?? string.Empty) is "manualinterventionrequired" or "manual-intervention-required";
+
+    internal static string? ReadCurrentPhase(JsonElement root)
+        => ReadString(root, "currentPhase", "current_phase");
+
+    internal static string? ReadErrorMessage(JsonElement root)
+        => ReadString(root, "errorMessage", "error_message", "error");
+
+    internal static string? ReadMetadataReleaseStage(JsonElement root)
+        => TryGetObject(root, "metadataRelease", out JsonElement metadataRelease)
+            ? ReadString(metadataRelease, "currentStage", "stage")
+            : null;
+
+    // Returns true when the operation carries a recorded post-publish Smoke evidence ref — the
+    // proof the health gate actually ran (pass or fail).
+    internal static bool HasSmokeEvidence(JsonElement root)
+    {
+        if (!TryGetObject(root, "metadataRelease", out JsonElement metadataRelease)
+            || metadataRelease.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        foreach (JsonProperty property in metadataRelease.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, "evidenceRefs", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(property.Name, "evidence_refs", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (property.Value.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            foreach (JsonElement evidence in property.Value.EnumerateArray())
+            {
+                string? kind = ReadString(evidence, "kind");
+                if (kind is not null && Normalize(kind) == "smoke")
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static string Normalize(string value) => value.Trim().ToLowerInvariant();
 
     private static string? ReadString(JsonElement element, params string[] names)

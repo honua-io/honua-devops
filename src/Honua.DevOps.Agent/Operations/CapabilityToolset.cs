@@ -80,6 +80,11 @@ internal static class CapabilityToolset
                 "rollback_gitops_operation",
                 "Roll back a durable honua-server deploy-control operation to its prior known-good revision by operationId. Safety-gated: EXECUTION_MODE=plan (default) issues nothing; a data-affecting rollback (rollbackPlan.IsDataAffecting / non-MetadataOnly class, or unknown classification) ALWAYS requires explicit governed approval and is refused rather than auto-issued; only a non-data-affecting rollback under direct-allowed/break-glass actuates, and the server's OperatorApprovalGate is still honored (a 403 surfaces as approval-required). Never bypasses the approval gate."),
             CreateTool(
+                (string packageId)
+                    => toolkit.InspectMetadataReleaseAsync(packageId),
+                "inspect_metadata_release",
+                "Detect and diagnose the outcome of an additive metadata-release layer-evolution operation by package id (honua-server safe-rollback lifecycle). Read-only: reads the durable server operation and reports whether the post-publish Smoke health gate ran, whether the deploy was rolled back (prior-revision reactivation + reversible down-script — the metadata + DB-inclusive revert), the rollback class, the failing phase/error, and the smoke evidence. Use after submitting a layer change to confirm the closed loop fired, then propose a human-approved resolve. Never mutates server state."),
+            CreateTool(
                 (string customerRequirements, string scaleProfile, string complianceNeeds, string budgetProfile, string preferredCloud)
                     => toolkit.AnalyzeCustomerRequirementsAsync(customerRequirements, scaleProfile, complianceNeeds, budgetProfile, preferredCloud),
                 "analyze_customer_requirements",

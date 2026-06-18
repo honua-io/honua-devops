@@ -30,6 +30,8 @@ internal sealed record BackendConfiguration(
     string HonuaDeployPreflightPath = "api/v1/admin/deploy/preflight",
     string HonuaDeployPlanPath = "api/v1/admin/deploy/plan",
     string HonuaDeployOperationsPath = "api/v1/admin/deploy/operations",
+    string HonuaMetadataReleaseOperationsPath = "api/v1/admin/metadata/releases/operations",
+    string HonuaMetadataReleaseByPackagePath = "api/v1/admin/metadata/releases",
     string HonuaManifestDriftPath = "api/v1/admin/manifest/drift",
     string HonuaManifestVersionsPath = "api/v1/admin/manifest/versions",
     bool SupportAutoBundleEnabled = false,
@@ -65,6 +67,8 @@ internal sealed record BackendConfiguration(
     private const string HonuaDeployPreflightPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH";
     private const string HonuaDeployPlanPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH";
     private const string HonuaDeployOperationsPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH";
+    private const string HonuaMetadataReleaseOperationsPathVariable = "HONUA_DEVOPS_HONUA_METADATA_RELEASE_OPERATIONS_PATH";
+    private const string HonuaMetadataReleaseByPackagePathVariable = "HONUA_DEVOPS_HONUA_METADATA_RELEASE_BY_PACKAGE_PATH";
     private const string HonuaManifestDriftPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH";
     private const string HonuaManifestVersionsPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH";
 
@@ -180,6 +184,14 @@ internal sealed record BackendConfiguration(
             Environment.GetEnvironmentVariable(HonuaDeployOperationsPathVariable),
             "/api/v1/admin/deploy/operations",
             HonuaDeployOperationsPathVariable);
+        string honuaMetadataReleaseOperationsPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaMetadataReleaseOperationsPathVariable),
+            "/api/v1/admin/metadata/releases/operations",
+            HonuaMetadataReleaseOperationsPathVariable);
+        string honuaMetadataReleaseByPackagePath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaMetadataReleaseByPackagePathVariable),
+            "/api/v1/admin/metadata/releases",
+            HonuaMetadataReleaseByPackagePathVariable);
         string honuaManifestDriftPath = ParseRelativePath(
             Environment.GetEnvironmentVariable(HonuaManifestDriftPathVariable),
             "/api/v1/admin/manifest/drift",
@@ -239,6 +251,8 @@ internal sealed record BackendConfiguration(
             HonuaDeployPreflightPath: honuaDeployPreflightPath,
             HonuaDeployPlanPath: honuaDeployPlanPath,
             HonuaDeployOperationsPath: honuaDeployOperationsPath,
+            HonuaMetadataReleaseOperationsPath: honuaMetadataReleaseOperationsPath,
+            HonuaMetadataReleaseByPackagePath: honuaMetadataReleaseByPackagePath,
             HonuaManifestDriftPath: honuaManifestDriftPath,
             HonuaManifestVersionsPath: honuaManifestVersionsPath,
             SupportAutoBundleEnabled: supportAutoBundleEnabled,
