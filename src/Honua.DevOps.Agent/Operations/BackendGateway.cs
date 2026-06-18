@@ -457,6 +457,56 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
+    // ---- Additive metadata-release layer-evolution lifecycle (Demo B safe-rollback) ----
+    // The server's metadata-release lifecycle (honua-server #1738/#1739) health-gates a layer
+    // change on a post-publish Smoke check and, on failure, rolls back metadata AND the
+    // operational schema (reactivate prior revision + run the down-script). These methods let the
+    // DevOps AI loop submit the change and then DETECT the rolled-back state + smoke evidence so it
+    // can diagnose. The metadata-release operation is a WorkflowOperationKind.MetadataRelease
+    // record, so its id resolves through the shared deploy operations read/rollback endpoints.
+
+    internal Task<BackendJsonResult> CreateMetadataReleaseOperationJsonAsync(
+        string packageId,
+        string targetEnvironment,
+        string resourceSemanticId,
+        string newFieldName,
+        string? newFieldType,
+        string? dataPopulateWorkloadId,
+        string reason,
+        string idempotencyKey,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        return PostJsonToHonuaAsync(
+            configuration.HonuaMetadataReleaseOperationsPath,
+            new
+            {
+                packageId,
+                targetEnvironment,
+                resourceSemanticId,
+                newFieldName,
+                newFieldType,
+                dataPopulateWorkloadId,
+                reason,
+                idempotencyKey,
+                correlationId
+            },
+            cancellationToken);
+    }
+
+    // Detect seam: read the most recent metadata-release operation for a package. The server
+    // reconciles in-flight operations on read, so a poll here surfaces the terminal status
+    // (RolledBack / Succeeded / ManualInterventionRequired), the failing CurrentPhase/errorMessage
+    // (the injected smoke failure), the rollback plan class, and the smoke evidence ref.
+    internal Task<BackendJsonResult> GetMetadataReleaseOperationByPackageJsonAsync(
+        string packageId,
+        CancellationToken cancellationToken)
+    {
+        return GetJsonFromHonuaAsync(
+            $"{configuration.HonuaMetadataReleaseByPackagePath}/{Uri.EscapeDataString(packageId)}/operation",
+            cancellationToken);
+    }
+
     internal Task<BackendCallResult> RequestManifestDriftAsync(bool verbose, CancellationToken cancellationToken)
     {
         string path = verbose

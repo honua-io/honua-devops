@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
@@ -718,6 +719,130 @@ internal sealed class HonuaOperationsToolkit(
                 "Rolling back after long reconcile windows can diverge from the last known-good revision."
             ],
             BackendSteps: execution.BackendSteps);
+    }
+
+    [Description("Detect and diagnose the outcome of an additive metadata-release layer-evolution operation by package id (honua-server metadata-release lifecycle). Read-only: it reads the durable server operation, reports whether the post-publish Smoke health gate ran, whether the deploy was rolled back (metadata reactivation + reversible down-script, i.e. DB-inclusive), the rollback class, the failing phase/error, and the smoke evidence. Use this after submitting a layer change to confirm the safe-rollback closed loop fired, then propose a human-approved resolve. It never mutates server state.")]
+    public async Task<OperationResponse> InspectMetadataReleaseAsync(
+        string packageId,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedPackageId = DeploymentInputs.Normalize(packageId, string.Empty);
+        if (normalizedPackageId.Length is < 1 or > 200 ||
+            normalizedPackageId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
+        {
+            throw new InvalidOperationException("Package id must be 1-200 characters with no whitespace or control characters.");
+        }
+
+        using BackendJsonResult result = await gateway.GetMetadataReleaseOperationByPackageJsonAsync(
+            normalizedPackageId,
+            cancellationToken);
+
+        if (!result.CallResult.IsSuccess || result.Payload is null)
+        {
+            return new OperationResponse(
+                Status: "metadata-release-not-found",
+                Summary: $"No metadata-release operation could be read for package `{normalizedPackageId}` ({result.CallResult.Detail}).",
+                Findings:
+                [
+                    $"Honua API endpoint: {result.CallResult.Endpoint}",
+                    $"Backend result: {result.CallResult.Detail}",
+                    "The metadata-release lifecycle requires Redis-backed durable op storage; a 404/503 here may mean the operation was never submitted or durable storage is unavailable."
+                ],
+                Actions:
+                [
+                    "Confirm the layer change was submitted via POST /api/v1/admin/metadata/releases/operations.",
+                    "Confirm the server has Redis-backed durable workflow-operation storage configured."
+                ],
+                ValidationChecks: ["metadata-release-operation-readable"],
+                Risks: ["Without the durable operation record the safe-rollback loop cannot be observed or diagnosed."],
+                Evidence: BuildPlannerEvidence(
+                    $"ai-devops:metadata-release:{normalizedPackageId}",
+                    "inspect_metadata_release",
+                    [],
+                    null,
+                    "read-only-detect",
+                    "metadata-release-not-found",
+                    result.CallResult.PayloadPreview,
+                    result.CallResult.Endpoint,
+                    result.CallResult.Detail));
+        }
+
+        JsonElement root = result.Payload.RootElement;
+        string? operationId = DeployOperationReader.ReadOperationId(root);
+        string? status = DeployOperationReader.ReadStatus(root);
+        string? stage = DeployOperationReader.ReadMetadataReleaseStage(root);
+        string? phase = DeployOperationReader.ReadCurrentPhase(root);
+        string? error = DeployOperationReader.ReadErrorMessage(root);
+        string rollbackClass = DeployOperationReader.ReadRollbackClass(root) ?? "unclassified";
+        bool dataAffecting = DeployOperationReader.ReadRollbackIsDataAffecting(root);
+        bool hasSmokeEvidence = DeployOperationReader.HasSmokeEvidence(root);
+        bool rolledBack = DeployOperationReader.IsRolledBack(status);
+        bool manualIntervention = DeployOperationReader.IsManualInterventionRequired(status);
+        bool succeeded = DeployOperationReader.IsSuccess(status);
+
+        // Detect-loop classification: the AI uses this to decide whether to propose a resolve.
+        string detectStatus = rolledBack
+            ? "rolled-back-detected"
+            : succeeded
+                ? "release-succeeded"
+                : manualIntervention
+                    ? "manual-intervention-required"
+                    : "in-progress";
+
+        List<string> findings =
+        [
+            $"Metadata-release operation: {operationId ?? "unknown"} (package `{normalizedPackageId}`).",
+            $"Server status: {status ?? "unknown"}; stage: {stage ?? "unknown"}.",
+            $"Health gate (post-publish Smoke): {(hasSmokeEvidence ? "ran — smoke evidence recorded" : "no smoke evidence recorded yet")}.",
+            $"Current phase: {phase ?? "(none)"}.",
+            $"Error/failure message: {error ?? "(none)"}.",
+            $"Rollback classification: class={rollbackClass}; dataAffecting={dataAffecting}.",
+            rolledBack
+                ? "Deploy was ROLLED BACK: the reconciler reactivated the prior Metadata v2 revision and executed the reversible down-script (drop-added-column). This is the metadata + DB-inclusive revert."
+                : succeeded
+                    ? "Release completed: the additive field is live and the smoke check passed."
+                    : manualIntervention
+                        ? "Operation parked at ManualInterventionRequired (e.g. snapshot-required rollback is deferred); operator action needed."
+                        : "Operation is still advancing through the additive lifecycle."
+        ];
+
+        return new OperationResponse(
+            Status: detectStatus,
+            Summary: $"Metadata-release `{normalizedPackageId}` is `{status ?? "unknown"}` at stage `{stage ?? "unknown"}`"
+                + (rolledBack ? " — safe rollback (metadata + DB) confirmed." : "."),
+            Findings: findings,
+            Actions:
+            [
+                rolledBack
+                    ? "Diagnose the smoke failure from the recorded phase/error, then propose a human-approved resolve (fix the layer change or its ETL and re-submit)."
+                    : succeeded
+                        ? "No remediation needed; capture the success evidence."
+                        : "Re-inspect until the operation reaches a terminal state before proposing remediation.",
+                "Resolve proposals are advisory; re-submission of a corrected metadata release goes through the governed create path and is human-approved.",
+                .. DeployOperationReader.ReadBlockingReasons(root).Select(reasonText => $"Blocking: {reasonText}.")
+            ],
+            ValidationChecks:
+            [
+                "metadata-release-operation-readable",
+                "smoke-health-gate-evidence-present",
+                "rollback-reverts-metadata-and-db-downscript",
+                "resolve-proposal-is-human-approved"
+            ],
+            Risks:
+            [
+                "A rolled-back release means the attempted layer change is NOT live; downstream consumers still see the prior schema.",
+                "Snapshot-required (data-affecting, non-reversible) releases are refused by the server and need operator-managed recovery."
+            ],
+            Evidence: BuildPlannerEvidence(
+                $"ai-devops:metadata-release:{normalizedPackageId}",
+                "inspect_metadata_release",
+                [],
+                operationId,
+                "read-only-detect",
+                detectStatus,
+                result.CallResult.PayloadPreview,
+                result.CallResult.Endpoint,
+                result.CallResult.Detail));
     }
 
     [Description("Plan the internal honua-gitops engine state transitions, diff, and drift without applying desired state.")]
