@@ -1,0 +1,199 @@
+name: Compatibility Train RC Validation
+
+# Release-candidate validation ORCHESTRATOR for the cross-repo compatibility
+# train (honua-devops#41).
+#
+# This workflow does not re-implement any check. It chains, in one repeatable
+# dispatch, the per-repo / per-surface jobs that already exist in this repo and
+# folds their outputs into ONE release-candidate evidence bundle with a single
+# verdict and a single list of owning follow-up issues:
+#
+#   1. conformance-gate     (scripts/compat-train-conformance-gate.sh, #68)
+#        PRODUCER: dispatches every enrolled consumer SDK's shared-fixture
+#        conformance against the candidate and emits per-repo evidence.
+#   2. release-gate         (scripts/compat-train-release-gate.sh, #65)
+#        Proves that per-repo evidence is LIVE, not the seeded local fallback.
+#   3. release-validation   (scripts/compat-train-release-validation.sh, #41)
+#        Evaluates the canonical release-train manifest (server/sdk/admin/helm/
+#        terraform surface coverage + owning follow-ups).
+#   4. live-probe           (scripts/compat-train-live-probe.sh, #41)
+#        Actively re-verifies the cited GitHub runs / smokes wired surfaces.
+#   5. rc-aggregate         (scripts/compat-train-rc-aggregate.sh, #41)
+#        Folds 1-4 into the single rc-validation-bundle.json attached to the run.
+#
+# On PR/push this lane only proves the orchestration glue is correct: bash -n +
+# the aggregator self-test exercise the releasable path and every block path
+# entirely offline. The real cross-repo dispatch runs only on workflow_dispatch
+# (it needs a candidate, a pinned fixtures version, and dispatch creds).
+
+on:
+  pull_request:
+  push:
+    branches:
+      - trunk
+  workflow_dispatch:
+    inputs:
+      candidate_image:
+        description: "Candidate server image/tag under test (e.g. ghcr.io/honua-io/honua-server:2026.06.0-rc.1)."
+        required: false
+      candidate_version:
+        description: "Candidate version label (used when validating an SDK bump rather than a server image)."
+        required: false
+      fixtures_version:
+        description: "Pinned geospatial-grpc shared conformance fixtures version (e.g. 0.1.0-alpha.1). 'latest'/empty is rejected by the conformance gate."
+        required: true
+      manifest_url:
+        description: "URL of the canonical release-train manifest (honua-server/release/honua-<id>.json). When empty, the committed 2026-05 Preview example is reconstructed."
+        required: false
+      train_repos:
+        description: "Space-separated consumer set (default: every enrolled consumer in the registry)."
+        required: false
+      mode:
+        description: "RC verdict mode: advisory (publish bundle, never fail the dispatch) or live (fail on any blocking layer)."
+        required: false
+        default: advisory
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  rc-orchestrator-selftest:
+    name: RC orchestrator self-test (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check (orchestrated scripts + aggregator)
+        run: |
+          bash -n scripts/compat-train-conformance-gate.sh
+          bash -n scripts/compat-train-release-gate.sh
+          bash -n scripts/compat-train-release-validation.sh
+          bash -n scripts/compat-train-live-probe.sh
+          bash -n scripts/compat-train-rc-aggregate.sh
+          bash -n scripts/smoke-compat-train-rc-aggregate.sh
+
+      - name: Validate consumer registry JSON
+        run: jq -e . compatibility/consumers.conformance.json >/dev/null
+
+      - name: RC aggregator smoke (releasable path + every block path)
+        run: ./scripts/smoke-compat-train-rc-aggregate.sh
+
+  rc-validate:
+    name: Validate the candidate train and attach the RC evidence bundle
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: rc-orchestrator-selftest
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.COMPAT_TRAIN_DISPATCH_TOKEN || github.token }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1 + 2: PRODUCE per-repo conformance evidence, then GATE it for live-ness.
+      - name: Conformance gate — run consumer conformance against the candidate
+        id: conformance
+        continue-on-error: true
+        env:
+          COMPAT_TRAIN_DISPATCH: "true"
+          COMPAT_TRAIN_CANDIDATE_IMAGE: ${{ github.event.inputs.candidate_image }}
+          COMPAT_TRAIN_CANDIDATE_VERSION: ${{ github.event.inputs.candidate_version }}
+          COMPAT_TRAIN_FIXTURES_VERSION: ${{ github.event.inputs.fixtures_version }}
+          COMPAT_TRAIN_REPOS: ${{ github.event.inputs.train_repos }}
+          COMPAT_TRAIN_EVIDENCE_OUTPUT: compat-train-conformance-evidence.json
+          COMPAT_TRAIN_REPORT_OUTPUT: compat-train-conformance-report.md
+        run: ./scripts/compat-train-conformance-gate.sh
+
+      - name: Release gate — prove the per-repo evidence is live (not local-fallback)
+        id: gate
+        if: ${{ hashFiles('compat-train-conformance-evidence.json') != '' }}
+        continue-on-error: true
+        env:
+          COMPAT_TRAIN_MODE: live
+          COMPAT_TRAIN_CANDIDATE_VERSION: ${{ github.event.inputs.candidate_version }}
+          COMPAT_TRAIN_SCOREBOARD_MATRIX: compatibility/scoreboard/compatibility-matrix.json
+          COMPAT_TRAIN_RELEASE_NOTES_OUTPUT: compat-train-release-gate-notes.md
+        run: ./scripts/compat-train-release-gate.sh compat-train-conformance-evidence.json
+
+      # 3: evaluate the canonical release-train MANIFEST (advisory so a still-
+      # gapped preview still produces its bundle; the aggregator sets the verdict).
+      - name: Release validation — evaluate the release-train manifest
+        id: validation
+        continue-on-error: true
+        env:
+          COMPAT_TRAIN_MANIFEST_URL: ${{ github.event.inputs.manifest_url }}
+          COMPAT_TRAIN_MODE: advisory
+          COMPAT_TRAIN_BUNDLE_OUTPUT: release-validation-bundle.json
+          COMPAT_TRAIN_RELEASE_NOTES_OUTPUT: release-validation-notes.md
+        run: |
+          set -euo pipefail
+          if [[ -z "${COMPAT_TRAIN_MANIFEST_URL}" ]]; then
+            example="compatibility/scoreboard/release-validation-2026-05-preview.json"
+            echo "[INFO] no manifest_url supplied; reconstructing an advisory manifest from ${example}."
+            jq '{
+              releaseId, channel, observedAt,
+              candidate: { ref: .candidate.ref, refSource: .candidate.refSource, image: .candidate.image },
+              releaseGates: [ .checks[] | select(.kind=="releaseGate")
+                | { id, name, owningRepo, requirement, evidenceState, blockers: (.followUps // []) } ],
+              repositoryLanes: [ .checks[] | select(.kind=="repositoryLane")
+                | { id, name, owningRepo, requirement, evidenceState, blockers: (.followUps // []) } ],
+              releaseLaneCriteria: [ .checks[] | select(.kind=="releaseLaneCriteria")
+                | { id, requirement, evidenceState, blockers: (.followUps // []) } ]
+            }' "$example" > reconstructed-manifest.json
+            COMPAT_TRAIN_MANIFEST_URL="" ./scripts/compat-train-release-validation.sh reconstructed-manifest.json
+          else
+            ./scripts/compat-train-release-validation.sh
+          fi
+
+      # 4: actively re-verify the cited runs (only with a real manifest_url; the
+      # reconstructed example carries no live run URLs to re-check).
+      - name: Live probe — re-verify cited runs / wired surfaces
+        id: probe
+        if: ${{ github.event.inputs.manifest_url != '' }}
+        continue-on-error: true
+        env:
+          HONUA_PROBE_MANIFEST_URL: ${{ github.event.inputs.manifest_url }}
+          HONUA_PROBE_MODE: advisory
+          HONUA_PROBE_BUNDLE_OUTPUT: live-probe-bundle.json
+          HONUA_PROBE_BASE_URL: ${{ vars.HONUA_PROBE_BASE_URL }}
+          HONUA_PROBE_HELM_CHART: ${{ vars.HONUA_PROBE_HELM_CHART }}
+        run: ./scripts/compat-train-live-probe.sh
+
+      # 5: fold layers 1-4 into ONE RC evidence bundle with one overall verdict.
+      - name: Aggregate the layers into one RC evidence bundle
+        id: aggregate
+        env:
+          COMPAT_TRAIN_CONFORMANCE_EVIDENCE: compat-train-conformance-evidence.json
+          COMPAT_TRAIN_RELEASE_GATE_RESULT: ${{ steps.gate.outcome == 'success' && 'pass' || (steps.gate.outcome == 'skipped' && '' || 'fail') }}
+          COMPAT_TRAIN_VALIDATION_BUNDLE: release-validation-bundle.json
+          COMPAT_TRAIN_PROBE_BUNDLE: live-probe-bundle.json
+          COMPAT_TRAIN_RC_MODE: ${{ github.event.inputs.mode || 'advisory' }}
+          COMPAT_TRAIN_RELEASE_ID: ${{ github.event.inputs.candidate_version }}
+          COMPAT_TRAIN_RC_BUNDLE_OUTPUT: rc-validation-bundle.json
+          COMPAT_TRAIN_RC_NOTES_OUTPUT: rc-validation-notes.md
+        run: ./scripts/compat-train-rc-aggregate.sh
+
+      - name: Append RC release notes to step summary
+        if: ${{ always() }}
+        run: |
+          if [[ -f rc-validation-notes.md ]]; then
+            cat rc-validation-notes.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload aggregated RC evidence bundle + per-layer artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-train-rc-validation-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            rc-validation-bundle.json
+            rc-validation-notes.md
+            compat-train-conformance-evidence.json
+            compat-train-conformance-report.md
+            compat-train-release-gate-notes.md
+            release-validation-bundle.json
+            release-validation-notes.md
+            live-probe-bundle.json

@@ -160,7 +160,13 @@ Each tool call emits one JSONL audit record.
   `multi-model-operator-evals.yml`, `backup-restore-gameday.yml`,
   `console-release-promotion.yml`: `bash -n` + `smoke-console-release-gate.sh` for
   the honua-console release gate / preview planner — see
-  `docs/console-release-promotion.md`).
+  `docs/console-release-promotion.md`). The compatibility-train lanes
+  (`compat-train-conformance-gate.yml`, `compat-train-release-validation.yml`) plus
+  the one-dispatch RC orchestrator `compat-train-rc-validation.yml` chain the
+  existing per-repo/per-surface jobs (conformance producer -> live-evidence gate ->
+  manifest validation -> live probe) into one aggregated RC evidence bundle via
+  `scripts/compat-train-rc-aggregate.sh` (honua-devops#41) — see
+  `docs/compat-train-release-validation.md`.
 - NuGet locked-restore mode is active when `packages.lock.json` is present;
   changing package versions requires updating the lock file.
 - Default-safe posture: keep `plan` mode + `pr-first` approval unless a task
