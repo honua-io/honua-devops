@@ -29,6 +29,52 @@ evidence (and prove it came from a real external target). Both are default-safe
 an evidence bundle; they never deploy, submit, promote, or roll back. The
 manifest-driven validator is documented first, then the per-repo gate.
 
+## One-dispatch orchestrator (`compat-train-rc-validation.yml` + `compat-train-rc-aggregate.sh`)
+
+The pieces above each answer one question and historically ran as separate
+workflows that an operator had to wire together by hand (dispatch the conformance
+gate, download its evidence, feed it to the release gate, separately validate the
+manifest, separately probe). The **RC validation orchestrator** chains them in a
+single repeatable dispatch and folds their outputs into **one** machine-readable
+release-candidate evidence bundle with a single overall verdict and a single
+de-duplicated list of owning follow-up issues:
+
+```
+conformance-gate ─evidence─▶ release-gate ┐
+release-validation (manifest) ────────────┼─▶ rc-aggregate ─▶ rc-validation-bundle.json
+live-probe (re-verify) ───────────────────┘        (#41)        (attached to the run)
+```
+
+The aggregator (`scripts/compat-train-rc-aggregate.sh`) **reuses** the four
+layers' bundles; it re-implements no check. It computes a `releasable` /
+`blocked` verdict that requires `conformance`, `release-gate`, and
+`release-validation` to be green (the `live-probe` layer is advisory by default —
+most of its surfaces are BLOCKED on un-provisioned infra — and becomes required
+with `COMPAT_TRAIN_RC_REQUIRE_PROBE=true`). A required layer that was not run is
+`missing`, which is **blocking** (a not-run layer is never a silent pass).
+
+The workflow `.github/workflows/compat-train-rc-validation.yml` runs this on
+`workflow_dispatch` with `candidate_image` (or `candidate_version`),
+`fixtures_version` (a pinned `geospatial-grpc` fixtures version — required), an
+optional `manifest_url`, and a `mode` (`advisory` default, or `live` to fail the
+dispatch on any blocking layer). It uploads `rc-validation-bundle.json` plus the
+per-layer artifacts as `compat-train-rc-validation-<run_id>` and appends the
+RC release-notes to the run's step summary — the evidence that can be linked from
+the Honua Roadmap Project. On PR/push it runs only the offline self-test
+(`bash -n` + `scripts/smoke-compat-train-rc-aggregate.sh`, which exercises the
+releasable path and every block path).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `COMPAT_TRAIN_CONFORMANCE_EVIDENCE` | _(none)_ | conformance-gate evidence JSON (`repos.<repo>`) |
+| `COMPAT_TRAIN_RELEASE_GATE_RESULT` | _(none)_ | `pass`/`fail` — the release-gate exit verdict |
+| `COMPAT_TRAIN_VALIDATION_BUNDLE` | _(none)_ | manifest validation bundle |
+| `COMPAT_TRAIN_PROBE_BUNDLE` | _(none)_ | live-probe bundle (optional) |
+| `COMPAT_TRAIN_RC_REQUIRE_PROBE` | `false` | Require the live-probe layer to be green |
+| `COMPAT_TRAIN_RC_MODE` | `live` | `live` fails on any blocking layer; `advisory` exits 0 |
+| `COMPAT_TRAIN_RC_BUNDLE_OUTPUT` | `rc-validation-bundle.json` | Aggregated RC evidence bundle |
+| `COMPAT_TRAIN_RC_NOTES_OUTPUT` | _(none)_ | Optional RC release-notes output file |
+
 ## Manifest-driven validation (`compat-train-release-validation.sh`)
 
 This is the operator-side release-candidate validation **surface** for
