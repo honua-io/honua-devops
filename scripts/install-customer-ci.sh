@@ -379,7 +379,7 @@ set_secret_if_present() {
     return
   fi
 
-  gh secret set "\$name" \$(set_repo_args) --body "\$value"
+  printf '%s' "\$value" | gh secret set "\$name" \$(set_repo_args) --body-file -
   echo "Set repo secret: \$name"
 }
 
