@@ -106,7 +106,7 @@ while IFS='=' read -r key value; do
   if [[ "$DRY_RUN" == "true" ]]; then
     echo "[DRY-RUN] would rotate secret: $key"
   else
-    gh secret set "$key" --repo "$REPO" --body "$value"
+    printf '%s' "$value" | gh secret set "$key" --repo "$REPO" --body-file -
     echo "Rotated secret: $key"
   fi
 done <"$ENV_FILE"

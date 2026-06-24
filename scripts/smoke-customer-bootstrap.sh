@@ -122,6 +122,11 @@ while [[ \$# -gt 0 ]]; do
   if [[ "\$1" == "--body" ]]; then
     shift
     printf 'BODY=%s\n' "\${1:-}" >> "$WORKDIR/gh-calls.log"
+  elif [[ "\$1" == "--body-file" ]]; then
+    shift
+    if [[ "\${1:-}" == "-" ]]; then
+      printf 'BODY=%s\n' "\$(cat)" >> "$WORKDIR/gh-calls.log"
+    fi
   fi
   shift || true
 done
