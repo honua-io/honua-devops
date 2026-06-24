@@ -60,6 +60,40 @@ internal sealed record MetadataEvidenceLink(
     string Reference,
     string Summary);
 
+// One structured section of a read-only explanation of the proposed GitOps PR operation
+// (issue #57 AC#3). Section names the facet ("pr-operation", "compatibility", "script-coverage",
+// "rollback", "files"); Status reuses MetadataChangeSetReadiness so a caller can colour the
+// section without parsing Detail. Findings are short, already-secret-free human-readable bullets.
+internal sealed record MetadataChangeSetExplanationSection(
+    string Section,
+    string Status,
+    string Detail,
+    IReadOnlyList<string> Findings);
+
+// A read-only, evidence-linked explanation of the proposed metadata-release GitOps PR operation.
+// AI DevOps hands a validated release package to the builder and gets back this projection so it
+// can summarize and explain WHAT the proposed PR will do — which branch it targets, what files it
+// will contain (grouped by kind), the semantic resources, the server compatibility verdict, data
+// script coverage, and the rollback posture — without writing Git, opening a PR, applying
+// manifests, or creating a server operation. Summary is the single human-readable paragraph a
+// caller can surface verbatim; everything else is structured. Deterministic for a given package.
+internal sealed record MetadataChangeSetExplanation(
+    string ReleasePackageId,
+    string Service,
+    string DesiredRevision,
+    IReadOnlyList<string> TargetEnvironments,
+    string Readiness,
+    string BranchName,
+    string Summary,
+    IReadOnlyList<MetadataChangeSetExplanationSection> Sections,
+    IReadOnlyList<MetadataResourceSummary> SemanticResources,
+    IReadOnlyList<MetadataEvidenceLink> EvidenceLinks,
+    string RollbackClassification,
+    string? KnownGoodRevision,
+    IReadOnlyList<string> RollbackCommands,
+    IReadOnlyList<string> BlockingReasons,
+    IReadOnlyList<string> Warnings);
+
 // The PR-ready change set. Everything here is deterministic for a given release package so a
 // re-run produces an identical branch, commit, body, and files (idempotent PR updates).
 internal sealed record MetadataReleaseChangeSet(

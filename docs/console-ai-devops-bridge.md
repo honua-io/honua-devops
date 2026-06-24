@@ -170,6 +170,35 @@ The structured `ReleaseExplanation` is carried on `OperationResponse.ConsoleBrid
 (in-process, `JsonIgnore`d like the other bridge projections); the LLM-facing/audit wire
 shape keeps only the compact status/summary.
 
+### `explain_metadata_release_changeset`
+
+Read-only AI DevOps explanation of the *proposed metadata-release GitOps PR operation*
+(part of `honua-devops#57`). Where `explain_release_package` explains the server-supplied
+release **evidence**, this tool explains the **change set** honua-devops would produce from
+that evidence: given the same validated release-package JSON consumed by
+`generate_metadata_release_changeset`, it builds the deterministic change set in-process and
+returns a structured, secret-free explanation of what the proposed PR would do:
+
+- a single human-readable `summary` Console/operators can render verbatim
+- the proposed target branch and the files the PR would carry, grouped by kind
+  (manifests, overlays, scripts, evidence, rollback policy)
+- the semantic Honua resources that change (kind/name/action)
+- the server compatibility/coverage verdict folded into `ready` / `warning` / `blocked` /
+  `unknown` readiness, with blocking reasons and advisory warnings surfaced
+- the rollback posture: classification, known-good revision, and the approval-gated
+  rollback commands derived from them
+
+It is strictly read-only: it interprets the supplied evidence and renders the explanation
+in-process — it never writes Git, opens a PR, applies manifests, calls the backend, or
+creates a server operation; merge/reconcile still runs through the governed GitOps/approval
+path. Compatibility is interpreted, not computed (server computation is owned by
+`honua-server#1163/#1164/#1165`). All operator-supplied free text (semantic resource
+kind/name/action) is redaction-scrubbed before it reaches the explanation, matching the
+guarantee the generated manifests and PR body already have. A document that cannot be
+parsed returns an `unknown` explanation rather than throwing. The built
+`MetadataReleaseChangeSet` is carried on `OperationResponse.MetadataReleaseChangeSet`
+(in-process, `JsonIgnore`d) for callers that hold the response.
+
 ## Advisory and Approval Guarantees
 
 - Proposals are always recorded with `submitImmediately=false`. Execution requires a

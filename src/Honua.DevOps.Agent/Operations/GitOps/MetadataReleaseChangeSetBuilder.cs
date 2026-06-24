@@ -152,6 +152,136 @@ internal static class MetadataReleaseChangeSetBuilder
         return true;
     }
 
+    // -- AI DevOps explanation of the proposed PR operation (#57 AC#3) ---------
+
+    // Build a structured, read-only explanation of the proposed metadata-release GitOps PR
+    // operation directly from an already-built change set. This is a pure projection of the
+    // change set's secret-free fields: it never re-reads the package, computes compatibility,
+    // writes Git, opens a PR, or creates a server operation. Deterministic for a given change set.
+    internal static MetadataChangeSetExplanation Explain(MetadataReleaseChangeSet changeSet)
+    {
+        string envs = changeSet.TargetEnvironments.Count == 0
+            ? "the requested environment(s)"
+            : string.Join(", ", changeSet.TargetEnvironments);
+
+        Dictionary<string, int> filesByKind = changeSet.Files
+            .GroupBy(file => file.Kind, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+        string fileKindSummary = filesByKind.Count == 0
+            ? "no files"
+            : string.Join(", ", filesByKind.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{pair.Value} {pair.Key}"));
+
+        MetadataChangeSetExplanationSection prSection = new(
+            Section: "pr-operation",
+            Status: changeSet.Readiness,
+            Detail: changeSet.Readiness == MetadataChangeSetReadiness.Blocked
+                ? $"Proposed PR on branch `{changeSet.BranchName}` is blocked and should not be opened as-is."
+                : $"Proposed PR on branch `{changeSet.BranchName}` would carry {changeSet.Files.Count} file(s) ({fileKindSummary}).",
+            Findings:
+            [
+                $"Branch: {changeSet.BranchName}",
+                $"PR title: {changeSet.PrTitle}",
+                $"Files: {changeSet.Files.Count} ({fileKindSummary})",
+                $"Targets: {envs}"
+            ]);
+
+        bool hasResources = changeSet.SemanticResources.Count > 0;
+        MetadataChangeSetExplanationSection resourcesSection = new(
+            Section: "semantic-resources",
+            Status: hasResources ? MetadataChangeSetReadiness.Ready : MetadataChangeSetReadiness.Unknown,
+            Detail: hasResources
+                ? $"{changeSet.SemanticResources.Count} semantic Honua resource(s) change in this release."
+                : "No semantic resources were listed in the release package.",
+            // Resource kind/name/action are operator-supplied free text and can carry secrets
+            // (e.g. an api_key=... fragment smuggled into a name); scrub before they land in the
+            // explanation, the same redaction guarantee the YAML manifests and PR body already get.
+            Findings: hasResources
+                ? changeSet.SemanticResources
+                    .Select(resource => $"{Redaction.Scrub(resource.Action)} {Redaction.Scrub(resource.Kind)}/{Redaction.Scrub(resource.Name)}")
+                    .ToList()
+                : ["No semantic resources to summarize."]);
+
+        // Compatibility / script-coverage verdict is already folded into readiness + warnings +
+        // blocking reasons on the change set; surface it as a derived section rather than
+        // re-parsing the package.
+        string compatibilityStatus = changeSet.Readiness switch
+        {
+            MetadataChangeSetReadiness.Blocked => MetadataChangeSetReadiness.Blocked,
+            MetadataChangeSetReadiness.Warning => MetadataChangeSetReadiness.Warning,
+            MetadataChangeSetReadiness.Ready => MetadataChangeSetReadiness.Ready,
+            _ => MetadataChangeSetReadiness.Unknown
+        };
+        List<string> compatibilityFindings = [];
+        compatibilityFindings.AddRange(changeSet.BlockingReasons);
+        compatibilityFindings.AddRange(changeSet.Warnings);
+        if (compatibilityFindings.Count == 0)
+        {
+            compatibilityFindings.Add("No compatibility blockers or advisory warnings were reported.");
+        }
+
+        MetadataChangeSetExplanationSection compatibilitySection = new(
+            Section: "compatibility-and-coverage",
+            Status: compatibilityStatus,
+            Detail: changeSet.Readiness switch
+            {
+                MetadataChangeSetReadiness.Blocked => "Server compatibility/coverage evidence blocks this release.",
+                MetadataChangeSetReadiness.Warning => "Server compatibility/coverage evidence carries advisory warnings.",
+                MetadataChangeSetReadiness.Ready => "Server compatibility/coverage evidence is clean.",
+                _ => "Compatibility/coverage evidence is unknown or unparseable."
+            },
+            Findings: compatibilityFindings);
+
+        bool irreversible = changeSet.RollbackClassification == MetadataRollbackClass.Irreversible;
+        List<string> rollbackFindings =
+        [
+            $"Classification: {changeSet.RollbackClassification}",
+            $"Known-good revision: {changeSet.KnownGoodRevision ?? "unknown"}"
+        ];
+        rollbackFindings.AddRange(changeSet.RollbackCommands);
+        MetadataChangeSetExplanationSection rollbackSection = new(
+            Section: "rollback",
+            Status: irreversible || changeSet.RollbackClassification == MetadataRollbackClass.Unknown
+                ? MetadataChangeSetReadiness.Warning
+                : MetadataChangeSetReadiness.Ready,
+            Detail: irreversible
+                ? "Rollback is classified irreversible; only a forward fix can recover this release."
+                : changeSet.RollbackClassification == MetadataRollbackClass.NotRequired
+                    ? "No rollback is required for this release."
+                    : $"A {changeSet.RollbackClassification} rollback path is available; commands are approval-gated.",
+            Findings: rollbackFindings);
+
+        string verdict = changeSet.Readiness switch
+        {
+            MetadataChangeSetReadiness.Ready =>
+                $"The proposed metadata-release PR for `{changeSet.Service}` {changeSet.DesiredRevision} -> {envs} is ready to open: compatibility evidence is clean and {changeSet.Files.Count} desired-state file(s) are prepared.",
+            MetadataChangeSetReadiness.Warning =>
+                $"The proposed metadata-release PR for `{changeSet.Service}` {changeSet.DesiredRevision} -> {envs} can proceed with advisory warnings; review them before opening the PR.",
+            MetadataChangeSetReadiness.Blocked =>
+                $"The proposed metadata-release PR for `{changeSet.Service}` {changeSet.DesiredRevision} -> {envs} is blocked by the supplied compatibility evidence and should not be opened as-is.",
+            _ =>
+                $"The proposed metadata-release PR for `{changeSet.Service}` {changeSet.DesiredRevision} -> {envs} has unknown readiness because the release-package evidence could not be fully interpreted."
+        };
+        string summary = $"{verdict} Rollback classification: {changeSet.RollbackClassification}.";
+
+        return new MetadataChangeSetExplanation(
+            ReleasePackageId: changeSet.ReleasePackageId,
+            Service: changeSet.Service,
+            DesiredRevision: changeSet.DesiredRevision,
+            TargetEnvironments: changeSet.TargetEnvironments,
+            Readiness: changeSet.Readiness,
+            BranchName: changeSet.BranchName,
+            Summary: summary,
+            Sections: [prSection, resourcesSection, compatibilitySection, rollbackSection],
+            SemanticResources: changeSet.SemanticResources,
+            EvidenceLinks: changeSet.EvidenceLinks,
+            RollbackClassification: changeSet.RollbackClassification,
+            KnownGoodRevision: changeSet.KnownGoodRevision,
+            RollbackCommands: changeSet.RollbackCommands,
+            BlockingReasons: changeSet.BlockingReasons,
+            Warnings: changeSet.Warnings);
+    }
+
     // -- Deterministic Git artifacts -----------------------------------------
 
     internal static string BuildBranchName(string serviceToken, string revisionToken, string releaseId)
