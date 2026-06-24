@@ -1075,6 +1075,97 @@ internal sealed class HonuaOperationsToolkit(
     }
 
     [Description(
+        "Summarize and explain the proposed metadata-release GitOps PR operation from a validated metadata release package " +
+        "(issue #57, AI DevOps explanation). Input is the same server-supplied release-package JSON consumed by " +
+        "generate_metadata_release_changeset. Returns a read-only, human-readable summary plus structured sections that explain " +
+        "WHAT the proposed PR would do: the target branch and files grouped by kind (manifests, overlays, scripts, evidence, " +
+        "rollback policy), the semantic Honua resources that change, the server compatibility/coverage verdict, the rollback " +
+        "posture (classification, known-good revision, approval-gated rollback commands), and an overall readiness of " +
+        "ready/warning/blocked/unknown. Strictly read-only: it interprets the supplied evidence and renders an explanation " +
+        "in-process; it never writes Git, opens a PR, applies manifests, calls the backend, or creates a server operation. " +
+        "Returns an unknown explanation when the document cannot be parsed.")]
+    public Task<OperationResponse> ExplainMetadataReleaseChangeSetAsync(
+        string releasePackageJson,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        if (!MetadataReleaseChangeSetBuilder.TryBuild(releasePackageJson, out MetadataReleaseChangeSet changeSet, out string? error))
+        {
+            return Task.FromResult(new OperationResponse(
+                Status: MetadataChangeSetReadiness.Unknown,
+                Summary: "Proposed metadata release operation could not be explained: the supplied document was empty or malformed.",
+                Findings:
+                [
+                    $"Parse error: {error ?? "unknown"}",
+                    "No proposed PR operation could be derived; nothing was interpreted."
+                ],
+                Actions:
+                [
+                    "Supply a valid metadata release-package JSON document (server compatibility report, semantic resources, environments, rollback policy).",
+                    "Explanation is read-only; no Git artifacts were produced and no backend call was made."
+                ],
+                ValidationChecks:
+                [
+                    "release-package-json-required",
+                    "changeset-explanation-read-only-no-mutation"
+                ],
+                Risks:
+                [
+                    "Readiness is unknown because no release-package evidence could be interpreted."
+                ]));
+        }
+
+        MetadataChangeSetExplanation explanation = MetadataReleaseChangeSetBuilder.Explain(changeSet);
+
+        List<string> findings =
+        [
+            $"Release package: {explanation.ReleasePackageId} ({explanation.Service} -> {string.Join(", ", explanation.TargetEnvironments)} @ {explanation.DesiredRevision})",
+            $"Readiness: {explanation.Readiness}",
+            $"Proposed branch: {explanation.BranchName}",
+            $"Rollback classification: {explanation.RollbackClassification}; known-good revision: {explanation.KnownGoodRevision ?? "unknown"}",
+            $"Evidence references: {explanation.EvidenceLinks.Count}",
+            .. explanation.Sections.Select(section => $"Section `{section.Section}`: {section.Status} — {section.Detail}")
+        ];
+        findings.AddRange(explanation.BlockingReasons.Select(reason => $"Blocking: {reason}"));
+
+        List<string> actions =
+        [
+            "Explanation is read-only; honua-devops interprets the supplied evidence and never writes Git, opens a PR, applies manifests, calls the backend, or creates a server operation.",
+            explanation.Readiness == MetadataChangeSetReadiness.Blocked
+                ? $"Do not open a PR on branch `{explanation.BranchName}` until the blocking compatibility evidence is resolved."
+                : $"If approved, open or update branch `{explanation.BranchName}`, then route merge/reconcile through the governed GitOps/approval path.",
+            .. explanation.Warnings.Select(warning => $"Warning: {warning}"),
+            .. explanation.RollbackCommands.Count > 0
+                ? new[] { $"Rollback commands prepared ({explanation.RollbackCommands.Count}); they require explicit governed approval before running." }
+                : Array.Empty<string>()
+        ];
+
+        return Task.FromResult(new OperationResponse(
+            Status: explanation.Readiness,
+            Summary: explanation.Summary,
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "changeset-explanation-read-only-no-mutation",
+                "proposed-pr-operation-interpreted-not-executed",
+                "compatibility-report-interpreted-not-computed",
+                "rollback-posture-derived-from-classification"
+            ],
+            Risks:
+            [
+                explanation.Readiness == MetadataChangeSetReadiness.Blocked
+                    ? "Proposed operation is blocked by the supplied compatibility report; do not open a PR until the breaking change is resolved."
+                    : "Explanation reflects the supplied release-package evidence and can drift before the PR is opened or merged.",
+                explanation.RollbackClassification == MetadataRollbackClass.Irreversible
+                    ? "Rollback is classified irreversible; only a forward fix can recover this release."
+                    : "Acting on this explanation still requires the governed approval/submit path."
+            ],
+            MetadataReleaseChangeSet: changeSet));
+    }
+
+    [Description(
         "Plan a metadata-release-aware honua-gitops run from a validated metadata release package (issue #57 fast-follow). " +
         "Input is the same server-supplied release-package JSON consumed by generate_metadata_release_changeset. Fuses the " +
         "PR-ready change set with the honua-gitops planner so a single read-only output carries BOTH the desired-state change " +

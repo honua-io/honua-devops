@@ -181,6 +181,7 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         "plan_server_upgrade",
         "plan_gitops_engine",
         "generate_metadata_release_changeset",
+        "explain_metadata_release_changeset",
         "plan_metadata_release_gitops",
         "deploy_service_gitops",
         "analyze_customer_requirements",
