@@ -78,23 +78,40 @@ Targets:
 
 - `gp`
 
+The GP adapter cleanly separates two concerns: provisioning the durable per-environment
+substrate (the adapter's job, GitOps-gated) and sizing an individual job (a runtime
+SubmitJob-time concern, NOT terraform).
+
 Characteristics:
 
-- per-job AWS Batch (Fargate-Spot, scale-to-zero) provisioning from the honua-iac
-  `modules/aws-serverless` module (gated `enable_gp_batch=true`), instantiated by
-  `examples/aws-cert`
-- infrastructure IS the deliverable: the sized job definition is the "release", so there
-  is no separate release backend, no traffic shifting, and no out-of-band migration
-- a typed `GpResourceProfile` (vCPU/mem/GPU/timeout/arch/image/ephemeral-storage) is mapped
-  to the `gp_batch_*` terraform variables; vCPU/memory/timeout/retry/GPU are job-def
-  DEFAULTS the server's `AwsBatchComputeBackend` overrides per `SubmitJob`, while container
-  image / CPU architecture / ephemeral storage (and GPU on an EC2 compute-env) are the
-  uniquely-templated knobs `SubmitJob` cannot override
-- a GPU profile is rejected on the Fargate-Spot path (Fargate rejects GPU; GPU requires an
-  EC2 Batch compute environment)
-- surfaced as the plan-first, advisory `plan_gp_provision` tool; the real `terraform apply`
-  stays behind the same execution/approval gates as the other adapters
-- rollback is a terraform-state revert of the job definition (re-apply the prior profile)
+- the adapter provisions / updates the durable PER-ENVIRONMENT GP substrate — the AWS Batch
+  compute-env (Fargate-Spot, scale-to-zero), job queue, IAM roles, ECR repo, and a POOL of
+  job-definition ephemeral-storage tiers (`s`/`m`/`l`/`xl` = 20/50/100/200 GiB) — from the
+  honua-iac GP substrate stack (gated `enable_gp_substrate=true`)
+- this runs RARELY: when GP capability is added or updated in an environment ("provision GP
+  capability in env X"), through the plan-first / approval-gated path. It is NOT a per-job
+  provision: running terraform per job would add 10s–min latency + state-lock contention,
+  and AWS Batch `SubmitJob` already overrides vCPU/memory/timeout/retry per job with zero
+  infra change
+- infrastructure IS the deliverable: the durable substrate is the "release", so there is no
+  separate release backend, no traffic shifting, and no out-of-band migration
+- a typed `GpSubstrateConfig` (image / CPU architecture / compute-env max-vcpus / tier pool /
+  ECR flag) provisions the substrate; it carries NO per-job vCPU/memory/timeout/retry — those
+  are SubmitJob overrides, not terraform inputs
+- the adapter binds to the substrate OUTPUTS / ARNs (`gp_job_queue_arn`,
+  `gp_job_definition_arns` map `{s,m,l,xl}`, `gp_compute_environment_arn`, `gp_job_role_arn`,
+  `gp_execution_role_arn`, `gp_worker_gdal_repository_url`), never to input-variable names —
+  the old `gp_batch_*` variable-name coupling was brittle and backwards
+- per-job sizing is a pure runtime hint (`GpResourceProfile.ToSizingHint()`): given a job's
+  ephemeral-storage need, it selects a job-definition tier (`<=20→s`, `<=50→m`, `<=100→l`,
+  `<=200→xl`; above 200 GiB is an error) and produces the `SubmitJob` overrides (loose
+  `batch.*` params the server consumes). GPU is an advisory note (the default Fargate-Spot
+  substrate has no GPU tiers; GPU needs an opt-in GPU compute-env), not a hard reject
+- surfaced as the plan-first, advisory `plan_gp_substrate` tool (substrate provisioning) plus
+  the pure `plan_gp_job_sizing` planning aid (tier-select + overrides; no terraform); the
+  real `terraform apply` stays behind the same execution/approval gates as the other adapters
+- rollback is a terraform-state revert of the substrate stack (re-apply the prior substrate
+  config)
 
 ## Backend Consumption
 
@@ -109,7 +126,7 @@ Adapters consume the current platform backends this way:
 
 The current repo implementation is still baseline-level:
 
-- all seven targets have concrete adapters (six service targets + the `gp` per-job Batch target)
+- all seven targets have concrete adapters (six service targets + the `gp` per-env Batch substrate target)
 - adapters return structured lifecycle plans, validations, and rollback guidance
 - deploy planning and preflight both resolve the real adapter set
 - apply execution remains policy-gated and backend-light until deeper operator execution work lands

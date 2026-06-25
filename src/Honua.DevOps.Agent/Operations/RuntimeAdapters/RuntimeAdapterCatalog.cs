@@ -67,12 +67,13 @@ internal static class RuntimeAdapterCatalog
 
     internal static RuntimeAdapterCapability BuildGeoprocessingBatchCapability(string target)
     {
-        // Per-job AWS Batch (Fargate-Spot) provision. Infra IS the deliverable: the
-        // "release" is the sized job definition itself, so there is no separate
-        // release-backend deploy, no traffic shifting, and no out-of-band migration.
-        // The job runs to completion and the compute-env scales to zero, so rollback
-        // is a terraform-state revert (destroy / re-apply prior profile), and drift
-        // is detected against the templated job-definition shape.
+        // Per-ENVIRONMENT AWS Batch (Fargate-Spot) GP substrate provision. Infra IS the
+        // deliverable: the durable substrate (compute-env, queue, IAM, ECR, and the pooled
+        // s/m/l/xl job-definition tiers) is the "release", so there is no separate
+        // release-backend deploy, no traffic shifting, and no out-of-band migration. The
+        // substrate is provisioned once per env (rarely); per-job sizing is a SubmitJob-time
+        // runtime concern. Rollback is a terraform-state revert (destroy / re-apply prior
+        // substrate config), and drift is detected against the substrate shape.
         return new RuntimeAdapterCapability(
             Target: target,
             Family: "batch-job",

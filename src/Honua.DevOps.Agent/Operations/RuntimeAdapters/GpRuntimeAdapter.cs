@@ -1,106 +1,92 @@
 namespace Honua.DevOps.Agent.Operations.RuntimeAdapters;
 
 /// <summary>
-/// Geoprocessing (GP) runtime adapter: maps a per-job <see cref="GpResourceProfile"/>
-/// to a UNIQUE per-job AWS Batch provision in the honua-iac <c>modules/aws-serverless</c>
-/// module (gated <c>enable_gp_batch=true</c>, instantiated by <c>examples/aws-cert</c>).
+/// Geoprocessing (GP) runtime adapter: provisions / updates the durable PER-ENVIRONMENT GP
+/// substrate — the AWS Batch compute-env (Fargate-Spot), job queue, IAM roles, ECR repo, and a
+/// POOL of job-definition ephemeral-storage tiers (s/m/l/xl) — in the honua-iac GP substrate
+/// stack (gated <c>enable_gp_substrate=true</c>).
 ///
-/// This is the keystone of the "turtles all the way down" model: an AI-designed GP job
-/// carries a resource profile, and this adapter sizes + emits a plan-first terraform
-/// provision step plan that mints a job definition for that job. It NEVER applies — the
-/// real <c>terraform apply</c> stays behind the agent's ExecutionMode / ExecutionTier /
-/// ApprovalMode gates exactly like the other adapters; in plan mode every "apply" step
-/// degrades to a <c>terraform plan</c>.
+/// This runs RARELY: when GP capability is added or updated in an environment ("provision GP
+/// capability in env X"), through the existing plan-first / approval-gated path. It is NOT a
+/// per-job provision: per-job sizing (vCPU/memory/timeout/retry + tier selection) is a pure
+/// runtime concern the server applies at AWS Batch <c>SubmitJob</c> time with ContainerOverrides
+/// + resourceRequirements + a job-definition tier pick — NO terraform, NO agent, per job.
 ///
-/// The adapter is profile-bearing (one instance per GP job), unlike the stateless
-/// baseline adapters. A default-profile instance (<see cref="Default"/>) is registered in
-/// the catalog for capability resolution; the toolkit constructs a profile-specific
-/// instance per provision request.
+/// The adapter NEVER applies in plan mode: the real <c>terraform apply</c> stays behind the
+/// agent's ExecutionMode / ExecutionTier / ApprovalMode gates exactly like the other adapters;
+/// in plan mode every "apply" step degrades to a <c>terraform plan</c>. It binds to the
+/// substrate OUTPUTS / ARNs (see <see cref="GpSubstrateOutputs"/>), never to input-variable names.
 /// </summary>
 internal sealed class GpRuntimeAdapter : RuntimeAdapterBase
 {
     internal const string TargetName = "gp";
 
-    private readonly GpResourceProfile _profile;
-    private readonly GpResourceProfile.ComputePlatform _platform;
+    private readonly GpSubstrateConfig _substrate;
 
-    internal GpRuntimeAdapter(
-        GpResourceProfile profile,
-        GpResourceProfile.ComputePlatform platform = GpResourceProfile.ComputePlatform.FargateSpot)
+    internal GpRuntimeAdapter(GpSubstrateConfig? substrate = null)
     {
-        _profile = profile ?? throw new ArgumentNullException(nameof(profile));
-        _platform = platform;
+        _substrate = substrate ?? GpSubstrateConfig.Default;
     }
 
     /// <summary>
-    /// Default Fargate-Spot baseline instance used for capability resolution in the
-    /// registry/catalog. Provisioning always goes through a profile-specific instance.
+    /// Default substrate instance used for capability resolution in the registry/catalog and as
+    /// the conservative per-env baseline (x86_64 Fargate-Spot, full s/m/l/xl tier pool).
     /// </summary>
-    internal static GpRuntimeAdapter Default { get; } = new(GpResourceProfile.FargateBaseline);
+    internal static GpRuntimeAdapter Default { get; } = new();
 
-    internal GpResourceProfile Profile => _profile;
-
-    internal GpResourceProfile.ComputePlatform Platform => _platform;
+    internal GpSubstrateConfig Substrate => _substrate;
 
     public override RuntimeAdapterCapability Capability =>
         RuntimeAdapterCatalog.BuildGeoprocessingBatchCapability(TargetName);
 
     protected override string TerraformModule => "aws-serverless";
 
-    // Infra IS the deliverable for a per-job Batch provision; there is no separate
-    // release backend. Rollback is a terraform-state revert of the job definition.
-    protected override string ReleaseBackend => "terraform-batch-job-definition";
+    // Infra IS the deliverable for the GP substrate; there is no separate release backend.
+    // Rollback is a terraform-state revert of the substrate stack.
+    protected override string ReleaseBackend => "terraform-gp-substrate";
 
-    protected override string RollbackHandle => "batch-job-definition-terraform-revert";
+    protected override string RollbackHandle => "gp-substrate-terraform-revert";
 
-    protected override string TargetDisplayName => "gp (per-job AWS Batch)";
+    protected override string TargetDisplayName => "gp (per-env AWS Batch substrate)";
 
     /// <summary>
-    /// Validate the GP profile against AWS Batch / honua-iac constraints AND the
-    /// requested compute platform (Fargate rejects GPU). On any violation the step plan
-    /// surfaces the validation errors as risks and a blocking validation check, so a
-    /// GPU-on-Fargate profile is caught here BEFORE any plan/apply step is suggested.
+    /// Validate the per-env substrate config and confirm the substrate stack is present. The
+    /// validation is substrate-shaped (image/arch/tier-pool/compute ceiling), not per-job: there
+    /// is no per-job profile to reject here. A GPU need is NOT validated here either — GPU is a
+    /// runtime sizing-hint note (the default Fargate substrate has no GPU tiers), not a substrate
+    /// provisioning input.
     /// </summary>
     public override RuntimeAdapterStepPlan Validate(RuntimeAdapterRequest request)
     {
-        GpProfileValidation validation = _profile.Validate(_platform);
-
         List<string> checks =
         [
             $"target-capability:{Capability.Target}",
             $"execution-tier:{request.ExecutionTier.ToConfigValue()}",
-            $"gp-compute-platform:{PlatformToken()}",
-            validation.IsValid ? "gp-profile-valid:true" : "gp-profile-valid:false"
+            $"gp-substrate-arch:{GpSubstrateConfig.ToTerraformArchitecture(_substrate.Architecture)}",
+            $"gp-substrate-tiers:{TierPoolToken()}"
         ];
-
-        List<string> risks =
-        [
-            $"Provisioning `{Capability.Target}` mints a per-job Batch job definition sized to the GP profile; an oversized profile inflates Fargate task cost."
-        ];
-        if (!validation.IsValid)
-        {
-            risks.AddRange(validation.Errors.Select(error => $"GP profile rejected: {error}"));
-        }
 
         return new RuntimeAdapterStepPlan(
             Operation: "validate",
-            Summary: validation.IsValid
-                ? $"Validate GP resource profile for `{TargetDisplayName}` on platform `{PlatformToken()}` and map it to honua-iac `gp_batch_*` variables ({DescribeProfile()})."
-                : $"GP resource profile for `{TargetDisplayName}` is INVALID for platform `{PlatformToken()}`: {string.Join("; ", validation.Errors)}.",
+            Summary: $"Validate the per-env GP substrate config for `{TargetDisplayName}` against execution tier `{request.ExecutionTier.ToConfigValue()}` ({DescribeSubstrate()}). The substrate is provisioned once per env; per-job sizing is a SubmitJob-time concern, not validated here.",
             SuggestedCommands:
             [
-                $"test -d {ShellQuote(Path.Combine(request.TerraformLocalPath, "infrastructure", "terraform", "modules", TerraformModule))}",
+                $"test -d {ShellQuote(System.IO.Path.Combine(request.TerraformLocalPath, "infrastructure", "terraform", "modules", TerraformModule))}",
                 $"{request.GitOpsTool} validate-target --target {ShellQuote(Capability.Target)} --tier {ShellQuote(request.ExecutionTier.ToConfigValue())}"
             ],
             ValidationChecks: checks,
-            Risks: risks);
+            Risks:
+            [
+                "Provisioning the GP substrate stands up durable AWS Batch infra (compute-env, queue, IAM, ECR, tier pool) per env; an over-broad max-vcpus ceiling can inflate the compute-env scaling headroom.",
+                "Per-job vCPU/memory/timeout/retry are NOT provisioned here: they are SubmitJob overrides the server applies at runtime against the pooled tiers."
+            ]);
     }
 
     public override RuntimeAdapterStepPlan PlanInfrastructure(RuntimeAdapterRequest request)
     {
         return new RuntimeAdapterStepPlan(
             Operation: "plan-infra",
-            Summary: $"Plan the per-job AWS Batch provision for `{TargetDisplayName}` ({DescribeProfile()}). Read-only terraform plan; mints nothing.",
+            Summary: $"Plan the per-env GP substrate provision for `{TargetDisplayName}` ({DescribeSubstrate()}). Read-only terraform plan; stands up nothing.",
             SuggestedCommands:
             [
                 BuildTerraformCommand(request, "plan")
@@ -108,26 +94,27 @@ internal sealed class GpRuntimeAdapter : RuntimeAdapterBase
             ValidationChecks:
             [
                 $"infra-plan:{Capability.Target}",
-                $"gp-batch-vars:{GpBatchTerraformMapping.EnableVar}=true"
+                $"gp-substrate-vars:{GpSubstrateConfig.EnableVar}=true",
+                $"gp-substrate-outputs:{string.Join(",", GpSubstrateOutputs.All)}"
             ],
             Risks:
             [
-                "A GP job-definition plan can be stale if the validated honua-iac ref changes before execution.",
-                "vCPU/memory/timeout/retry/GPU are job-def DEFAULTS overridden per SubmitJob; only image/arch/ephemeral-storage (and GPU on EC2) are uniquely templated here.",
-                "The examples/aws-cert root forwards only gp_batch_image/gp_batch_cpu_architecture/create_worker_gdal_repo today; the per-job root must forward the full gp_batch_* set (or set TF_VAR_* / a tfvars file) for the remaining knobs to reach the module."
+                "The substrate plan can be stale if the validated honua-iac ref changes before execution.",
+                "The substrate provisions a POOL of job-definition tiers (s/m/l/xl); per-job sizing selects a tier and overrides vCPU/memory/timeout/retry at SubmitJob time — none of that is templated here.",
+                "Downstream consumers (the server) bind to the substrate OUTPUTS (gp_job_queue_arn / gp_job_definition_arns / gp_compute_environment_arn / gp_job_role_arn / gp_execution_role_arn / gp_worker_gdal_repository_url), not to input-variable names."
             ]);
     }
 
     public override RuntimeAdapterStepPlan ApplyInfrastructure(RuntimeAdapterRequest request)
     {
-        // PLAN-FIRST: in plan mode (DryRun) the "apply" step is a terraform plan and
-        // mutates nothing. Only a gated execute pass renders the real apply command.
+        // PLAN-FIRST: in plan mode (DryRun) the "apply" step is a terraform plan and mutates
+        // nothing. Only a gated execute pass renders the real apply command.
         bool planOnly = request.DryRun;
         return new RuntimeAdapterStepPlan(
             Operation: "apply-infra",
             Summary: planOnly
-                ? $"Plan-only: would mint a per-job Batch job definition for `{TargetDisplayName}` ({DescribeProfile()}). No apply issued in plan mode."
-                : $"Apply the per-job Batch job definition for `{TargetDisplayName}` ({DescribeProfile()}) under the satisfied execution + approval gate.",
+                ? $"Plan-only: would provision/update the per-env GP substrate for `{TargetDisplayName}` ({DescribeSubstrate()}). No apply issued in plan mode."
+                : $"Apply the per-env GP substrate for `{TargetDisplayName}` ({DescribeSubstrate()}) under the satisfied execution + approval gate.",
             SuggestedCommands:
             [
                 BuildTerraformCommand(request, planOnly ? "plan" : "apply")
@@ -139,21 +126,21 @@ internal sealed class GpRuntimeAdapter : RuntimeAdapterBase
             ],
             Risks:
             [
-                "Applying a per-job job definition before the GP worker image exists in the ECR repo leaves an unrunnable job.",
-                "GPU resource requirements require an EC2 Batch compute environment; applying a GPU profile on the Fargate-Spot path fails."
+                "Provisioning the substrate before the GP worker image exists in the ECR repo leaves the tier pool unrunnable until the image is pushed.",
+                "Substrate provisioning is per-env and infrequent; do not invoke it per job (per-job sizing is a SubmitJob-time runtime concern with zero infra change)."
             ]);
     }
 
-    // Release planning/apply are not applicable to a per-job Batch provision (infra IS
-    // the deliverable). Surface them as no-op plan steps that redirect to the infra path.
+    // Release planning/apply are not applicable to the substrate (infra IS the deliverable).
+    // Surface them as no-op plan steps that redirect to the infra path.
     public override RuntimeAdapterStepPlan PlanRelease(RuntimeAdapterRequest request)
     {
         return new RuntimeAdapterStepPlan(
             Operation: "plan-release",
-            Summary: $"`{TargetDisplayName}` has no separate release backend: the job definition (infra) IS the deliverable. See plan-infra.",
+            Summary: $"`{TargetDisplayName}` has no separate release backend: the durable substrate (infra) IS the deliverable. See plan-infra.",
             SuggestedCommands: [],
             ValidationChecks: [$"release-plan:not-applicable:{Capability.Target}"],
-            Risks: ["Treating a per-job Batch provision as a long-lived release misreads its lifecycle (the job runs to completion and the compute-env scales to zero)."]);
+            Risks: ["Treating the GP substrate as a per-deploy release misreads its lifecycle: it is provisioned once per env and jobs run against it via the server's SubmitJob path."]);
     }
 
     public override RuntimeAdapterStepPlan ApplyRelease(RuntimeAdapterRequest request)
@@ -163,27 +150,32 @@ internal sealed class GpRuntimeAdapter : RuntimeAdapterBase
             Summary: $"`{TargetDisplayName}` has no separate release apply: provisioning runs through apply-infra under the same gates.",
             SuggestedCommands: [],
             ValidationChecks: [$"release-apply:not-applicable:{Capability.Target}"],
-            Risks: ["A per-job Batch job definition has no traffic-shift or revision-weight surface to apply."]);
+            Risks: ["The GP substrate has no traffic-shift or revision-weight surface to apply."]);
     }
 
     public override RuntimeAdapterStepPlan Verify(RuntimeAdapterRequest request)
     {
         return new RuntimeAdapterStepPlan(
             Operation: "verify",
-            Summary: $"Verify the per-job Batch job definition for `{TargetDisplayName}` registered and is selectable by the server ControlPlane execution-workload catalog (workloadId `{_profile.WorkloadId}`).",
+            Summary: $"Verify the per-env GP substrate for `{TargetDisplayName}` exposes its OUTPUTS (queue + tier-keyed job-definition pool ARNs) so the server can submit jobs against it (workloadId `{_substrate.WorkloadId}`).",
             SuggestedCommands:
             [
-                $"aws batch describe-job-definitions --status ACTIVE --query 'jobDefinitions[?contains(jobDefinitionName, `{_profile.WorkloadId}`)].revision'",
+                $"terraform -chdir {ShellQuote(TerraformChdir(request))} output -raw {GpSubstrateOutputs.JobQueueArn}",
+                $"terraform -chdir {ShellQuote(TerraformChdir(request))} output -json {GpSubstrateOutputs.JobDefinitionArns}",
                 $"{request.GitOpsTool} verify --target {ShellQuote(Capability.Target)} --service {ShellQuote(request.Service)}"
             ],
             ValidationChecks:
             [
                 $"adapter-verify:{Capability.Target}",
-                $"gp-workload-registered:{_profile.WorkloadId}"
+                $"gp-substrate-output:{GpSubstrateOutputs.JobQueueArn}",
+                $"gp-substrate-output:{GpSubstrateOutputs.JobDefinitionArns}",
+                $"gp-substrate-output:{GpSubstrateOutputs.ComputeEnvironmentArn}",
+                $"gp-workload-registered:{_substrate.WorkloadId}"
             ],
             Risks:
             [
-                "A registered job definition with a missing/incorrect image will register clean but fail at job runtime."
+                "A substrate that registers clean but has a missing/empty tier in gp_job_definition_arns will fail at SubmitJob time when the server selects that tier.",
+                "Binding to an input-variable name instead of an output ARN reintroduces the brittle coupling this design removed."
             ]);
     }
 
@@ -191,7 +183,7 @@ internal sealed class GpRuntimeAdapter : RuntimeAdapterBase
     {
         return new RuntimeAdapterStepPlan(
             Operation: "drift",
-            Summary: $"Detect drift between the templated GP job-definition shape ({DescribeProfile()}) and the active AWS Batch job definition for `{TargetDisplayName}`.",
+            Summary: $"Detect drift between the desired per-env GP substrate shape ({DescribeSubstrate()}) and the active AWS Batch substrate for `{TargetDisplayName}`.",
             SuggestedCommands:
             [
                 BuildTerraformCommand(request, "plan", driftDetect: true)
@@ -202,40 +194,42 @@ internal sealed class GpRuntimeAdapter : RuntimeAdapterBase
             ],
             Risks:
             [
-                "Silent drift in image/arch/ephemeral-storage means jobs run against an unintended sizing or binary."
+                "Silent drift in the compute-env, queue, IAM, or tier pool means jobs submit against an unintended substrate or a missing tier."
             ]);
     }
 
     protected override string BuildRollbackCommand(RuntimeAdapterRequest request)
     {
-        // Rollback = revert the templated job definition via terraform (re-apply the
-        // prior-known-good profile, or destroy this provision). Plan-first by default.
+        // Rollback = revert the substrate stack via terraform (re-apply the prior-known-good
+        // substrate config, or destroy this substrate). Plan-first by default.
         return request.DryRun
             ? BuildTerraformCommand(request, "plan")
-            : $"terraform -chdir {ShellQuote(TerraformChdir(request))} apply {GpVarFlags()} # re-apply prior known-good gp_batch_* profile to revert";
+            : $"terraform -chdir {ShellQuote(TerraformChdir(request))} apply {GpSubstrateVarFlags()} # re-apply prior known-good GP substrate config to revert";
     }
 
-    /// <summary>Build a terraform command at the module-instantiating example dir with the GP profile var flags.</summary>
+    /// <summary>Build a terraform command at the substrate stack dir with the per-env substrate var flags.</summary>
     private string BuildTerraformCommand(RuntimeAdapterRequest request, string verb, bool driftDetect = false)
     {
         string suffix = driftDetect ? " -detailed-exitcode" : string.Empty;
-        return $"terraform -chdir {ShellQuote(TerraformChdir(request))} {verb} {GpVarFlags()}{suffix}";
+        return $"terraform -chdir {ShellQuote(TerraformChdir(request))} {verb} {GpSubstrateVarFlags()}{suffix}";
     }
 
     private static string TerraformChdir(RuntimeAdapterRequest request) =>
-        Path.Combine(request.TerraformLocalPath, "infrastructure", "terraform", "examples", "aws-cert");
+        System.IO.Path.Combine(request.TerraformLocalPath, "infrastructure", "terraform", "examples", "aws-cert");
 
-    /// <summary>Render the ordered <c>-var 'name=value'</c> flags from the profile mapping.</summary>
-    private string GpVarFlags()
+    /// <summary>Render the ordered <c>-var 'name=value'</c> flags from the per-env substrate config.</summary>
+    private string GpSubstrateVarFlags()
     {
-        IReadOnlyList<GpBatchTerraformVar> vars = GpBatchTerraformMapping.ToTerraformVars(_profile);
+        IReadOnlyList<GpSubstrateVar> vars = _substrate.ToSubstrateVars();
         return string.Join(" ", vars.Select(v => $"-var {ShellQuote($"{v.Name}={v.Value}")}"));
     }
 
-    private string DescribeProfile() =>
-        $"{_profile.Vcpus}vcpu/{_profile.MemoryMib}MiB, arch={GpBatchTerraformMapping.ToTerraformArchitecture(_profile.Architecture)}, " +
-        $"gpu={_profile.GpuCount}, ephemeral={(_profile.EphemeralStorageGib?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "default")}, " +
-        $"timeout={_profile.TimeoutSeconds}s, image={(string.IsNullOrWhiteSpace(_profile.Image) ? "lambda-default" : _profile.Image!)}";
+    private string DescribeSubstrate() =>
+        $"arch={GpSubstrateConfig.ToTerraformArchitecture(_substrate.Architecture)}, " +
+        $"max-vcpus={_substrate.MaxVcpus}, tiers={TierPoolToken()}, " +
+        $"image={(string.IsNullOrWhiteSpace(_substrate.Image) ? "lambda-default" : _substrate.Image!)}, " +
+        $"worker-gdal-repo={(_substrate.CreateWorkerGdalRepo ? "create" : "reuse")}";
 
-    private string PlatformToken() => _platform == GpResourceProfile.ComputePlatform.Ec2 ? "ec2" : "fargate-spot";
+    private string TierPoolToken() =>
+        string.Join("/", _substrate.EffectiveTiers.Select(GpResourceProfile.TierToken));
 }

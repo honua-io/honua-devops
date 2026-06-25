@@ -222,19 +222,15 @@ internal sealed class ConsoleOperationBridge(
                 : "honua-server deploy-control did not return a durable operation id; proposal is blocked, no operation invented.");
     }
 
-    [Description("Plan a per-job AWS Batch provision for an AI-designed geoprocessing (GP) job from its resource profile and record it as a PLAN-FIRST, advisory deploy-control proposal (submitImmediately=false; never executes). The GP profile (vcpus, memoryMib, gpuCount, timeoutSeconds, architecture x86_64|arm64, optional image, optional ephemeralStorageGib, retryAttempts) is mapped to the honua-iac modules/aws-serverless gp_batch_* terraform variables and emitted as a plan-only terraform step plan that mints a UNIQUE job definition sized to the job. computePlatform is fargate-spot (default; GPU rejected) or ec2 (required for GPU). vCPU/memory/timeout/retry/GPU are job-def DEFAULTS the server overrides per SubmitJob; image/arch/ephemeral-storage (and GPU on EC2) are the uniquely-templated knobs. An invalid profile (e.g. gpuCount>0 on fargate-spot) returns a blocked projection and records NOTHING. The real terraform apply stays behind the agent's execution/approval gates exactly like the other runtime adapters.")]
-    public async Task<OperationResponse> PlanGpProvisionAsync(
+    [Description("Plan provisioning/updating the durable PER-ENVIRONMENT geoprocessing (GP) substrate and record it as a PLAN-FIRST, advisory deploy-control proposal (submitImmediately=false; never executes). The substrate is the AWS Batch compute-env (Fargate-Spot), job queue, IAM roles, ECR repo, and a POOL of job-definition ephemeral-storage tiers (s/m/l/xl = 20/50/100/200 GiB). It is provisioned RARELY (when GP capability is added/updated in an env), NOT per job. Per-env config: image (empty=reuse Lambda image), architecture (x86_64|arm64, shared by the whole tier pool), maxVcpus (compute-env ceiling), createWorkerGdalRepo, tiersCsv (subset of s,m,l,xl; empty=all four). The substrate exposes OUTPUTS the server binds to (gp_job_queue_arn, gp_job_definition_arns map, gp_compute_environment_arn, gp_job_role_arn, gp_execution_role_arn, gp_worker_gdal_repository_url) — never input-variable names. Per-JOB sizing (vCPU/memory/timeout/retry + tier selection) is a SubmitJob-time runtime concern with zero infra change; use plan_gp_job_sizing for that planning aid. The real terraform apply stays behind the agent's execution/approval gates exactly like the other runtime adapters.")]
+    public async Task<OperationResponse> PlanGpSubstrateAsync(
         string service,
         string environmentsCsv,
-        int vcpus,
-        int memoryMib,
-        int gpuCount,
-        int timeoutSeconds,
         string architecture,
         string image,
-        int ephemeralStorageGib,
-        int retryAttempts,
-        string computePlatform,
+        int maxVcpus,
+        bool createWorkerGdalRepo,
+        string tiersCsv,
         string owner,
         CancellationToken cancellationToken = default)
     {
@@ -243,48 +239,31 @@ internal sealed class ConsoleOperationBridge(
         string normalizedOwner = DeploymentInputs.SanitizeFreeText(owner, "unassigned");
 
         GpCpuArchitecture arch = ParseGpArchitecture(architecture);
-        GpResourceProfile.ComputePlatform platform = ParseGpComputePlatform(computePlatform);
-        GpResourceProfile profile = new(
-            Vcpus: vcpus,
-            MemoryMib: memoryMib,
-            GpuCount: gpuCount,
-            TimeoutSeconds: timeoutSeconds,
-            Architecture: arch,
+        IReadOnlyList<GpJobDefinitionTier> tiers = ParseGpTiers(tiersCsv);
+        GpSubstrateConfig substrate = new(
             Image: string.IsNullOrWhiteSpace(image) ? null : image.Trim(),
-            EphemeralStorageGib: ephemeralStorageGib <= 0 ? null : ephemeralStorageGib,
-            RetryAttempts: retryAttempts <= 0 ? 1 : retryAttempts);
+            Architecture: arch,
+            MaxVcpus: maxVcpus <= 0 ? 256 : maxVcpus,
+            CreateWorkerGdalRepo: createWorkerGdalRepo,
+            Tiers: tiers);
 
-        GpProfileValidation validation = profile.Validate(platform);
-        GpRuntimeAdapter adapter = new(profile, platform);
-        IReadOnlyList<GpBatchTerraformVar> terraformVars = GpBatchTerraformMapping.ToTerraformVars(profile);
+        GpRuntimeAdapter adapter = new(substrate);
+        IReadOnlyList<GpSubstrateVar> substrateVars = substrate.ToSubstrateVars();
 
-        List<string> mappingFindings =
+        List<string> substrateFindings =
         [
-            $"GP compute platform: {(platform == GpResourceProfile.ComputePlatform.Ec2 ? "ec2" : "fargate-spot")}.",
-            $"honua-iac modules/aws-serverless gp_batch_* mapping (gated enable_gp_batch=true):",
-            .. terraformVars.Select(v => $"  {v.Name} = {v.Value}")
+            "Per-ENV GP substrate provision (rare, GitOps-gated). Per-job sizing is a SubmitJob-time runtime concern, NOT provisioned here.",
+            $"honua-iac GP substrate inputs (gated {GpSubstrateConfig.EnableVar}=true):",
+            .. substrateVars.Select(v => $"  {v.Name} = {v.Value}"),
+            "Substrate OUTPUTS the server binds to (ARNs, not input-variable names):",
+            .. GpSubstrateOutputs.All.Select(output => $"  output {output}")
         ];
 
-        // Invalid profile (e.g. GPU on Fargate): record NOTHING. Return a blocked
-        // projection so a bad profile never mints a durable deploy-control operation.
-        if (!validation.IsValid)
-        {
-            string blockingReason = $"GP resource profile is invalid for compute platform `{(platform == GpResourceProfile.ComputePlatform.Ec2 ? "ec2" : "fargate-spot")}`: {string.Join("; ", validation.Errors)}";
-            OperationResponse blocked = BuildGpBlockedResponse(
-                normalizedService,
-                environments,
-                normalizedOwner,
-                mappingFindings,
-                validation.Errors,
-                blockingReason);
-            return blocked;
-        }
-
-        // Valid profile: record the advisory proposal through the SAME plan-first,
-        // submitImmediately=false deploy-control path the GitOps proposals use, then
-        // enrich it with the GP step plan + terraform var mapping. action=apply because
-        // the proposal is a (gated) terraform apply of the sized job definition.
-        string changeSummary = $"GP per-job Batch provision: {GpVarDescriptor(terraformVars)}";
+        // Record the advisory proposal through the SAME plan-first, submitImmediately=false
+        // deploy-control path the GitOps proposals use, then enrich it with the substrate step
+        // plan + the per-env substrate var mapping and OUTPUT bindings. action=apply because the
+        // proposal is a (gated) terraform apply of the durable substrate stack.
+        string changeSummary = $"GP per-env substrate provision: {GpSubstrateDescriptor(substrateVars)}";
         OperationResponse proposal = await CreateGitOpsProposalAsync(
             normalizedService,
             string.Join(",", environments),
@@ -294,7 +273,67 @@ internal sealed class ConsoleOperationBridge(
             owner: normalizedOwner,
             cancellationToken);
 
-        return EnrichGpProposal(proposal, adapter, mappingFindings);
+        return EnrichGpProposal(proposal, adapter, substrateFindings);
+    }
+
+    [Description("Compute the runtime SIZING HINT for a single geoprocessing (GP) job: select the durable job-definition tier (s/m/l/xl = ephemeralStorageGib <=20/<=50/<=100/<=200) from the per-env substrate's pre-provisioned pool and produce the AWS Batch SubmitJob overrides (loose batch.* params: batch.vcpus, batch.memoryMib, batch.timeoutSeconds, batch.retryAttempts) the server applies at runtime. This is a PURE PLANNING AID: it calls NO terraform, mints NO infra, and records NO deploy-control operation — per-job sizing is a SubmitJob-time concern with zero infra change. A request above 200 GiB ephemeral storage exceeds the Fargate ceiling / tier pool and is reported as an error. gpuCount>0 is surfaced as an advisory note (the default Fargate-Spot substrate has no GPU tiers; GPU needs an opt-in GPU compute-env), not a hard reject. Returns the selected tier token, the gp_job_definition_arns.<tier> output path the server resolves, and the SubmitJob override map.")]
+    public Task<OperationResponse> PlanGpJobSizingAsync(
+        int vcpus,
+        int memoryMib,
+        int timeoutSeconds,
+        int retryAttempts,
+        int ephemeralStorageGib,
+        int gpuCount,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        GpResourceProfile profile = new(
+            Vcpus: vcpus,
+            MemoryMib: memoryMib,
+            TimeoutSeconds: timeoutSeconds,
+            RetryAttempts: retryAttempts <= 0 ? 1 : retryAttempts,
+            EphemeralStorageGib: ephemeralStorageGib <= 0 ? null : ephemeralStorageGib,
+            GpuCount: gpuCount);
+
+        GpSizingHint hint = profile.ToSizingHint();
+
+        List<string> findings =
+        [
+            $"GP job sizing hint (runtime SubmitJob aid; NO terraform, NO infra, NO deploy-control operation).",
+            $"Selected job-definition tier: {(hint.TierToken ?? "none (out of range)")}.",
+            $"Job-definition ARN output path: {(hint.Tier is { } tier ? GpSubstrateOutputs.JobDefinitionArnForTier(tier) : "n/a")}.",
+            "SubmitJob overrides (loose batch.* params the server consumes):",
+            .. hint.SubmitJobOverrides.Select(kvp => $"  {kvp.Key} = {kvp.Value}"),
+            .. hint.Notes.Select(note => $"Note: {note}")
+        ];
+
+        OperationResponse response = new(
+            Status: hint.IsValid ? "gp-job-sizing" : "gp-job-sizing-rejected",
+            Summary: hint.IsValid
+                ? $"GP job sizing: tier `{hint.TierToken}` + SubmitJob overrides (vcpus={profile.Vcpus}, memoryMib={profile.MemoryMib}, timeoutSeconds={profile.TimeoutSeconds}, retryAttempts={profile.RetryAttempts})."
+                : $"GP job sizing rejected: {string.Join("; ", hint.Errors)}",
+            Findings: findings,
+            Actions:
+            [
+                "Sizing is a pure runtime aid: the server applies the tier + overrides at AWS Batch SubmitJob time with zero infra change.",
+                hint.Notes.Count > 0
+                    ? "GPU geoprocessing requires an opt-in GPU AWS Batch compute environment; the default Fargate-Spot substrate has no GPU tiers."
+                    : "No GPU note; the job fits the default Fargate-Spot substrate tier pool."
+            ],
+            ValidationChecks:
+            [
+                hint.IsValid ? "gp-job-sizing-valid:true" : "gp-job-sizing-valid:false",
+                "gp-sizing-no-terraform",
+                "gp-sizing-no-operation-recorded",
+                $"gp-sizing-tier:{hint.TierToken ?? "none"}"
+            ],
+            Risks:
+            [
+                .. hint.Errors.Select(error => $"Rejected: {error}"),
+                .. hint.Notes.Select(note => $"Advisory: {note}")
+            ]);
+
+        return Task.FromResult(response);
     }
 
     [Description("View an existing GitOps proposal by its stable operationId as a projection over the honua-server deploy-control operation. Returns the proposal contract with raw evidence references and governed submit/rollback suggestions; never scrapes Git or CI.")]
@@ -1263,36 +1302,51 @@ internal sealed class ConsoleOperationBridge(
         };
     }
 
-    private static GpResourceProfile.ComputePlatform ParseGpComputePlatform(string value)
+    private static IReadOnlyList<GpJobDefinitionTier> ParseGpTiers(string value)
     {
-        string normalized = DeploymentInputs.Normalize(value, "fargate-spot").Trim().ToLowerInvariant();
-        return normalized switch
+        // Empty/blank => the full s/m/l/xl pool (GpSubstrateConfig.DefaultTiers).
+        if (string.IsNullOrWhiteSpace(value))
         {
-            "fargate-spot" or "fargate_spot" or "fargate" or "spot" => GpResourceProfile.ComputePlatform.FargateSpot,
-            "ec2" => GpResourceProfile.ComputePlatform.Ec2,
-            _ => throw new InvalidOperationException(
-                $"Invalid GP compute platform `{value}`. Allowed values: fargate-spot, ec2.")
-        };
+            return [];
+        }
+
+        List<GpJobDefinitionTier> tiers = [];
+        foreach (string token in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            GpJobDefinitionTier tier = token.ToLowerInvariant() switch
+            {
+                "s" or "small" => GpJobDefinitionTier.S,
+                "m" or "medium" => GpJobDefinitionTier.M,
+                "l" or "large" => GpJobDefinitionTier.L,
+                "xl" or "extra-large" or "xlarge" => GpJobDefinitionTier.Xl,
+                _ => throw new InvalidOperationException(
+                    $"Invalid GP job-definition tier `{token}`. Allowed values: s, m, l, xl.")
+            };
+            if (!tiers.Contains(tier))
+            {
+                tiers.Add(tier);
+            }
+        }
+
+        return tiers;
     }
 
-    private static string GpVarDescriptor(IReadOnlyList<GpBatchTerraformVar> vars)
+    private static string GpSubstrateDescriptor(IReadOnlyList<GpSubstrateVar> vars)
     {
-        // Compact, deterministic descriptor of the templated knobs for the proposal summary.
+        // Compact, deterministic descriptor of the substrate knobs for the proposal summary.
         return string.Join(
             ", ",
             vars
-                .Where(v => v.Name is GpBatchTerraformMapping.ImageVar
-                    or GpBatchTerraformMapping.CpuArchitectureVar
-                    or GpBatchTerraformMapping.VcpusVar
-                    or GpBatchTerraformMapping.MemoryMibVar
-                    or GpBatchTerraformMapping.GpuCountVar
-                    or GpBatchTerraformMapping.EphemeralStorageGibVar)
+                .Where(v => v.Name is GpSubstrateConfig.ImageVar
+                    or GpSubstrateConfig.CpuArchitectureVar
+                    or GpSubstrateConfig.MaxVcpusVar
+                    or GpSubstrateConfig.TiersVar)
                 .Select(v => $"{v.Name}={(string.IsNullOrEmpty(v.Value) ? "(lambda-default)" : v.Value)}"));
     }
 
-    // Build the plan-first GP step plan WITHOUT any backend call. Used for both the
-    // blocked (invalid-profile) and enrichment paths so the terraform commands shown
-    // are exactly what a gated execute would run (plan in plan mode, apply when gated).
+    // Build the plan-first GP substrate step plan WITHOUT any backend call, so the terraform
+    // commands shown are exactly what a gated execute would run (plan in plan mode, apply when
+    // gated) against the per-env substrate stack.
     private RuntimeAdapterWorkflow BuildGpWorkflow(GpRuntimeAdapter adapter)
     {
         RuntimeAdapterRequest request = new(
@@ -1300,7 +1354,7 @@ internal sealed class ConsoleOperationBridge(
             Environments: runtime.AllowedEnvironments,
             Revision: "HEAD",
             Action: "apply",
-            ChangeSummary: "gp per-job batch provision",
+            ChangeSummary: "gp per-env substrate provision",
             GitOpsTool: runtime.GitOpsTool,
             TerraformRepository: runtime.TerraformRepository,
             TerraformRef: runtime.TerraformRef,
@@ -1313,44 +1367,10 @@ internal sealed class ConsoleOperationBridge(
         return adapter.BuildWorkflow(request);
     }
 
-    private OperationResponse BuildGpBlockedResponse(
-        string service,
-        IReadOnlyList<string> environments,
-        string owner,
-        IReadOnlyList<string> mappingFindings,
-        IReadOnlyList<string> validationErrors,
-        string blockingReason)
-    {
-        List<string> findings =
-        [
-            $"GP provision BLOCKED for `{service}` -> {string.Join(", ", environments)}.",
-            $"Owner: {owner}.",
-            "No deploy-control operation recorded; an invalid profile mints nothing.",
-            .. mappingFindings
-        ];
-
-        return new OperationResponse(
-            Status: "gp-profile-rejected",
-            Summary: $"GP per-job Batch provision rejected: {blockingReason}",
-            Findings: findings,
-            Actions:
-            [
-                "Fix the GP resource profile and re-run plan_gp_provision; nothing was recorded or executed.",
-                "GPU geoprocessing requires an EC2 AWS Batch compute environment; set computePlatform=ec2 and provision an EC2 compute-env, or set gpuCount=0 for the Fargate-Spot path."
-            ],
-            ValidationChecks:
-            [
-                "gp-profile-valid:false",
-                "gp-no-operation-recorded",
-                "proposal-no-auto-execute"
-            ],
-            Risks: [.. validationErrors.Select(error => $"Rejected: {error}")]);
-    }
-
     private OperationResponse EnrichGpProposal(
         OperationResponse proposal,
         GpRuntimeAdapter adapter,
-        IReadOnlyList<string> mappingFindings)
+        IReadOnlyList<string> substrateFindings)
     {
         RuntimeAdapterWorkflow workflow = BuildGpWorkflow(adapter);
         bool planFirst = runtime.ExecutionMode != ExecutionMode.Execute;
@@ -1359,8 +1379,8 @@ internal sealed class ConsoleOperationBridge(
         [
             .. proposal.Findings,
             $"GP runtime adapter target: {adapter.Capability.Target} ({adapter.Capability.Family}).",
-            $"GP provision mode: {(planFirst ? "plan-first (terraform plan only; mints nothing)" : "execute (gated terraform apply)")}.",
-            .. mappingFindings,
+            $"GP substrate provision mode: {(planFirst ? "plan-first (terraform plan only; provisions nothing)" : "execute (gated terraform apply)")}.",
+            .. substrateFindings,
             $"Validate step: {workflow.Validate.Summary}",
             $"Plan-infra command: {workflow.PlanInfrastructure.SuggestedCommands.FirstOrDefault() ?? "(none)"}",
             $"Apply-infra step: {workflow.ApplyInfrastructure.Summary}"
@@ -1383,7 +1403,7 @@ internal sealed class ConsoleOperationBridge(
 
         return proposal with
         {
-            Summary = $"GP per-job Batch provision proposal ({adapter.Capability.Target}) for `{adapter.Profile.WorkloadId}` — {(planFirst ? "plan-first, advisory" : "gated execute")}.",
+            Summary = $"GP per-env substrate provision proposal ({adapter.Capability.Target}) for `{adapter.Substrate.WorkloadId}` — {(planFirst ? "plan-first, advisory" : "gated execute")}.",
             Findings = findings,
             ValidationChecks = checks,
             Risks = risks

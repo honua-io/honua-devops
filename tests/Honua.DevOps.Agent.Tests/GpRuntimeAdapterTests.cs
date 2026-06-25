@@ -10,7 +10,7 @@ public sealed class GpRuntimeAdapterTests
         Environments: ["dev"],
         Revision: "HEAD",
         Action: "apply",
-        ChangeSummary: "gp per-job batch provision",
+        ChangeSummary: "gp per-env substrate provision",
         GitOpsTool: "honua-gitops",
         TerraformRepository: "https://github.com/honua-io/honua-iac",
         TerraformRef: "trunk",
@@ -47,118 +47,84 @@ public sealed class GpRuntimeAdapterTests
         Assert.Contains(all, c => c.Target == "gp");
     }
 
-    [Fact]
-    public void Mapping_FargateBaseline_MapsToExactGpBatchVariableNames()
-    {
-        GpResourceProfile profile = GpResourceProfile.FargateBaseline;
+    // --- Substrate provisioning (per-ENV, GitOps-gated): NO per-job profile inputs ---
 
-        IReadOnlyList<GpBatchTerraformVar> vars = GpBatchTerraformMapping.ToTerraformVars(profile);
+    [Fact]
+    public void Substrate_Default_RendersPerEnvVars_NoPerJobKnobs()
+    {
+        IReadOnlyList<GpSubstrateVar> vars = GpSubstrateConfig.Default.ToSubstrateVars();
         Dictionary<string, string> byName = vars.ToDictionary(v => v.Name, v => v.Value);
 
-        // Exact honua-iac modules/aws-serverless variable names (PR #70). The gate is always on.
-        Assert.Equal("true", byName["enable_gp_batch"]);
-        Assert.Equal(string.Empty, byName["gp_batch_image"]);
-        Assert.Equal("1", byName["gp_batch_vcpus"]);
-        Assert.Equal("2048", byName["gp_batch_memory_mib"]);
-        Assert.Equal("X86_64", byName["gp_batch_cpu_architecture"]);
-        Assert.Equal("0", byName["gp_batch_gpu_count"]);
-        // Unset ephemeral storage renders as null (Fargate 20 GiB default), matching the iac default.
-        Assert.Equal("null", byName["gp_batch_ephemeral_storage_gib"]);
-        Assert.Equal("3600", byName["gp_batch_timeout_seconds"]);
-        Assert.Equal("1", byName["gp_batch_retry_attempts"]);
-        Assert.Equal("geoprocessing-batch", byName["gp_batch_workload_id"]);
-        Assert.Equal("false", byName["create_worker_gdal_repo"]);
-    }
-
-    [Fact]
-    public void Mapping_HighMemoryArmProfile_RendersArchAndEphemeralStorage()
-    {
-        GpResourceProfile profile = new(
-            Vcpus: 8,
-            MemoryMib: 61440,
-            GpuCount: 0,
-            TimeoutSeconds: 14400,
-            Architecture: GpCpuArchitecture.Arm64,
-            Image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/worker-gdal:job-abc",
-            EphemeralStorageGib: 150,
-            RetryAttempts: 3,
-            CreateWorkerGdalRepo: true,
-            WorkloadId: "gp-bigmem");
-
-        Dictionary<string, string> byName = GpBatchTerraformMapping
-            .ToTerraformVars(profile)
-            .ToDictionary(v => v.Name, v => v.Value);
-
-        Assert.Equal("8", byName["gp_batch_vcpus"]);
-        Assert.Equal("61440", byName["gp_batch_memory_mib"]);
-        Assert.Equal("ARM64", byName["gp_batch_cpu_architecture"]);
-        Assert.Equal("150", byName["gp_batch_ephemeral_storage_gib"]);
-        Assert.Equal("14400", byName["gp_batch_timeout_seconds"]);
-        Assert.Equal("3", byName["gp_batch_retry_attempts"]);
-        Assert.Equal("gp-bigmem", byName["gp_batch_workload_id"]);
+        // Per-env substrate inputs only. The gate is always on.
+        Assert.Equal("true", byName["enable_gp_substrate"]);
+        Assert.Equal(string.Empty, byName["gp_worker_image"]);
+        Assert.Equal("X86_64", byName["gp_cpu_architecture"]);
+        Assert.Equal("256", byName["gp_compute_max_vcpus"]);
+        // The full pooled tier set.
+        Assert.Equal("s,m,l,xl", byName["gp_job_definition_tiers"]);
+        Assert.Equal("geoprocessing-batch", byName["gp_workload_id"]);
         Assert.Equal("true", byName["create_worker_gdal_repo"]);
-        Assert.Equal("123456789012.dkr.ecr.us-east-1.amazonaws.com/worker-gdal:job-abc", byName["gp_batch_image"]);
 
-        // The profile is valid on Fargate-Spot (no GPU).
-        Assert.True(profile.Validate(GpResourceProfile.ComputePlatform.FargateSpot).IsValid);
+        // Per-job knobs are NOT terraform inputs — they are SubmitJob overrides.
+        Assert.DoesNotContain("gp_batch_vcpus", byName.Keys);
+        Assert.DoesNotContain("gp_batch_memory_mib", byName.Keys);
+        Assert.DoesNotContain("gp_batch_timeout_seconds", byName.Keys);
+        Assert.DoesNotContain("gp_batch_retry_attempts", byName.Keys);
+        Assert.DoesNotContain("gp_batch_gpu_count", byName.Keys);
     }
 
     [Fact]
-    public void Validate_GpuOnFargateSpot_IsRejectedWithEc2Guidance()
+    public void Substrate_ArmSubsetTiers_RendersArchAndTierPool()
     {
-        GpResourceProfile gpuProfile = GpResourceProfile.FargateBaseline with { GpuCount = 2 };
+        GpSubstrateConfig substrate = new(
+            Image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/worker-gdal:latest",
+            Architecture: GpCpuArchitecture.Arm64,
+            MaxVcpus: 512,
+            CreateWorkerGdalRepo: false,
+            WorkloadId: "gp-bigmem",
+            Tiers: [GpJobDefinitionTier.M, GpJobDefinitionTier.L, GpJobDefinitionTier.Xl]);
 
-        GpProfileValidation fargate = gpuProfile.Validate(GpResourceProfile.ComputePlatform.FargateSpot);
-        Assert.False(fargate.IsValid);
-        Assert.Contains(fargate.Errors, e => e.Contains("Fargate", StringComparison.Ordinal) && e.Contains("EC2", StringComparison.Ordinal));
+        Dictionary<string, string> byName = substrate.ToSubstrateVars().ToDictionary(v => v.Name, v => v.Value);
 
-        // The same GPU profile IS valid on an EC2 compute environment.
-        GpProfileValidation ec2 = gpuProfile.Validate(GpResourceProfile.ComputePlatform.Ec2);
-        Assert.True(ec2.IsValid);
+        Assert.Equal("ARM64", byName["gp_cpu_architecture"]);
+        Assert.Equal("512", byName["gp_compute_max_vcpus"]);
+        Assert.Equal("m,l,xl", byName["gp_job_definition_tiers"]);
+        Assert.Equal("gp-bigmem", byName["gp_workload_id"]);
+        Assert.Equal("false", byName["create_worker_gdal_repo"]);
+        Assert.Equal("123456789012.dkr.ecr.us-east-1.amazonaws.com/worker-gdal:latest", byName["gp_worker_image"]);
     }
 
     [Fact]
-    public void Validate_RejectsOutOfRangeEphemeralStorageAndRetryAndGpu()
+    public void PlanInfra_EmitsTerraformPlanWithSubstrateVarFlags_AndBindsToOutputs()
     {
-        Assert.False(
-            (GpResourceProfile.FargateBaseline with { EphemeralStorageGib = 10 })
-                .Validate(GpResourceProfile.ComputePlatform.FargateSpot).IsValid);
-        Assert.False(
-            (GpResourceProfile.FargateBaseline with { EphemeralStorageGib = 250 })
-                .Validate(GpResourceProfile.ComputePlatform.FargateSpot).IsValid);
-        Assert.False(
-            (GpResourceProfile.FargateBaseline with { RetryAttempts = 11 })
-                .Validate(GpResourceProfile.ComputePlatform.FargateSpot).IsValid);
-        Assert.False(
-            (GpResourceProfile.FargateBaseline with { GpuCount = 32 })
-                .Validate(GpResourceProfile.ComputePlatform.Ec2).IsValid);
-    }
-
-    [Fact]
-    public void PlanInfra_EmitsTerraformPlanWithGpBatchVarFlags()
-    {
-        GpRuntimeAdapter adapter = new(GpResourceProfile.FargateBaseline);
+        GpRuntimeAdapter adapter = new();
 
         RuntimeAdapterStepPlan plan = adapter.PlanInfrastructure(PlanRequest());
 
         string command = Assert.Single(plan.SuggestedCommands);
         Assert.Contains("terraform -chdir", command, StringComparison.Ordinal);
         Assert.Contains(" plan ", $" {command} ", StringComparison.Ordinal);
-        Assert.Contains("examples/aws-cert", command, StringComparison.Ordinal);
-        Assert.Contains("enable_gp_batch=true", command, StringComparison.Ordinal);
-        Assert.Contains("gp_batch_vcpus=1", command, StringComparison.Ordinal);
+        Assert.Contains("enable_gp_substrate=true", command, StringComparison.Ordinal);
+        Assert.Contains("gp_job_definition_tiers=s,m,l,xl", command, StringComparison.Ordinal);
         // Plan never apply.
         Assert.DoesNotContain(" apply ", $" {command} ", StringComparison.Ordinal);
+
+        // No per-job profile var leaked into the plan.
+        Assert.DoesNotContain("gp_batch_vcpus", command, StringComparison.Ordinal);
+
+        // The plan announces it binds to the substrate OUTPUTS (ARNs), not input-variable names.
+        Assert.Contains(plan.ValidationChecks, c => c.Contains("gp_job_queue_arn", StringComparison.Ordinal));
+        Assert.Contains(plan.ValidationChecks, c => c.Contains("gp_job_definition_arns", StringComparison.Ordinal));
     }
 
     [Fact]
     public void ApplyInfra_InPlanMode_DegradesToTerraformPlan_NoApply()
     {
-        GpRuntimeAdapter adapter = new(GpResourceProfile.FargateBaseline);
+        GpRuntimeAdapter adapter = new();
 
         RuntimeAdapterStepPlan planMode = adapter.ApplyInfrastructure(PlanRequest(dryRun: true));
         string planCommand = Assert.Single(planMode.SuggestedCommands);
-        Assert.DoesNotContain("terraform -chdir /tmp/honua-iac/infrastructure/terraform/examples/aws-cert apply", planCommand, StringComparison.Ordinal);
+        Assert.DoesNotContain("examples/aws-cert apply", planCommand, StringComparison.Ordinal);
         Assert.Contains("plan", planCommand, StringComparison.Ordinal);
         Assert.Contains("gp-apply-mode:plan-only", planMode.ValidationChecks);
 
@@ -170,15 +136,97 @@ public sealed class GpRuntimeAdapterTests
     }
 
     [Fact]
-    public void Validate_InvalidProfile_SurfacesRejectionWithoutCommandsToApply()
+    public void Verify_BindsToSubstrateOutputArns_NotInputVariableNames()
     {
-        GpRuntimeAdapter adapter = new(
-            GpResourceProfile.FargateBaseline with { GpuCount = 4 },
-            GpResourceProfile.ComputePlatform.FargateSpot);
+        GpRuntimeAdapter adapter = new();
 
-        RuntimeAdapterStepPlan plan = adapter.Validate(PlanRequest());
+        RuntimeAdapterStepPlan verify = adapter.Verify(PlanRequest());
 
-        Assert.Contains("gp-profile-valid:false", plan.ValidationChecks);
-        Assert.Contains(plan.Risks, r => r.Contains("GP profile rejected", StringComparison.Ordinal));
+        Assert.Contains(verify.SuggestedCommands, c => c.Contains("output -raw gp_job_queue_arn", StringComparison.Ordinal));
+        Assert.Contains(verify.SuggestedCommands, c => c.Contains("output -json gp_job_definition_arns", StringComparison.Ordinal));
+        Assert.Contains(verify.ValidationChecks, c => c == "gp-substrate-output:gp_compute_environment_arn");
+    }
+
+    // --- Runtime sizing hint (tier-select + SubmitJob overrides): pure, NO terraform ---
+
+    [Theory]
+    [InlineData(null, "s")]
+    [InlineData(0, "s")]
+    [InlineData(1, "s")]
+    [InlineData(20, "s")]
+    [InlineData(21, "m")]
+    [InlineData(50, "m")]
+    [InlineData(51, "l")]
+    [InlineData(100, "l")]
+    [InlineData(101, "xl")]
+    [InlineData(200, "xl")]
+    public void SelectTier_BoundaryCases_PickCorrectTier(int? ephemeralGib, string expectedToken)
+    {
+        GpJobDefinitionTier? tier = GpResourceProfile.SelectTier(ephemeralGib);
+
+        Assert.NotNull(tier);
+        Assert.Equal(expectedToken, GpResourceProfile.TierToken(tier!.Value));
+    }
+
+    [Fact]
+    public void SelectTier_AboveFargateCeiling_ReturnsNull()
+    {
+        Assert.Null(GpResourceProfile.SelectTier(201));
+        Assert.Null(GpResourceProfile.SelectTier(500));
+    }
+
+    [Fact]
+    public void ToSizingHint_ProducesSubmitJobOverrides_AndTierArnPath()
+    {
+        GpResourceProfile profile = new(
+            Vcpus: 4,
+            MemoryMib: 16384,
+            TimeoutSeconds: 7200,
+            RetryAttempts: 2,
+            EphemeralStorageGib: 75);
+
+        GpSizingHint hint = profile.ToSizingHint();
+
+        Assert.True(hint.IsValid);
+        Assert.Equal("l", hint.TierToken);
+        Assert.Equal("4", hint.SubmitJobOverrides["batch.vcpus"]);
+        Assert.Equal("16384", hint.SubmitJobOverrides["batch.memoryMib"]);
+        Assert.Equal("7200", hint.SubmitJobOverrides["batch.timeoutSeconds"]);
+        Assert.Equal("2", hint.SubmitJobOverrides["batch.retryAttempts"]);
+        // Ephemeral storage is the TIER, not a SubmitJob override.
+        Assert.DoesNotContain("batch.ephemeralStorageGib", hint.SubmitJobOverrides.Keys);
+        Assert.Equal("gp_job_definition_arns.l", GpSubstrateOutputs.JobDefinitionArnForTier(hint.Tier!.Value));
+    }
+
+    [Fact]
+    public void ToSizingHint_AboveCeiling_IsInvalidWithError_NoTier()
+    {
+        GpSizingHint hint = (GpResourceProfile.Baseline with { EphemeralStorageGib = 250 }).ToSizingHint();
+
+        Assert.False(hint.IsValid);
+        Assert.Null(hint.Tier);
+        Assert.Contains(hint.Errors, e => e.Contains("200", StringComparison.Ordinal) && e.Contains("ceiling", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ToSizingHint_Gpu_IsAdvisoryNote_NotHardReject()
+    {
+        // GPU is unsupported on the default Fargate substrate, but it is a NOTE, not an error:
+        // the hint is still valid and steers the operator to an opt-in GPU compute-env.
+        GpSizingHint hint = (GpResourceProfile.Baseline with { GpuCount = 2 }).ToSizingHint();
+
+        Assert.True(hint.IsValid);
+        Assert.Contains(hint.Notes, n => n.Contains("GPU", StringComparison.OrdinalIgnoreCase) && n.Contains("Fargate", StringComparison.Ordinal));
+        // GPU is never emitted as a Fargate SubmitJob override.
+        Assert.DoesNotContain("batch.gpuCount", hint.SubmitJobOverrides.Keys);
+    }
+
+    [Fact]
+    public void ToSizingHint_OutOfBoundsRetryAndVcpus_AreRejected()
+    {
+        Assert.False((GpResourceProfile.Baseline with { RetryAttempts = 11 }).ToSizingHint().IsValid);
+        Assert.False((GpResourceProfile.Baseline with { Vcpus = 0 }).ToSizingHint().IsValid);
+        Assert.False((GpResourceProfile.Baseline with { MemoryMib = 0 }).ToSizingHint().IsValid);
+        Assert.False((GpResourceProfile.Baseline with { TimeoutSeconds = 0 }).ToSizingHint().IsValid);
     }
 }
