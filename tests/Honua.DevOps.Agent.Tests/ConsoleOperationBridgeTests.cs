@@ -8,7 +8,7 @@ using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.Operato
 
 namespace Honua.DevOps.Agent.Tests;
 
-public class ConsoleOperationBridgeTests
+public partial class ConsoleOperationBridgeTests
 {
     [Fact]
     public void BuildProposalIdempotencyKey_IsDeterministicAndOrderInsensitive()
