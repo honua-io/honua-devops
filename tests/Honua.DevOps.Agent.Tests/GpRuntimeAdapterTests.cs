@@ -55,15 +55,17 @@ public sealed class GpRuntimeAdapterTests
         IReadOnlyList<GpSubstrateVar> vars = GpSubstrateConfig.Default.ToSubstrateVars();
         Dictionary<string, string> byName = vars.ToDictionary(v => v.Name, v => v.Value);
 
-        // Per-env substrate inputs only. The gate is always on.
-        Assert.Equal("true", byName["enable_gp_substrate"]);
-        Assert.Equal(string.Empty, byName["gp_worker_image"]);
-        Assert.Equal("X86_64", byName["gp_cpu_architecture"]);
-        Assert.Equal("256", byName["gp_compute_max_vcpus"]);
-        // The full pooled tier set.
-        Assert.Equal("s,m,l,xl", byName["gp_job_definition_tiers"]);
-        Assert.Equal("geoprocessing-batch", byName["gp_workload_id"]);
+        // Per-env substrate inputs only — exact honua-iac variable names. The gate is always on.
+        Assert.Equal("true", byName["enable_gp_batch"]);
+        Assert.Equal(string.Empty, byName["gp_batch_image"]);
+        Assert.Equal("X86_64", byName["gp_batch_cpu_architecture"]);
+        Assert.Equal("256", byName["gp_batch_max_vcpus"]);
+        Assert.Equal("geoprocessing-batch", byName["gp_batch_workload_id"]);
         Assert.Equal("true", byName["create_worker_gdal_repo"]);
+
+        // The tier POOL is hardcoded in honua-iac (for_each over local.gp_batch_tiers); there is
+        // NO tiers variable — emitting one would fail terraform with "undeclared variable".
+        Assert.DoesNotContain("gp_job_definition_tiers", byName.Keys);
 
         // Per-job knobs are NOT terraform inputs — they are SubmitJob overrides.
         Assert.DoesNotContain("gp_batch_vcpus", byName.Keys);
@@ -86,12 +88,15 @@ public sealed class GpRuntimeAdapterTests
 
         Dictionary<string, string> byName = substrate.ToSubstrateVars().ToDictionary(v => v.Name, v => v.Value);
 
-        Assert.Equal("ARM64", byName["gp_cpu_architecture"]);
-        Assert.Equal("512", byName["gp_compute_max_vcpus"]);
-        Assert.Equal("m,l,xl", byName["gp_job_definition_tiers"]);
-        Assert.Equal("gp-bigmem", byName["gp_workload_id"]);
+        Assert.Equal("ARM64", byName["gp_batch_cpu_architecture"]);
+        Assert.Equal("512", byName["gp_batch_max_vcpus"]);
+        Assert.Equal("gp-bigmem", byName["gp_batch_workload_id"]);
         Assert.Equal("false", byName["create_worker_gdal_repo"]);
-        Assert.Equal("123456789012.dkr.ecr.us-east-1.amazonaws.com/worker-gdal:latest", byName["gp_worker_image"]);
+        Assert.Equal("123456789012.dkr.ecr.us-east-1.amazonaws.com/worker-gdal:latest", byName["gp_batch_image"]);
+
+        // The tiers subset is reflected in the human-readable descriptor, NOT as a terraform var
+        // (the pool is hardcoded in honua-iac).
+        Assert.DoesNotContain("gp_job_definition_tiers", byName.Keys);
     }
 
     [Fact]
@@ -104,8 +109,9 @@ public sealed class GpRuntimeAdapterTests
         string command = Assert.Single(plan.SuggestedCommands);
         Assert.Contains("terraform -chdir", command, StringComparison.Ordinal);
         Assert.Contains(" plan ", $" {command} ", StringComparison.Ordinal);
-        Assert.Contains("enable_gp_substrate=true", command, StringComparison.Ordinal);
-        Assert.Contains("gp_job_definition_tiers=s,m,l,xl", command, StringComparison.Ordinal);
+        Assert.Contains("enable_gp_batch=true", command, StringComparison.Ordinal);
+        // The tier pool is hardcoded in honua-iac; no tiers var is rendered into the plan.
+        Assert.DoesNotContain("gp_job_definition_tiers", command, StringComparison.Ordinal);
         // Plan never apply.
         Assert.DoesNotContain(" apply ", $" {command} ", StringComparison.Ordinal);
 
@@ -189,12 +195,17 @@ public sealed class GpRuntimeAdapterTests
 
         Assert.True(hint.IsValid);
         Assert.Equal("l", hint.TierToken);
+        // Keys MUST be the exact snake_case keys the server reads (honua-server AwsBatchParameterKeys).
         Assert.Equal("4", hint.SubmitJobOverrides["batch.vcpus"]);
-        Assert.Equal("16384", hint.SubmitJobOverrides["batch.memoryMib"]);
-        Assert.Equal("7200", hint.SubmitJobOverrides["batch.timeoutSeconds"]);
-        Assert.Equal("2", hint.SubmitJobOverrides["batch.retryAttempts"]);
-        // Ephemeral storage is the TIER, not a SubmitJob override.
-        Assert.DoesNotContain("batch.ephemeralStorageGib", hint.SubmitJobOverrides.Keys);
+        Assert.Equal("16384", hint.SubmitJobOverrides["batch.memory_mib"]);
+        Assert.Equal("7200", hint.SubmitJobOverrides["batch.timeout_seconds"]);
+        Assert.Equal("2", hint.SubmitJobOverrides["batch.retry_attempts"]);
+        // ephemeral need is emitted as batch.ephemeral_gib — it DRIVES server-side tier selection.
+        Assert.Equal("75", hint.SubmitJobOverrides["batch.ephemeral_gib"]);
+        // The old camelCase spellings the server never read must be gone.
+        Assert.DoesNotContain("batch.memoryMib", hint.SubmitJobOverrides.Keys);
+        Assert.DoesNotContain("batch.timeoutSeconds", hint.SubmitJobOverrides.Keys);
+        Assert.DoesNotContain("batch.retryAttempts", hint.SubmitJobOverrides.Keys);
         Assert.Equal("gp_job_definition_arns.l", GpSubstrateOutputs.JobDefinitionArnForTier(hint.Tier!.Value));
     }
 
