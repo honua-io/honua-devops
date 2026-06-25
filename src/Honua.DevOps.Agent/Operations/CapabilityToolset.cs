@@ -144,6 +144,11 @@ internal static class CapabilityToolset
                 "create_gitops_proposal",
                 "Create a Console-facing GitOps deployment proposal as a stable, evidence-linked projection. Records a durable honua-server deploy-control operation with submitImmediately=false (advisory; never executes) and returns the proposal with server operationId, deterministic idempotency key, raw backend evidence, workflow deep links, and governed submit/rollback suggestions. Stays blocked if no deploy target is configured."),
             CreateTool(
+                (string service, string environmentsCsv, int vcpus, int memoryMib, int gpuCount, int timeoutSeconds, string architecture, string image, int ephemeralStorageGib, int retryAttempts, string computePlatform, string owner)
+                    => consoleBridge.PlanGpProvisionAsync(service, environmentsCsv, vcpus, memoryMib, gpuCount, timeoutSeconds, architecture, image, ephemeralStorageGib, retryAttempts, computePlatform, owner),
+                "plan_gp_provision",
+                "Plan a per-job AWS Batch provision for an AI-designed geoprocessing (GP) job from its resource profile, mapping it to the honua-iac modules/aws-serverless gp_batch_* terraform variables and recording a PLAN-FIRST, advisory deploy-control proposal (submitImmediately=false; never executes). Profile: vcpus, memoryMib, gpuCount, timeoutSeconds, architecture (x86_64|arm64), image (empty=reuse Lambda image), ephemeralStorageGib (0=Fargate default, else 21-200), retryAttempts (0=>1). computePlatform is fargate-spot (default; GPU rejected) or ec2 (required for GPU). vCPU/memory/timeout/retry/GPU are job-def DEFAULTS the server overrides per SubmitJob; image/arch/ephemeral-storage (and GPU on EC2) are the uniquely-templated knobs that mint a sized job definition. An invalid profile (e.g. gpuCount>0 on fargate-spot) returns a blocked projection and records NOTHING. The real terraform apply stays behind the agent's execution/approval gates exactly like the other runtime adapters."),
+            CreateTool(
                 (string operationId)
                     => consoleBridge.GetGitOpsProposalAsync(operationId),
                 "get_gitops_proposal",

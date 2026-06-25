@@ -72,6 +72,30 @@ Characteristics:
 - traffic shifting is supported
 - rollback is revision-oriented
 
+### Batch Job (Geoprocessing)
+
+Targets:
+
+- `gp`
+
+Characteristics:
+
+- per-job AWS Batch (Fargate-Spot, scale-to-zero) provisioning from the honua-iac
+  `modules/aws-serverless` module (gated `enable_gp_batch=true`), instantiated by
+  `examples/aws-cert`
+- infrastructure IS the deliverable: the sized job definition is the "release", so there
+  is no separate release backend, no traffic shifting, and no out-of-band migration
+- a typed `GpResourceProfile` (vCPU/mem/GPU/timeout/arch/image/ephemeral-storage) is mapped
+  to the `gp_batch_*` terraform variables; vCPU/memory/timeout/retry/GPU are job-def
+  DEFAULTS the server's `AwsBatchComputeBackend` overrides per `SubmitJob`, while container
+  image / CPU architecture / ephemeral storage (and GPU on an EC2 compute-env) are the
+  uniquely-templated knobs `SubmitJob` cannot override
+- a GPU profile is rejected on the Fargate-Spot path (Fargate rejects GPU; GPU requires an
+  EC2 Batch compute environment)
+- surfaced as the plan-first, advisory `plan_gp_provision` tool; the real `terraform apply`
+  stays behind the same execution/approval gates as the other adapters
+- rollback is a terraform-state revert of the job definition (re-apply the prior profile)
+
 ## Backend Consumption
 
 Adapters consume the current platform backends this way:
@@ -85,7 +109,7 @@ Adapters consume the current platform backends this way:
 
 The current repo implementation is still baseline-level:
 
-- all six targets have concrete adapters
+- all seven targets have concrete adapters (six service targets + the `gp` per-job Batch target)
 - adapters return structured lifecycle plans, validations, and rollback guidance
 - deploy planning and preflight both resolve the real adapter set
 - apply execution remains policy-gated and backend-light until deeper operator execution work lands

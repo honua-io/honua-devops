@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.RuntimeAdapters;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
 namespace Honua.DevOps.Agent.Operations.ConsoleBridge;
@@ -219,6 +220,81 @@ internal sealed class ConsoleOperationBridge(
             blockingReason: createdOperation
                 ? null
                 : "honua-server deploy-control did not return a durable operation id; proposal is blocked, no operation invented.");
+    }
+
+    [Description("Plan a per-job AWS Batch provision for an AI-designed geoprocessing (GP) job from its resource profile and record it as a PLAN-FIRST, advisory deploy-control proposal (submitImmediately=false; never executes). The GP profile (vcpus, memoryMib, gpuCount, timeoutSeconds, architecture x86_64|arm64, optional image, optional ephemeralStorageGib, retryAttempts) is mapped to the honua-iac modules/aws-serverless gp_batch_* terraform variables and emitted as a plan-only terraform step plan that mints a UNIQUE job definition sized to the job. computePlatform is fargate-spot (default; GPU rejected) or ec2 (required for GPU). vCPU/memory/timeout/retry/GPU are job-def DEFAULTS the server overrides per SubmitJob; image/arch/ephemeral-storage (and GPU on EC2) are the uniquely-templated knobs. An invalid profile (e.g. gpuCount>0 on fargate-spot) returns a blocked projection and records NOTHING. The real terraform apply stays behind the agent's execution/approval gates exactly like the other runtime adapters.")]
+    public async Task<OperationResponse> PlanGpProvisionAsync(
+        string service,
+        string environmentsCsv,
+        int vcpus,
+        int memoryMib,
+        int gpuCount,
+        int timeoutSeconds,
+        string architecture,
+        string image,
+        int ephemeralStorageGib,
+        int retryAttempts,
+        string computePlatform,
+        string owner,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedService = DeploymentInputs.ValidateServiceName(service);
+        string[] environments = DeploymentInputs.ParseEnvironments(environmentsCsv, runtime.AllowedEnvironments);
+        string normalizedOwner = DeploymentInputs.SanitizeFreeText(owner, "unassigned");
+
+        GpCpuArchitecture arch = ParseGpArchitecture(architecture);
+        GpResourceProfile.ComputePlatform platform = ParseGpComputePlatform(computePlatform);
+        GpResourceProfile profile = new(
+            Vcpus: vcpus,
+            MemoryMib: memoryMib,
+            GpuCount: gpuCount,
+            TimeoutSeconds: timeoutSeconds,
+            Architecture: arch,
+            Image: string.IsNullOrWhiteSpace(image) ? null : image.Trim(),
+            EphemeralStorageGib: ephemeralStorageGib <= 0 ? null : ephemeralStorageGib,
+            RetryAttempts: retryAttempts <= 0 ? 1 : retryAttempts);
+
+        GpProfileValidation validation = profile.Validate(platform);
+        GpRuntimeAdapter adapter = new(profile, platform);
+        IReadOnlyList<GpBatchTerraformVar> terraformVars = GpBatchTerraformMapping.ToTerraformVars(profile);
+
+        List<string> mappingFindings =
+        [
+            $"GP compute platform: {(platform == GpResourceProfile.ComputePlatform.Ec2 ? "ec2" : "fargate-spot")}.",
+            $"honua-iac modules/aws-serverless gp_batch_* mapping (gated enable_gp_batch=true):",
+            .. terraformVars.Select(v => $"  {v.Name} = {v.Value}")
+        ];
+
+        // Invalid profile (e.g. GPU on Fargate): record NOTHING. Return a blocked
+        // projection so a bad profile never mints a durable deploy-control operation.
+        if (!validation.IsValid)
+        {
+            string blockingReason = $"GP resource profile is invalid for compute platform `{(platform == GpResourceProfile.ComputePlatform.Ec2 ? "ec2" : "fargate-spot")}`: {string.Join("; ", validation.Errors)}";
+            OperationResponse blocked = BuildGpBlockedResponse(
+                normalizedService,
+                environments,
+                normalizedOwner,
+                mappingFindings,
+                validation.Errors,
+                blockingReason);
+            return blocked;
+        }
+
+        // Valid profile: record the advisory proposal through the SAME plan-first,
+        // submitImmediately=false deploy-control path the GitOps proposals use, then
+        // enrich it with the GP step plan + terraform var mapping. action=apply because
+        // the proposal is a (gated) terraform apply of the sized job definition.
+        string changeSummary = $"GP per-job Batch provision: {GpVarDescriptor(terraformVars)}";
+        OperationResponse proposal = await CreateGitOpsProposalAsync(
+            normalizedService,
+            string.Join(",", environments),
+            revision: "HEAD",
+            action: "apply",
+            changeSummary: changeSummary,
+            owner: normalizedOwner,
+            cancellationToken);
+
+        return EnrichGpProposal(proposal, adapter, mappingFindings);
     }
 
     [Description("View an existing GitOps proposal by its stable operationId as a projection over the honua-server deploy-control operation. Returns the proposal contract with raw evidence references and governed submit/rollback suggestions; never scrapes Git or CI.")]
@@ -1174,4 +1250,143 @@ internal sealed class ConsoleOperationBridge(
     // deploy-control "target" sub-object, which carries desiredRevision/currentRevision
     // (and parameters) on a DeployOperationResponse.
     private static readonly string[] NestedObjectKeys = ["operation", "data", "result", "target"];
+
+    private static GpCpuArchitecture ParseGpArchitecture(string value)
+    {
+        string normalized = DeploymentInputs.Normalize(value, "x86_64").Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "x86_64" or "x86-64" or "x86" or "amd64" => GpCpuArchitecture.X86_64,
+            "arm64" or "arm" or "aarch64" or "graviton" => GpCpuArchitecture.Arm64,
+            _ => throw new InvalidOperationException(
+                $"Invalid GP CPU architecture `{value}`. Allowed values: x86_64, arm64.")
+        };
+    }
+
+    private static GpResourceProfile.ComputePlatform ParseGpComputePlatform(string value)
+    {
+        string normalized = DeploymentInputs.Normalize(value, "fargate-spot").Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "fargate-spot" or "fargate_spot" or "fargate" or "spot" => GpResourceProfile.ComputePlatform.FargateSpot,
+            "ec2" => GpResourceProfile.ComputePlatform.Ec2,
+            _ => throw new InvalidOperationException(
+                $"Invalid GP compute platform `{value}`. Allowed values: fargate-spot, ec2.")
+        };
+    }
+
+    private static string GpVarDescriptor(IReadOnlyList<GpBatchTerraformVar> vars)
+    {
+        // Compact, deterministic descriptor of the templated knobs for the proposal summary.
+        return string.Join(
+            ", ",
+            vars
+                .Where(v => v.Name is GpBatchTerraformMapping.ImageVar
+                    or GpBatchTerraformMapping.CpuArchitectureVar
+                    or GpBatchTerraformMapping.VcpusVar
+                    or GpBatchTerraformMapping.MemoryMibVar
+                    or GpBatchTerraformMapping.GpuCountVar
+                    or GpBatchTerraformMapping.EphemeralStorageGibVar)
+                .Select(v => $"{v.Name}={(string.IsNullOrEmpty(v.Value) ? "(lambda-default)" : v.Value)}"));
+    }
+
+    // Build the plan-first GP step plan WITHOUT any backend call. Used for both the
+    // blocked (invalid-profile) and enrichment paths so the terraform commands shown
+    // are exactly what a gated execute would run (plan in plan mode, apply when gated).
+    private RuntimeAdapterWorkflow BuildGpWorkflow(GpRuntimeAdapter adapter)
+    {
+        RuntimeAdapterRequest request = new(
+            Service: "geoprocessing",
+            Environments: runtime.AllowedEnvironments,
+            Revision: "HEAD",
+            Action: "apply",
+            ChangeSummary: "gp per-job batch provision",
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            // PLAN-FIRST: DryRun is true unless the agent is in execute mode, so the
+            // apply-infra step degrades to terraform plan and mutates nothing by default.
+            DryRun: runtime.ExecutionMode != ExecutionMode.Execute,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        return adapter.BuildWorkflow(request);
+    }
+
+    private OperationResponse BuildGpBlockedResponse(
+        string service,
+        IReadOnlyList<string> environments,
+        string owner,
+        IReadOnlyList<string> mappingFindings,
+        IReadOnlyList<string> validationErrors,
+        string blockingReason)
+    {
+        List<string> findings =
+        [
+            $"GP provision BLOCKED for `{service}` -> {string.Join(", ", environments)}.",
+            $"Owner: {owner}.",
+            "No deploy-control operation recorded; an invalid profile mints nothing.",
+            .. mappingFindings
+        ];
+
+        return new OperationResponse(
+            Status: "gp-profile-rejected",
+            Summary: $"GP per-job Batch provision rejected: {blockingReason}",
+            Findings: findings,
+            Actions:
+            [
+                "Fix the GP resource profile and re-run plan_gp_provision; nothing was recorded or executed.",
+                "GPU geoprocessing requires an EC2 AWS Batch compute environment; set computePlatform=ec2 and provision an EC2 compute-env, or set gpuCount=0 for the Fargate-Spot path."
+            ],
+            ValidationChecks:
+            [
+                "gp-profile-valid:false",
+                "gp-no-operation-recorded",
+                "proposal-no-auto-execute"
+            ],
+            Risks: [.. validationErrors.Select(error => $"Rejected: {error}")]);
+    }
+
+    private OperationResponse EnrichGpProposal(
+        OperationResponse proposal,
+        GpRuntimeAdapter adapter,
+        IReadOnlyList<string> mappingFindings)
+    {
+        RuntimeAdapterWorkflow workflow = BuildGpWorkflow(adapter);
+        bool planFirst = runtime.ExecutionMode != ExecutionMode.Execute;
+
+        List<string> findings =
+        [
+            .. proposal.Findings,
+            $"GP runtime adapter target: {adapter.Capability.Target} ({adapter.Capability.Family}).",
+            $"GP provision mode: {(planFirst ? "plan-first (terraform plan only; mints nothing)" : "execute (gated terraform apply)")}.",
+            .. mappingFindings,
+            $"Validate step: {workflow.Validate.Summary}",
+            $"Plan-infra command: {workflow.PlanInfrastructure.SuggestedCommands.FirstOrDefault() ?? "(none)"}",
+            $"Apply-infra step: {workflow.ApplyInfrastructure.Summary}"
+        ];
+
+        List<string> checks =
+        [
+            .. proposal.ValidationChecks,
+            .. workflow.Validate.ValidationChecks,
+            .. workflow.PlanInfrastructure.ValidationChecks,
+            planFirst ? "gp-apply-mode:plan-only" : "gp-apply-mode:write-enabled-gated"
+        ];
+
+        List<string> risks =
+        [
+            .. proposal.Risks,
+            .. workflow.PlanInfrastructure.Risks,
+            .. workflow.ApplyInfrastructure.Risks
+        ];
+
+        return proposal with
+        {
+            Summary = $"GP per-job Batch provision proposal ({adapter.Capability.Target}) for `{adapter.Profile.WorkloadId}` — {(planFirst ? "plan-first, advisory" : "gated execute")}.",
+            Findings = findings,
+            ValidationChecks = checks,
+            Risks = risks
+        };
+    }
 }
