@@ -10,7 +10,8 @@ internal static class RuntimeAdapterRegistry
         new EksRuntimeAdapter(),
         new AwsEcsRuntimeAdapter(),
         new AzureContainerAppsRuntimeAdapter(),
-        GpRuntimeAdapter.Default
+        GpRuntimeAdapter.Default,
+        AzureGpRuntimeAdapter.Default
     ];
 
     internal static IRuntimeAdapter Resolve(string target)
@@ -18,7 +19,7 @@ internal static class RuntimeAdapterRegistry
         return Adapters.SingleOrDefault(adapter =>
                    adapter.Capability.Target.Equals(target, StringComparison.OrdinalIgnoreCase))
                ?? throw new InvalidOperationException(
-                   $"Unsupported runtime adapter target `{target}`. Supported targets: azure-functions, lambda, aks, eks, ecs, aca, gp.");
+                   $"Unsupported runtime adapter target `{target}`. Supported targets: azure-functions, lambda, aks, eks, ecs, aca, gp, azure-gp.");
     }
 
     internal static IReadOnlyList<IRuntimeAdapter> ResolveMany(IEnumerable<string> targets)

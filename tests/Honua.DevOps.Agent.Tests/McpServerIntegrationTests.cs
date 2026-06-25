@@ -200,6 +200,8 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         "create_gitops_proposal",
         "plan_gp_substrate",
         "plan_gp_job_sizing",
+        "plan_azure_gp_substrate",
+        "plan_azure_gp_job_sizing",
         "get_gitops_proposal",
         "get_devops_operation_status",
         "build_ai_devops_brief",
