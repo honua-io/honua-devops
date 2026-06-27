@@ -170,4 +170,69 @@ if [[ "$exit_code" -ne 2 ]]; then
   exit 1
 fi
 
+echo "Validating degraded (warn) release blocking path"
+cp -R "$FIXTURES_ROOT" "$WORKDIR/warn-releases"
+python3 - "$WORKDIR/warn-releases/2026.03.1/demo-service/compatibility-results.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+for client in payload["clients"]:
+    if client["name"] == "Power BI":
+        client["status"] = "warn"
+        client["protocols"][0]["status"] = "warn"
+        client["notes"] = "Injected degradation for smoke coverage."
+        break
+path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+
+set +e
+python3 "$REPO_ROOT/scripts/generate-client-compat-scoreboard.py" \
+  --packs-root "$WORKDIR/warn-releases" \
+  --catalog "$REPO_ROOT/compatibility/clients.catalog.json" \
+  --output-dir "$WORKDIR/warn-out" \
+  --hard-fail
+warn_exit=$?
+set -e
+
+if [[ "$warn_exit" -ne 2 ]]; then
+  echo "[ERROR] Expected a degraded (warn) release to hard-fail with exit 2, got ${warn_exit}." >&2
+  exit 1
+fi
+# The warn client must be counted in the summary and the badge must NOT be green.
+grep -nF -- '"warn": 1' "$WORKDIR/warn-out/compatibility-matrix.json" >/dev/null
+if grep -nF -- '"color": "green"' "$WORKDIR/warn-out/badge.json" >/dev/null; then
+  echo "[ERROR] Badge stayed green despite a degraded (warn) client." >&2
+  exit 1
+fi
+
+echo "Validating out-of-vocabulary status fails closed"
+cp -R "$FIXTURES_ROOT" "$WORKDIR/unknown-releases"
+python3 - "$WORKDIR/unknown-releases/2026.03.1/demo-service/compatibility-results.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["clients"][0]["status"] = "degraded"  # not in the closed vocabulary
+payload["clients"][0]["protocols"][0]["status"] = "degraded"
+path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+
+set +e
+python3 "$REPO_ROOT/scripts/generate-client-compat-scoreboard.py" \
+  --packs-root "$WORKDIR/unknown-releases" \
+  --catalog "$REPO_ROOT/compatibility/clients.catalog.json" \
+  --output-dir "$WORKDIR/unknown-out" >/dev/null 2>&1
+unknown_exit=$?
+set -e
+
+if [[ "$unknown_exit" -eq 0 ]]; then
+  echo "[ERROR] Expected an out-of-vocabulary status to fail closed (non-zero exit), got 0." >&2
+  exit 1
+fi
+
 echo "Client compatibility scoreboard smoke check passed."

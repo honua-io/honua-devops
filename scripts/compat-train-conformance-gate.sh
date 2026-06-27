@@ -210,13 +210,32 @@ dispatch_and_collect() {
     args+=(-f "${commit_input}=${CANDIDATE_COMMIT}")
   fi
 
+  # Record the newest EXISTING run id before dispatch so we can correlate the run we trigger.
+  # GitHub run databaseIds increase monotonically, so the run we dispatch will have an id
+  # strictly greater than this baseline. Without this we would `gh run list --limit 1` after a
+  # fixed sleep and could certify on an OLDER still-SUCCESSFUL run instead of the one we just
+  # triggered.
+  local pre_id
+  pre_id="$(gh run list --repo "$gh_repo" --workflow "$workflow" --branch "$DISPATCH_REF" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
+  [[ "$pre_id" =~ ^[0-9]+$ ]] || pre_id=0
+
   gh "${args[@]}" >&2 || { echo "dispatch-error"; return; }
 
-  # Find the run we just dispatched and wait for it.
-  sleep 5
-  local run_id run_url
-  run_id="$(gh run list --repo "$gh_repo" --workflow "$workflow" --branch "$DISPATCH_REF" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
+  # Poll until a NEW run (databaseId strictly greater than the pre-dispatch baseline) appears,
+  # rather than blindly taking the latest run after a fixed sleep.
+  local run_id="" run_url candidate_id waited=0
+  local poll_interval=5 appear_timeout="${DISPATCH_RUN_APPEAR_TIMEOUT:-120}"
+  while (( waited < appear_timeout )); do
+    sleep "$poll_interval"
+    waited=$(( waited + poll_interval ))
+    candidate_id="$(gh run list --repo "$gh_repo" --workflow "$workflow" --branch "$DISPATCH_REF" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
+    if [[ "$candidate_id" =~ ^[0-9]+$ && "$candidate_id" -gt "$pre_id" ]]; then
+      run_id="$candidate_id"
+      break
+    fi
+  done
   if [[ -z "$run_id" ]]; then
+    # No NEW run materialized within the bound; do not fall back to a stale prior run.
     echo "dispatch-not-found"
     return
   fi
