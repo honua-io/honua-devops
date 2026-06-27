@@ -64,7 +64,7 @@ internal sealed class RollbackExecutor(
 
         // Read the operation first to classify the rollback before any mutating call.
         using BackendJsonResult current = await _gateway.GetDeployOperationJsonAsync(operationId, cancellationToken);
-        steps.Add(GitOpsExecutor.ToStep("deploy-operation-read", current.CallResult, mutatesState: false));
+        steps.Add(OperationBackendStep.From("deploy-operation-read", current.CallResult, mutatesState: false));
 
         if (!current.CallResult.IsSuccess || current.Payload is null)
         {
@@ -122,7 +122,7 @@ internal sealed class RollbackExecutor(
         }
 
         using BackendJsonResult rolledBack = await _gateway.RollbackDeployOperationJsonAsync(operationId, reason, cancellationToken);
-        steps.Add(GitOpsExecutor.ToStep("deploy-operation-rollback", rolledBack.CallResult, mutatesState: rolledBack.CallResult.IsSuccess));
+        steps.Add(OperationBackendStep.From("deploy-operation-rollback", rolledBack.CallResult, mutatesState: rolledBack.CallResult.IsSuccess));
 
         if (!rolledBack.CallResult.IsSuccess)
         {

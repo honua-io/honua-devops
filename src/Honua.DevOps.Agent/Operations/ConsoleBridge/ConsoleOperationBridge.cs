@@ -147,11 +147,11 @@ internal sealed class ConsoleOperationBridge(
 
         List<OperationBackendStep> steps =
         [
-            ToStep("deploy-preflight", preflight, mutatesState: false),
-            ToStep("deploy-plan", plan, mutatesState: false),
+            OperationBackendStep.From("deploy-preflight", preflight, mutatesState: false),
+            OperationBackendStep.From("deploy-plan", plan, mutatesState: false),
             // Creating the operation persists a durable server record (idempotent), so it
             // is a real write even though submitImmediately=false means nothing executes.
-            ToStep("deploy-operation-create", created.CallResult, mutatesState: createdOperation)
+            OperationBackendStep.From("deploy-operation-create", created.CallResult, mutatesState: createdOperation)
         ];
 
         List<EvidenceRef> evidence =
@@ -520,7 +520,7 @@ internal sealed class ConsoleOperationBridge(
 
         return BuildProposalResponse(
             proposal,
-            [ToStep("deploy-operation-status", result.CallResult, mutatesState: false)],
+            [OperationBackendStep.From("deploy-operation-status", result.CallResult, mutatesState: false)],
             blockingReason: found ? null : $"No durable deploy-control operation found for `{normalizedOperationId}`.");
     }
 
@@ -657,7 +657,7 @@ internal sealed class ConsoleOperationBridge(
                 "A recorded approval still requires an explicit governed submit; the bridge never executes it.",
                 "Decision reflects proposal scope at decision time and can drift if submitted much later."
             ],
-            BackendSteps: [ToStep("deploy-operation-read", result.CallResult, mutatesState: false)],
+            BackendSteps: [OperationBackendStep.From("deploy-operation-read", result.CallResult, mutatesState: false)],
             ConsoleBridge: projection);
     }
 
@@ -714,7 +714,7 @@ internal sealed class ConsoleOperationBridge(
                 "Status reflects deploy-control at read time and can change on the next poll.",
                 "PR/CI evidence is owned by the honua-server #59/#58 child ticket and is not inferred here."
             ],
-            BackendSteps: [ToStep("deploy-operation-status", result.CallResult, mutatesState: false)],
+            BackendSteps: [OperationBackendStep.From("deploy-operation-status", result.CallResult, mutatesState: false)],
             ConsoleBridge: projection);
     }
 
@@ -1204,15 +1204,6 @@ internal sealed class ConsoleOperationBridge(
             TargetOperationId: null,
             WorkflowLink: null,
             Kind: "advisory");
-
-    private static OperationBackendStep ToStep(string name, BackendCallResult result, bool mutatesState)
-        => new(
-            Name: name,
-            Endpoint: result.Endpoint,
-            Success: result.IsSuccess,
-            Detail: result.Detail,
-            PayloadPreview: result.PayloadPreview,
-            MutatesState: mutatesState);
 
     private static string ValidateOperationId(string value)
     {
