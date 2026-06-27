@@ -38,10 +38,16 @@ internal static class MetadataReleaseChangeSetBuilder
         }
 
         string releaseId = DeploymentInputs.SanitizeFreeText(
-            TryGetString(root, "releaseId", "release_id", "id"), "unknown-release");
-        string service = SanitizeService(TryGetString(root, "service", "serviceName"));
+            TryGetString(root, "releaseId", "release_id", "id", "packageId", "package_id"), "unknown-release");
+        // The server release package keys identity on the package metadata name / source
+        // environment rather than a free-text "service" field; fall back to those so a native
+        // MetadataReleasePackage is recognizable instead of collapsing to "unknown".
+        string service = SanitizeService(
+            TryGetString(root, "service", "serviceName")
+                ?? TryGetNestedString(root, "metadata", "name")
+                ?? TryGetString(root, "sourceEnvironment", "source_environment"));
         string desiredRevision = ValidateRevisionOrFallback(
-            TryGetString(root, "desiredRevision", "desired_revision", "revision"), "HEAD");
+            TryGetString(root, "desiredRevision", "desired_revision", "revision", "sourceRevision", "source_revision"), "HEAD");
         string[] environments = ReadEnvironments(root);
         string gitOpsTool = NormalizeToolToken(TryGetString(root, "gitOpsTool", "engine"), DefaultGitOpsTool);
 
@@ -697,32 +703,109 @@ internal static class MetadataReleaseChangeSetBuilder
 
     private static IReadOnlyList<MetadataResourceSummary> ReadSemanticResources(JsonElement root)
     {
-        if (!TryGetArray(root, out JsonElement array, "semanticResources", "resources", "metadataResources"))
+        // The generic operator-supplied projection: a semanticResources / resources /
+        // metadataResources array of {kind,name,action,detail}. Older callers and ad-hoc
+        // release packages use this shape.
+        if (TryGetArray(root, out JsonElement array, "semanticResources", "resources", "metadataResources"))
+        {
+            List<MetadataResourceSummary> resources = [];
+            foreach (JsonElement element in array.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                string kind = DeploymentInputs.SanitizeFreeText(TryGetString(element, "kind", "type"), "Resource");
+                string name = DeploymentInputs.SanitizeFreeText(TryGetString(element, "name", "id"), "unnamed");
+                string action = NormalizeToolToken(TryGetString(element, "action", "operation"), "upsert");
+                string? detail = TryGetString(element, "detail", "summary");
+                resources.Add(new MetadataResourceSummary(
+                    kind,
+                    name,
+                    action,
+                    detail is null ? null : DeploymentInputs.SanitizeFreeText(detail, string.Empty)));
+            }
+
+            return resources;
+        }
+
+        // The honua-server native MetadataReleasePackage manifest shape (honua-server #2184):
+        // spec/top-level `entries[]` of {semanticId, artifactKind, changeClass, ...}. A workflow
+        // publish emits an entry with artifactKind="workflow" and changeClass="content"; without
+        // this branch a native server package surfaces NO semantic resources, so a published
+        // workflow would be "not rejected" yet never flow into a changeset. Map each release entry
+        // onto a MetadataResourceSummary so it renders into the PlatformRelease manifest + overlay.
+        return ReadReleaseEntries(root);
+    }
+
+    // Project honua-server's native release-package `entries[]` (or `spec.entries[]`) onto the
+    // change set's MetadataResourceSummary projection. Each MetadataReleaseEntry carries
+    // semanticId + artifactKind + changeClass; we classify changeClass into an additive/destructive
+    // action so a Workflow (Content) entry becomes an upsert resource in the changeset.
+    private static IReadOnlyList<MetadataResourceSummary> ReadReleaseEntries(JsonElement root)
+    {
+        JsonElement entriesRoot = root;
+        if (!HasArrayProperty(entriesRoot, "entries")
+            && TryGetObject(root, out JsonElement spec, "spec")
+            && HasArrayProperty(spec, "entries"))
+        {
+            entriesRoot = spec;
+        }
+
+        if (!TryGetArray(entriesRoot, out JsonElement entries, "entries"))
         {
             return [];
         }
 
         List<MetadataResourceSummary> resources = [];
-        foreach (JsonElement element in array.EnumerateArray())
+        foreach (JsonElement element in entries.EnumerateArray())
         {
             if (element.ValueKind != JsonValueKind.Object)
             {
                 continue;
             }
 
-            string kind = DeploymentInputs.SanitizeFreeText(TryGetString(element, "kind", "type"), "Resource");
-            string name = DeploymentInputs.SanitizeFreeText(TryGetString(element, "name", "id"), "unnamed");
-            string action = NormalizeToolToken(TryGetString(element, "action", "operation"), "upsert");
-            string? detail = TryGetString(element, "detail", "summary");
-            resources.Add(new MetadataResourceSummary(
-                kind,
-                name,
-                action,
-                detail is null ? null : DeploymentInputs.SanitizeFreeText(detail, string.Empty)));
+            // artifactKind is the load-bearing field (e.g. "workflow"); without it this is not a
+            // release-entry projection and we skip it rather than inventing a resource.
+            string? artifactKind = TryGetString(element, "artifactKind", "artifact_kind");
+            string? semanticId = TryGetString(element, "semanticId", "semantic_id");
+            if (artifactKind is null && semanticId is null)
+            {
+                continue;
+            }
+
+            string kind = DeploymentInputs.SanitizeFreeText(artifactKind, "Resource");
+            string name = DeploymentInputs.SanitizeFreeText(semanticId, "unnamed");
+            string action = MapChangeClassToAction(TryGetString(element, "changeClass", "change_class"));
+            string? contentVersion = TryGetString(element, "desiredContentVersionId", "desired_content_version_id");
+            string? detail = contentVersion is null
+                ? null
+                : DeploymentInputs.SanitizeFreeText($"content-version {contentVersion}", string.Empty);
+            resources.Add(new MetadataResourceSummary(kind, name, action, detail));
         }
 
         return resources;
     }
+
+    // Map a server MetadataReleaseChangeClass token onto the change-set action vocabulary.
+    // Workflow publishes ship changeClass="content" (additive) -> upsert; only an explicit
+    // delete/retire class becomes a destructive action.
+    private static string MapChangeClassToAction(string? changeClass)
+    {
+        string raw = (changeClass ?? string.Empty).Trim().ToLowerInvariant();
+        return raw switch
+        {
+            "delete" or "retire" or "retirement" or "remove" => "delete",
+            _ => "upsert",
+        };
+    }
+
+    private static bool HasArrayProperty(JsonElement element, string name)
+        => TryGetArray(element, out _, name);
+
+    private static string? TryGetNestedString(JsonElement root, string objectName, params string[] names)
+        => TryGetObject(root, out JsonElement nested, objectName) ? TryGetString(nested, names) : null;
 
     private static (string Status, int Breaking, int Warnings, List<string> Reasons) ReadCompatibility(JsonElement root)
     {

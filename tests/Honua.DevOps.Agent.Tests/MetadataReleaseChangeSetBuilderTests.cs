@@ -184,6 +184,95 @@ public sealed class MetadataReleaseChangeSetBuilderTests
         Assert.False(string.IsNullOrWhiteSpace(error));
     }
 
+    // honua-server #2184 emits, on workflow publish, a native MetadataReleasePackage whose
+    // `entries[]` carry {semanticId, artifactKind: "workflow", changeClass: "content"} rather
+    // than the generic semanticResources[]{kind,name,action} projection. This proves a published
+    // workflow release entry flows end-to-end into a changeset entry (resource + manifest content)
+    // with the right additive (upsert) classification, so it can't silently regress to "not
+    // rejected but never consumed".
+    private const string WorkflowReleasePackage = """
+    {
+      "packageId": "11111111-2222-3333-4444-555555555555",
+      "metadata": { "name": "workflow-roads-clip", "namespace": "geo" },
+      "sourceEnvironment": "authoring",
+      "sourceRevision": 7,
+      "sourceEtag": "sha256:abc123",
+      "targetEnvironments": ["staging", "prod"],
+      "status": "ready",
+      "entries": [
+        {
+          "semanticId": "workflow:roads-clip",
+          "artifactKind": "workflow",
+          "desiredMetadataRevision": 7,
+          "desiredContentVersionId": "sha256:deadbeef",
+          "changeClass": "content",
+          "status": "ready",
+          "targetStates": [
+            { "environment": "staging", "bindingState": "missing" },
+            { "environment": "prod", "bindingState": "missing" }
+          ]
+        }
+      ]
+    }
+    """;
+
+    [Fact]
+    public void TryBuild_WorkflowReleaseEntry_FlowsIntoChangeSet()
+    {
+        Assert.True(MetadataReleaseChangeSetBuilder.TryBuild(WorkflowReleasePackage, out MetadataReleaseChangeSet changeSet, out string? error));
+        Assert.Null(error);
+
+        // The native entries[] workflow entry surfaced as a semantic resource on the change set.
+        MetadataResourceSummary workflow = Assert.Single(changeSet.SemanticResources);
+        Assert.Equal("workflow", workflow.Kind);
+        Assert.Equal("workflow:roads-clip", workflow.Name);
+        // changeClass "content" is additive -> upsert (never a destructive delete/binding).
+        Assert.Equal("upsert", workflow.Action);
+
+        // And it lands in the per-environment PlatformRelease manifest content as a semantic
+        // resource, i.e. it actually becomes a changeset entry rather than just "not rejected".
+        MetadataReleaseFile stagingManifest = Assert.Single(
+            changeSet.Files,
+            file => file.Path == "desired-state/releases/workflow-roads-clip/staging.platformrelease.yaml");
+        Assert.Contains("kind: 'workflow'", stagingManifest.Content, StringComparison.Ordinal);
+        Assert.Contains("name: 'workflow:roads-clip'", stagingManifest.Content, StringComparison.Ordinal);
+        Assert.Contains("action: 'upsert'", stagingManifest.Content, StringComparison.Ordinal);
+
+        // Identity is derived from the server package metadata.name, and the workflow shows up in
+        // the PR body so an operator/AI can see the promoted artifact.
+        Assert.Equal("workflow-roads-clip", changeSet.Service);
+        Assert.Contains("`workflow/workflow:roads-clip` (upsert)", changeSet.PrBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryBuild_WorkflowReleaseEntry_UnderSpecWrapper_FlowsIntoChangeSet()
+    {
+        // The GitOps-safe manifest nests entries under spec.entries; ensure that shape is read too.
+        const string specWrapped = """
+        {
+          "metadata": { "name": "workflow-parcels-buffer" },
+          "sourceEnvironment": "authoring",
+          "sourceRevision": 3,
+          "targetEnvironments": ["staging"],
+          "spec": {
+            "entries": [
+              {
+                "semanticId": "workflow:parcels-buffer",
+                "artifactKind": "workflow",
+                "changeClass": "content"
+              }
+            ]
+          }
+        }
+        """;
+
+        Assert.True(MetadataReleaseChangeSetBuilder.TryBuild(specWrapped, out MetadataReleaseChangeSet changeSet, out _));
+        MetadataResourceSummary workflow = Assert.Single(changeSet.SemanticResources);
+        Assert.Equal("workflow", workflow.Kind);
+        Assert.Equal("workflow:parcels-buffer", workflow.Name);
+        Assert.Equal("upsert", workflow.Action);
+    }
+
     [Fact]
     public void TryBuild_MissingEnvironments_DefaultsToStaging()
     {
