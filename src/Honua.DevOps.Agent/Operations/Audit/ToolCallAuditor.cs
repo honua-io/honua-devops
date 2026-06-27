@@ -37,7 +37,11 @@ internal static class ToolCallAuditor
             foreach (KeyValuePair<string, object?> kvp in call.Arguments)
             {
                 string raw = kvp.Value?.ToString() ?? "null";
-                arguments[kvp.Key] = Redaction.Scrub(raw);
+                // Redact by argument key as well as content: a value passed under a
+                // sensitive key (e.g. apiKey/token/secret) carries no inline `key=`
+                // prefix for the content scrubber to latch onto, so scrubbing the
+                // value alone would leak the bare secret into the audit journal.
+                arguments[kvp.Key] = Redaction.ScrubValue(kvp.Key, raw);
             }
         }
 

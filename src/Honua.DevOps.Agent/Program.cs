@@ -230,7 +230,11 @@ catch (OperationCanceledException)
 }
 catch (Exception exception)
 {
-    Console.Error.WriteLine(exception);
+    // Scrub before writing: an exception message/stack can carry secrets or
+    // endpoints (e.g. a connection string or token echoed from a failed call),
+    // and this top-level boundary is otherwise the one logging path that bypasses
+    // the transport/MCP redaction.
+    Console.Error.WriteLine(Redaction.Scrub(exception.ToString()));
     Environment.ExitCode = 1;
 }
 finally
@@ -306,7 +310,10 @@ static string SummarizeArguments(IDictionary<string, object?>? arguments)
 
     return string.Join(", ", arguments.Take(4).Select(kvp =>
     {
-        string value = kvp.Value?.ToString() ?? "null";
+        // Redact by key and content before echoing to stdout: this preview is a
+        // logging boundary the transport/MCP redaction does not cover, so a secret
+        // passed as an argument would otherwise leak here.
+        string value = Redaction.ScrubValue(kvp.Key, kvp.Value?.ToString() ?? "null");
         if (value.Length > 32)
         {
             value = value[..32] + "...";

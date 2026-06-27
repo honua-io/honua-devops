@@ -53,4 +53,39 @@ public class RedactionTests
         Assert.Equal(string.Empty, Redaction.Scrub(null));
         Assert.Equal(string.Empty, Redaction.Scrub(string.Empty));
     }
+
+    [Theory]
+    [InlineData("apiKey")]
+    [InlineData("api_key")]
+    [InlineData("X-API-Key")]
+    [InlineData("token")]
+    [InlineData("access_token")]
+    [InlineData("secret")]
+    [InlineData("password")]
+    [InlineData("authorization")]
+    public void ScrubValue_RedactsBareValueUnderSensitiveKey(string key)
+    {
+        // A value passed under a sensitive key has no inline `key=` prefix for the
+        // content scrubber to match, so the key itself must trigger redaction.
+        const string secret = "rawsecretvalue";
+        string scrubbed = Redaction.ScrubValue(key, secret);
+        Assert.DoesNotContain(secret, scrubbed, StringComparison.Ordinal);
+        Assert.Equal("<redacted>", scrubbed);
+    }
+
+    [Fact]
+    public void ScrubValue_LeavesNonSensitiveKeyValueButStillScrubsInlineSecrets()
+    {
+        Assert.Equal("roads-api", Redaction.ScrubValue("service", "roads-api"));
+        Assert.DoesNotContain("hunter2", Redaction.ScrubValue("note", "api_key=hunter2"));
+    }
+
+    [Fact]
+    public void IsSensitiveKey_DistinguishesSecretKeysFromOrdinaryOnes()
+    {
+        Assert.True(Redaction.IsSensitiveKey("apiKey"));
+        Assert.True(Redaction.IsSensitiveKey("PASSWORD"));
+        Assert.False(Redaction.IsSensitiveKey("service"));
+        Assert.False(Redaction.IsSensitiveKey(null));
+    }
 }

@@ -605,7 +605,7 @@ internal sealed class HonuaOperationsToolkit(
             revision,
             action);
         string correlationId = $"honua-devops:{action}:{service}";
-        bool targetsProd = environments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        bool targetsProd = environments.Any(runtime.IsProductionEnvironment);
         string priority = targetsProd ? "high" : "normal";
         Dictionary<string, string> parameters = new(StringComparer.Ordinal)
         {
@@ -2904,7 +2904,7 @@ internal sealed class HonuaOperationsToolkit(
         IReadOnlyList<string> targetEnvironments,
         string action)
     {
-        bool targetsProd = targetEnvironments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        bool targetsProd = targetEnvironments.Any(runtime.IsProductionEnvironment);
         bool requestedDryRun = action is "plan" or "dry-run";
         bool executionEnabled = runtime.ExecutionMode == ExecutionMode.Execute && !requestedDryRun;
         OperatorPolicyModel policy = EffectivePolicy;

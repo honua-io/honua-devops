@@ -424,6 +424,38 @@ public class HonuaOperationsToolkitDeployTests
     }
 
     [Fact]
+    public async Task DeployServiceWithGitOpsAsync_RejectsProductionAliasInExecuteLowerEnvTier()
+    {
+        // Regression: a `production`-named environment must be classified as prod and
+        // hit the same execute-lower-env guard as `prod`. The previous exact/substring
+        // membership test (Contains("prod", OrdinalIgnoreCase)) only matched the literal
+        // token `prod`, letting `production` evade the guard and write prod from a lower
+        // tier (audit S2).
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        OperationRuntime runtime = new(
+            ExecutionMode.Execute,
+            ExecutionTier.ExecuteLowerEnv,
+            "honua-gitops",
+            AllowedEnvironments: ["dev", "staging", "production"],
+            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRef: "main",
+            TerraformLocalPath: "/tmp/honua-terraform",
+            TerraformDeploymentTargets: ["eks", "aks"]);
+        HonuaOperationsToolkit toolkit = new(runtime, gateway, DirectAllowedPolicy());
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => toolkit.DeployServiceWithGitOpsAsync(
+                "roads-api",
+                "production",
+                "main",
+                "apply",
+                "release",
+                CancellationToken.None));
+
+        Assert.Contains("execute-lower-env", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DeployServiceWithGitOpsAsync_RequiresPromoteActionForProdPromotionTier()
     {
         using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
