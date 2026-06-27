@@ -156,6 +156,87 @@ public class GitOpsExecutorTests
     }
 
     [Fact]
+    public async Task ExecuteSyncAsync_StillReconcilingAtPollBudget_ReportsInProgressNotFailed()
+    {
+        // The reconciler advances the operation server-side; a real deploy routinely takes
+        // longer than the poll budget. A still-non-terminal status at budget exhaustion MUST
+        // be reported as in-progress (healthy, keep watching), never as a failure. This is the
+        // S1 regression guard for AUD-087.
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Planned" });
+            }
+
+            if (request.Method == HttpMethod.Post && path.EndsWith("/submit", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Reconciling" });
+            }
+
+            // The operation never reaches terminal within the budget.
+            return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Reconciling" });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        MutableTimeProvider clock = new();
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy(),
+            pollPolicy: new DeployPollPolicy(
+                Timeout: TimeSpan.FromSeconds(5),
+                InitialInterval: TimeSpan.FromSeconds(1),
+                MaxInterval: TimeSpan.FromSeconds(2)),
+            // Advance the virtual clock instead of sleeping so the budget is exhausted instantly.
+            delay: (interval, _) => { clock.Advance(interval); return Task.CompletedTask; },
+            timeProvider: clock);
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor);
+
+        Assert.Equal(GitOpsExecutionStatus.InProgress, result.Status);
+        Assert.NotEqual(GitOpsExecutionStatus.Failed, result.Status);
+        Assert.Equal("op-7f3", result.OperationId);
+        Assert.Equal("Reconciling", result.ServerStatus);
+        Assert.True(result.Mutated);
+        // It actually polled more than once (backoff) before giving up the budget.
+        Assert.True(result.BackendSteps.Count(step => step.Name.StartsWith("deploy-operation-poll", StringComparison.Ordinal)) > 1);
+        Assert.Empty(result.BlockingReasons);
+    }
+
+    [Fact]
+    public async Task ExecuteSyncAsync_TerminalFailed_StillReportsFailed()
+    {
+        // A genuine terminal failure must still resolve to Failed (the in-progress change must
+        // not mask real terminal failures).
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Planned" });
+            }
+
+            if (request.Method == HttpMethod.Post && path.EndsWith("/submit", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Reconciling" });
+            }
+
+            return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Failed" });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor);
+
+        Assert.Equal(GitOpsExecutionStatus.Failed, result.Status);
+        Assert.Equal("Failed", result.ServerStatus);
+    }
+
+    [Fact]
     public async Task ExecuteSyncAsync_SubmitRefused_ReportsApprovalRequiredAndDoesNotMutate()
     {
         // A 403 from the OperatorApprovalGate (or any submit failure) means nothing reconciled.
@@ -346,6 +427,17 @@ public class GitOpsExecutorTests
         Assert.Equal(GitOpsExecutionStatus.AwaitingApproval, result.Status);
         Assert.False(result.Mutated);
         Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.Contains("/rollback", StringComparison.Ordinal));
+    }
+
+    // A virtual clock the poll loop reads via TimeProvider; the injected delay advances it so
+    // the poll budget can be exhausted deterministically without any real waiting.
+    private sealed class MutableTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _now = DateTimeOffset.UtcNow;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan delta) => _now += delta;
     }
 
     private static Task<GitOpsExecutionResult> ExecuteSyncAsync(GitOpsExecutor executor, bool authorizationDryRun = false)

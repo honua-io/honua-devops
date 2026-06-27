@@ -48,10 +48,11 @@ public partial class ConsoleOperationBridgeTests
         Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.Contains("/rollback", StringComparison.Ordinal));
 
         // Substrate inputs are surfaced (per-ENV, not per-job).
-        Assert.Contains(response.Findings, f => f.Contains("enable_gp_substrate = true", StringComparison.Ordinal));
-        Assert.Contains(response.Findings, f => f.Contains("gp_cpu_architecture = ARM64", StringComparison.Ordinal));
-        Assert.Contains(response.Findings, f => f.Contains("gp_job_definition_tiers = s,m,l,xl", StringComparison.Ordinal));
-        Assert.Contains(response.Findings, f => f.Contains("gp_compute_max_vcpus = 512", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, f => f.Contains("enable_gp_batch = true", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, f => f.Contains("gp_batch_cpu_architecture = ARM64", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, f => f.Contains("gp_batch_max_vcpus = 512", StringComparison.Ordinal));
+        // The tier pool is hardcoded in honua-iac; no tiers var is surfaced as a substrate input.
+        Assert.DoesNotContain(response.Findings, f => f.Contains("gp_job_definition_tiers", StringComparison.Ordinal));
 
         // No per-job profile knobs leak into the substrate proposal.
         Assert.DoesNotContain(response.Findings, f => f.Contains("gp_batch_vcpus", StringComparison.Ordinal));
@@ -86,7 +87,7 @@ public partial class ConsoleOperationBridgeTests
         GitOpsProposalBridge proposal = AssertProposal(response);
         Assert.Null(proposal.OperationId);
         // The substrate mapping still surfaces even when the target is unconfigured.
-        Assert.Contains(response.Findings, f => f.Contains("enable_gp_substrate = true", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, f => f.Contains("enable_gp_batch = true", StringComparison.Ordinal));
         Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.Contains("/submit", StringComparison.Ordinal));
     }
 
@@ -110,10 +111,11 @@ public partial class ConsoleOperationBridgeTests
         Assert.Equal("gp-job-sizing", response.Status);
         Assert.Contains("gp-sizing-no-terraform", response.ValidationChecks);
         Assert.Contains("gp-sizing-no-operation-recorded", response.ValidationChecks);
-        // ephemeral=100 selects the `l` tier; overrides carry vCPU/memory/timeout/retry.
+        // ephemeral=100 selects the `l` tier; overrides carry vCPU/memory/timeout/retry/ephemeral.
         Assert.Contains("gp-sizing-tier:l", response.ValidationChecks);
         Assert.Contains(response.Findings, f => f.Contains("batch.vcpus = 8", StringComparison.Ordinal));
-        Assert.Contains(response.Findings, f => f.Contains("batch.memoryMib = 32768", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, f => f.Contains("batch.memory_mib = 32768", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, f => f.Contains("batch.ephemeral_gib = 100", StringComparison.Ordinal));
         Assert.Contains(response.Findings, f => f.Contains("gp_job_definition_arns.l", StringComparison.Ordinal));
     }
 

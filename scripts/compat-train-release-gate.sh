@@ -178,12 +178,22 @@ for repo in $TRAIN_REPOS; do
   REPO_TARGET["$repo"]="${target:-unset}"
   REPO_COMMIT["$repo"]="${commit:-unset}"
 
-  # Normalize the run status to pass/fail/missing.
+  # Normalize the run status to pass/skipped/fail/missing. "skipped" is the
+  # non-blocking signal the conformance-gate emits for unenrolled consumers
+  # (compat-train-conformance-gate.sh) and that rc-aggregate already honors
+  # ($s != "pass" and $s != "skipped"); the release-gate must agree or it would
+  # block a train whose conformance layer legitimately passed.
   case "$status" in
     pass | passed | success | ok | green | true) status_norm="pass" ;;
+    skip | skipped | "n/a" | "not-applicable") status_norm="skipped" ;;
     "") status_norm="missing" ;;
     *) status_norm="fail" ;;
   esac
+
+  if [[ "$status_norm" == "skipped" ]]; then
+    echo "[SKIP] repo ${repo}: release-candidate evidence skipped (non-blocking)"
+    continue
+  fi
 
   if [[ "$status_norm" == "missing" ]]; then
     echo "[FAIL] repo ${repo}: no release-candidate evidence supplied"
@@ -236,19 +246,24 @@ if [[ -n "$SCOREBOARD_MATRIX" ]]; then
     SCOREBOARD_RELEASE="$(json_field '.releases[0].release' "$SCOREBOARD_MATRIX")"
     SCOREBOARD_PASS="$(json_field '.releases[0].summary.pass' "$SCOREBOARD_MATRIX")"
     SCOREBOARD_PENDING="$(json_field '.releases[0].summary.pending' "$SCOREBOARD_MATRIX")"
+    SCOREBOARD_WARN="$(json_field '.releases[0].summary.warn' "$SCOREBOARD_MATRIX")"
     SCOREBOARD_FAIL="$(json_field '.releases[0].summary.fail' "$SCOREBOARD_MATRIX")"
     SCOREBOARD_PASS="${SCOREBOARD_PASS:-0}"
     SCOREBOARD_PENDING="${SCOREBOARD_PENDING:-0}"
+    SCOREBOARD_WARN="${SCOREBOARD_WARN:-0}"
     SCOREBOARD_FAIL="${SCOREBOARD_FAIL:-0}"
 
     if [[ "$SCOREBOARD_FAIL" -gt 0 ]]; then
       echo "[FAIL] scoreboard release ${SCOREBOARD_RELEASE}: ${SCOREBOARD_FAIL} failing client(s)/protocol(s)"
       failures=$((failures + 1))
+    elif [[ "$SCOREBOARD_WARN" -gt 0 ]]; then
+      echo "[FAIL] scoreboard release ${SCOREBOARD_RELEASE}: ${SCOREBOARD_WARN} degraded (warn) client(s)/protocol(s)"
+      failures=$((failures + 1))
     elif [[ "$SCOREBOARD_PENDING" -gt 0 ]] && is_truthy "$STRICT_SCOREBOARD"; then
       echo "[FAIL] scoreboard release ${SCOREBOARD_RELEASE}: ${SCOREBOARD_PENDING} pending client(s) (blocked by strict mode)"
       failures=$((failures + 1))
     else
-      echo "[PASS] scoreboard release ${SCOREBOARD_RELEASE}: pass=${SCOREBOARD_PASS} pending=${SCOREBOARD_PENDING} fail=${SCOREBOARD_FAIL}"
+      echo "[PASS] scoreboard release ${SCOREBOARD_RELEASE}: pass=${SCOREBOARD_PASS} pending=${SCOREBOARD_PENDING} warn=${SCOREBOARD_WARN} fail=${SCOREBOARD_FAIL}"
     fi
   fi
 else
@@ -273,7 +288,7 @@ $(for repo in $TRAIN_REPOS; do
 
 ## Client-compatibility scoreboard
 $(if [[ -n "$SCOREBOARD_MATRIX" && -n "$SCOREBOARD_RELEASE" ]]; then
-    echo "- latest release: ${SCOREBOARD_RELEASE} (pass=${SCOREBOARD_PASS} pending=${SCOREBOARD_PENDING} fail=${SCOREBOARD_FAIL})"
+    echo "- latest release: ${SCOREBOARD_RELEASE} (pass=${SCOREBOARD_PASS} pending=${SCOREBOARD_PENDING} warn=${SCOREBOARD_WARN} fail=${SCOREBOARD_FAIL})"
   else
     echo "- not supplied (per-repo RC evidence only)"
   fi)

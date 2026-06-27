@@ -4,7 +4,7 @@ namespace Honua.DevOps.Agent.Operations.RuntimeAdapters;
 /// Geoprocessing (GP) runtime adapter: provisions / updates the durable PER-ENVIRONMENT GP
 /// substrate — the AWS Batch compute-env (Fargate-Spot), job queue, IAM roles, ECR repo, and a
 /// POOL of job-definition ephemeral-storage tiers (s/m/l/xl) — in the honua-iac GP substrate
-/// stack (gated <c>enable_gp_substrate=true</c>).
+/// stack (gated <c>enable_gp_batch=true</c>).
 ///
 /// This runs RARELY: when GP capability is added or updated in an environment ("provision GP
 /// capability in env X"), through the existing plan-first / approval-gated path. It is NOT a

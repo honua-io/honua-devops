@@ -11,7 +11,18 @@ from pathlib import Path
 from typing import Any
 
 
-STATUS_PRIORITY = {"fail": 3, "pending": 2, "warn": 2, "pass": 1}
+# Severity order for aggregation. "warn" must outrank "pending": a warn is a
+# real compatibility warning that was observed, whereas pending is "not yet
+# tested". When they tied, aggregate_status() (which uses max()) could mask a
+# warn as pending depending on iteration order, leaving summary.warn at 0 so no
+# gate ever surfaced it.
+STATUS_PRIORITY = {"fail": 4, "warn": 3, "pending": 2, "pass": 1}
+
+# The closed compatibility-status vocabulary. Any value outside this set is a producer bug;
+# we fail closed rather than silently sorting it below `pass` (where it would never turn the
+# badge red or block a gate). `warn` is a real, degraded status that MUST be counted and
+# surfaced to the badge and the release gates — it is not allowed to roll into an unread key.
+KNOWN_STATUSES = ("pass", "pending", "warn", "fail")
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hard-fail",
         action="store_true",
-        help="Exit non-zero when the latest release contains any failing client or protocol status.",
+        help="Exit non-zero when the latest release contains any failing OR degraded (warn) client or protocol status.",
     )
     return parser.parse_args()
 
@@ -90,7 +101,13 @@ def merge_overlay(client_map: dict[str, dict[str, Any]], overlay: dict[str, Any]
 def aggregate_status(values: list[str]) -> str:
     if not values:
         return "pending"
-    return max(values, key=lambda value: STATUS_PRIORITY.get(value, 0))
+    unknown = sorted({value for value in values if value not in STATUS_PRIORITY})
+    if unknown:
+        raise ValueError(
+            f"Unknown compatibility status(es) {unknown}; expected one of {list(KNOWN_STATUSES)}. "
+            "Refusing to aggregate an out-of-vocabulary status (it would silently never block)."
+        )
+    return max(values, key=lambda value: STATUS_PRIORITY[value])
 
 
 def build_release_matrix(services: list[dict[str, Any]], catalog: dict[str, Any]) -> list[dict[str, Any]]:
@@ -119,10 +136,17 @@ def build_release_matrix(services: list[dict[str, Any]], catalog: dict[str, Any]
 
 
 def build_summary(matrix: list[dict[str, Any]]) -> dict[str, int]:
-    summary = {"pass": 0, "pending": 0, "fail": 0}
+    # Count into the full closed vocabulary so a `warn` (degraded) client is a first-class,
+    # counted bucket the badge and the release gates evaluate — never an unread key that lets
+    # a degraded release stay green. Out-of-vocabulary statuses fail closed.
+    summary = {status: 0 for status in KNOWN_STATUSES}
     for client in matrix:
         status = client["status"]
-        summary[status] = summary.get(status, 0) + 1
+        if status not in summary:
+            raise ValueError(
+                f"Unknown client status {status!r}; expected one of {list(KNOWN_STATUSES)}."
+            )
+        summary[status] += 1
     return summary
 
 
@@ -152,9 +176,15 @@ def build_diff(current: list[dict[str, Any]], previous: list[dict[str, Any]]) ->
 
 def build_badge(latest_release: dict[str, Any]) -> dict[str, Any]:
     summary = latest_release["summary"]
-    if summary.get("fail", 0) > 0:
+    fail = summary.get("fail", 0)
+    warn = summary.get("warn", 0)
+    pending = summary.get("pending", 0)
+    if fail > 0:
         color = "red"
-    elif summary.get("pending", 0) > 0:
+    elif warn > 0:
+        # Degraded (warn) clients are a release-blocking condition; never show green.
+        color = "orange"
+    elif pending > 0:
         color = "yellow"
     elif sum(summary.values()) == 0:
         color = "lightgrey"
@@ -164,7 +194,9 @@ def build_badge(latest_release: dict[str, Any]) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "label": "compatibility",
-        "message": f"{summary.get('pass', 0)} pass / {summary.get('pending', 0)} pending / {summary.get('fail', 0)} fail",
+        "message": (
+            f"{summary.get('pass', 0)} pass / {pending} pending / {warn} warn / {fail} fail"
+        ),
         "color": color,
     }
 
@@ -242,7 +274,8 @@ def render_markdown(scoreboard: dict[str, Any]) -> str:
         lines.append("")
         summary = release["summary"]
         lines.append(
-            f"Summary: pass={summary.get('pass', 0)}, pending={summary.get('pending', 0)}, fail={summary.get('fail', 0)}"
+            f"Summary: pass={summary.get('pass', 0)}, pending={summary.get('pending', 0)}, "
+            f"warn={summary.get('warn', 0)}, fail={summary.get('fail', 0)}"
         )
         lines.append("")
         lines.append("| Client | Overall | Protocol Status |")
@@ -303,7 +336,7 @@ def render_html(scoreboard: dict[str, Any]) -> str:
             f"""
             <section>
               <h2>Release {escape(release['release'])}</h2>
-              <p>Summary: pass={release['summary'].get('pass', 0)}, pending={release['summary'].get('pending', 0)}, fail={release['summary'].get('fail', 0)}</p>
+              <p>Summary: pass={release['summary'].get('pass', 0)}, pending={release['summary'].get('pending', 0)}, warn={release['summary'].get('warn', 0)}, fail={release['summary'].get('fail', 0)}</p>
               <table>
                 <thead>
                   <tr><th>Client</th><th>Overall</th><th>Protocol Status</th></tr>
@@ -382,7 +415,11 @@ def main() -> int:
 
     release_services = discover_services(packs_root, catalog)
     scoreboard = build_scoreboard(release_services, catalog)
-    latest_release = scoreboard["releases"][0] if scoreboard["releases"] else {"summary": {"pass": 0, "pending": 0, "fail": 0}}
+    latest_release = (
+        scoreboard["releases"][0]
+        if scoreboard["releases"]
+        else {"summary": {status: 0 for status in KNOWN_STATUSES}}
+    )
 
     (output_dir / "compatibility-matrix.json").write_text(
         json.dumps(scoreboard, indent=2) + "\n", encoding="utf-8"
@@ -394,7 +431,9 @@ def main() -> int:
         json.dumps(build_badge(latest_release), indent=2) + "\n", encoding="utf-8"
     )
 
-    if args.hard_fail and latest_release["summary"].get("fail", 0) > 0:
+    # Fail closed on the latest release: a hard failure OR a degraded (warn) client blocks.
+    summary = latest_release["summary"]
+    if args.hard_fail and (summary.get("fail", 0) > 0 or summary.get("warn", 0) > 0):
         return 2
 
     return 0

@@ -346,6 +346,58 @@ public class EscalationWebhookTests
         }
     }
 
+    [Fact]
+    public async Task Listener_Returns413OnOversizedBodyBeforeAuthenticating()
+    {
+        int port = AllocateFreePort();
+        WebhookListenerConfiguration configuration = new(
+            Secret: Secret,
+            Port: port,
+            Path: "/escalations",
+            AutoTriage: false);
+
+        bool callbackInvoked = false;
+        EscalationWebhookHandler webhookHandler = new(Secret, (_, _) =>
+        {
+            callbackInvoked = true;
+            return Task.CompletedTask;
+        });
+
+        await using EscalationWebhookListener listener = new(configuration, webhookHandler);
+
+        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
+        Task runTask = listener.RunAsync(cts.Token);
+
+        try
+        {
+            // One byte over the 1 MiB cap; rejected on declared Content-Length
+            // before any body is buffered and before the signature is checked.
+            string oversized = new('a', (int)WebhookListenerBase.DefaultMaxBodyBytes + 1);
+
+            using HttpClient client = new() { Timeout = TimeSpan.FromSeconds(5) };
+            using HttpRequestMessage request = new(HttpMethod.Post, $"http://localhost:{port}/escalations")
+            {
+                Content = new StringContent(oversized, Encoding.UTF8, "application/json")
+            };
+
+            using HttpResponseMessage response = await client.SendAsync(request, cts.Token);
+            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+            Assert.False(callbackInvoked);
+        }
+        finally
+        {
+            cts.Cancel();
+            try
+            {
+                await runTask;
+            }
+            catch (OperationCanceledException)
+            {
+                // expected on shutdown
+            }
+        }
+    }
+
     private static int AllocateFreePort()
     {
         using TcpListener probe = new(IPAddress.Loopback, 0);

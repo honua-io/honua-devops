@@ -203,16 +203,18 @@ bundle="$(
     # --- client-compatibility scoreboard (optional, cross-cutting) ---
     (if $scoreboard != null and ($scoreboard.summary != null) then
       ($scoreboard.summary.fail // 0) as $fail |
+      ($scoreboard.summary.warn // 0) as $warn |
+      (($fail + $warn) > 0) as $blocking |
       [ {
         id: "client-compatibility-scoreboard", name: "Client compatibility scoreboard",
         kind: "scoreboard", owningRepo: "honua-io/honua-devops",
         surface: "cross-cutting",
-        requirement: "Latest scoreboard release has no failing clients.",
-        evidenceState: (if $fail > 0 then "blocked" else "passed" end),
-        state: (if $fail > 0 then "blocked" else "passed" end),
-        followUps: (if $fail > 0
+        requirement: "Latest scoreboard release has no failing or degraded (warn) clients.",
+        evidenceState: (if $blocking then "blocked" else "passed" end),
+        state: (if $blocking then "blocked" else "passed" end),
+        followUps: (if $blocking
           then [ { url: null, repo: null, number: null,
-                   reason: ("Scoreboard release \($scoreboard.release) has \($fail) failing client(s)/protocol(s).") } ]
+                   reason: ("Scoreboard release \($scoreboard.release) has \($fail) failing and \($warn) degraded (warn) client(s)/protocol(s).") } ]
           else [] end)
       } ]
      else [] end) as $sbcheck |
