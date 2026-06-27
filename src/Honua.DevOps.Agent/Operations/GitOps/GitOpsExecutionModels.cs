@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -26,6 +27,13 @@ internal static class GitOpsExecutionStatus
     // Submitted and polled to a successful terminal server status.
     internal const string Succeeded = "succeeded";
 
+    // Submitted successfully, but the operation had NOT reached a terminal server status
+    // within the poll budget. This is NOT a failure: the reconciler advances the operation
+    // server-side and a real deploy/promotion routinely takes longer than the poll budget.
+    // The operationId + last-observed ServerStatus are surfaced so the caller can keep
+    // watching (e.g. via the approval/watch path) rather than treating it as failed.
+    internal const string InProgress = "in-progress";
+
     // Submitted and polled to a failed/manual-intervention terminal server status.
     internal const string Failed = "failed";
 
@@ -39,6 +47,59 @@ internal static class GitOpsExecutionStatus
     // The deploy-control contract was unavailable (no operationId returned, target
     // unconfigured, or a backend error). Nothing mutated; no operation id invented.
     internal const string ContractUnavailable = "contract-unavailable";
+}
+
+// Poll budget for SubmitAndPollAsync after a deploy/promotion is submitted. The reconciler
+// advances the operation server-side, so a real deploy routinely takes far longer than a
+// single poll cycle: the executor polls with capped exponential backoff up to a total
+// timeout, and if the operation is still non-terminal at the deadline it reports
+// `in-progress` (NOT failed). All three knobs are env-configurable, mirroring
+// ApprovalWaiter's HONUA_DEVOPS_APPROVAL_TIMEOUT_SECONDS.
+internal sealed record DeployPollPolicy(
+    TimeSpan Timeout,
+    TimeSpan InitialInterval,
+    TimeSpan MaxInterval)
+{
+    internal const string TimeoutSecondsVariable = "HONUA_DEVOPS_DEPLOY_POLL_TIMEOUT_SECONDS";
+    internal const string InitialIntervalMsVariable = "HONUA_DEVOPS_DEPLOY_POLL_INITIAL_INTERVAL_MS";
+    internal const string MaxIntervalMsVariable = "HONUA_DEVOPS_DEPLOY_POLL_MAX_INTERVAL_MS";
+
+    // Realistic defaults: poll for up to 5 minutes, starting at 1s and backing off to 15s.
+    internal const int DefaultTimeoutSeconds = 300;
+    internal const int DefaultInitialIntervalMs = 1000;
+    internal const int DefaultMaxIntervalMs = 15000;
+
+    internal static DeployPollPolicy Resolve()
+    {
+        TimeSpan timeout = TimeSpan.FromSeconds(ReadPositiveInt(TimeoutSecondsVariable, DefaultTimeoutSeconds));
+        TimeSpan initial = TimeSpan.FromMilliseconds(ReadPositiveInt(InitialIntervalMsVariable, DefaultInitialIntervalMs));
+        TimeSpan max = TimeSpan.FromMilliseconds(ReadPositiveInt(MaxIntervalMsVariable, DefaultMaxIntervalMs));
+
+        // The cap must never be below the initial interval; clamp to keep backoff monotonic.
+        if (max < initial)
+        {
+            max = initial;
+        }
+
+        return new DeployPollPolicy(timeout, initial, max);
+    }
+
+    private static int ReadPositiveInt(string variable, int fallback)
+    {
+        string? raw = Environment.GetEnvironmentVariable(variable);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallback;
+        }
+
+        if (!int.TryParse(raw.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) || value < 1)
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variable}` must be a positive integer.");
+        }
+
+        return value;
+    }
 }
 
 // How the executor was permitted to act, derived from EXECUTION_MODE + APPROVAL_MODE +
