@@ -39,8 +39,15 @@ internal sealed record GpSubstrateConfig(
 
     /// <summary>
     /// Render the per-ENV substrate <c>-var</c> inputs for the GP substrate stack. These are
-    /// substrate-shaped (enable flag, shared image/arch, compute-env ceiling, tier pool,
+    /// substrate-shaped (enable flag, shared image/arch, compute-env ceiling, workload id,
     /// ECR flag) — NOT a per-job profile. Always sets the substrate gate on.
+    ///
+    /// CONTRACT: every emitted variable name MUST be a variable honua-iac actually declares
+    /// (modules/aws-serverless/variables.tf + examples/aws-cert/variables.tf). The tier POOL
+    /// is NOT operator-controllable: honua-iac hardcodes the four ephemeral-storage tiers via a
+    /// <c>for_each</c> over <c>local.gp_batch_tiers</c> (batch.tf), so there is intentionally NO
+    /// tiers variable here — emitting one would fail terraform with "Value for undeclared
+    /// variable". The cross-seam test in GpAdapterContractTests guards this.
     /// </summary>
     internal IReadOnlyList<GpSubstrateVar> ToSubstrateVars()
     {
@@ -50,22 +57,23 @@ internal sealed record GpSubstrateConfig(
             new GpSubstrateVar(ImageVar, Image ?? string.Empty),
             new GpSubstrateVar(CpuArchitectureVar, ToTerraformArchitecture(Architecture)),
             new GpSubstrateVar(MaxVcpusVar, MaxVcpus.ToString(CultureInfo.InvariantCulture)),
-            new GpSubstrateVar(TiersVar, string.Join(",", EffectiveTiers.Select(GpResourceProfile.TierToken))),
             new GpSubstrateVar(WorkloadIdVar, WorkloadId),
             new GpSubstrateVar(CreateWorkerGdalRepoVar, CreateWorkerGdalRepo ? "true" : "false")
         ];
     }
 
-    // Per-ENV substrate input variable names. These provision the substrate as a whole; the
+    // Per-ENV substrate input variable names. These are the EXACT names honua-iac declares
+    // (modules/aws-serverless/variables.tf + examples/aws-cert/variables.tf, origin/trunk). The
     // adapter does NOT bind its post-provision behaviour to input-variable names — it binds to
     // the substrate OUTPUTS (see GpSubstrateOutputs). Per-job knobs (vcpus/memory/timeout/retry)
-    // are deliberately ABSENT: those are SubmitJob overrides, never terraform inputs.
-    internal const string EnableVar = "enable_gp_substrate";
-    internal const string ImageVar = "gp_worker_image";
-    internal const string CpuArchitectureVar = "gp_cpu_architecture";
-    internal const string MaxVcpusVar = "gp_compute_max_vcpus";
-    internal const string TiersVar = "gp_job_definition_tiers";
-    internal const string WorkloadIdVar = "gp_workload_id";
+    // are deliberately ABSENT: those are SubmitJob overrides, never terraform inputs. The tier
+    // POOL is hardcoded in honua-iac (for_each over local.gp_batch_tiers in batch.tf) and is NOT
+    // a variable — so there is deliberately no tiers var. Drift is guarded by GpAdapterContractTests.
+    internal const string EnableVar = "enable_gp_batch";
+    internal const string ImageVar = "gp_batch_image";
+    internal const string CpuArchitectureVar = "gp_batch_cpu_architecture";
+    internal const string MaxVcpusVar = "gp_batch_max_vcpus";
+    internal const string WorkloadIdVar = "gp_batch_workload_id";
     internal const string CreateWorkerGdalRepoVar = "create_worker_gdal_repo";
 
     internal static string ToTerraformArchitecture(GpCpuArchitecture architecture) => architecture switch

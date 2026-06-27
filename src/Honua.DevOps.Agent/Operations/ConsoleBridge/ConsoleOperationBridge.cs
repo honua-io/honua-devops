@@ -276,7 +276,7 @@ internal sealed class ConsoleOperationBridge(
         return EnrichGpProposal(proposal, adapter, substrateFindings);
     }
 
-    [Description("Compute the runtime SIZING HINT for a single geoprocessing (GP) job: select the durable job-definition tier (s/m/l/xl = ephemeralStorageGib <=20/<=50/<=100/<=200) from the per-env substrate's pre-provisioned pool and produce the AWS Batch SubmitJob overrides (loose batch.* params: batch.vcpus, batch.memoryMib, batch.timeoutSeconds, batch.retryAttempts) the server applies at runtime. This is a PURE PLANNING AID: it calls NO terraform, mints NO infra, and records NO deploy-control operation — per-job sizing is a SubmitJob-time concern with zero infra change. A request above 200 GiB ephemeral storage exceeds the Fargate ceiling / tier pool and is reported as an error. gpuCount>0 is surfaced as an advisory note (the default Fargate-Spot substrate has no GPU tiers; GPU needs an opt-in GPU compute-env), not a hard reject. Returns the selected tier token, the gp_job_definition_arns.<tier> output path the server resolves, and the SubmitJob override map.")]
+    [Description("Compute the runtime SIZING HINT for a single geoprocessing (GP) job: select the durable job-definition tier (s/m/l/xl = ephemeralStorageGib <=20/<=50/<=100/<=200) from the per-env substrate's pre-provisioned pool and produce the AWS Batch SubmitJob overrides (loose batch.* params: batch.vcpus, batch.memory_mib, batch.timeout_seconds, batch.retry_attempts, batch.ephemeral_gib) the server applies at runtime. This is a PURE PLANNING AID: it calls NO terraform, mints NO infra, and records NO deploy-control operation — per-job sizing is a SubmitJob-time concern with zero infra change. A request above 200 GiB ephemeral storage exceeds the Fargate ceiling / tier pool and is reported as an error. gpuCount>0 is surfaced as an advisory note (the default Fargate-Spot substrate has no GPU tiers; GPU needs an opt-in GPU compute-env), not a hard reject. Returns the selected tier token, the gp_job_definition_arns.<tier> output path the server resolves, and the SubmitJob override map.")]
     public Task<OperationResponse> PlanGpJobSizingAsync(
         int vcpus,
         int memoryMib,
@@ -1340,7 +1340,7 @@ internal sealed class ConsoleOperationBridge(
                 .Where(v => v.Name is GpSubstrateConfig.ImageVar
                     or GpSubstrateConfig.CpuArchitectureVar
                     or GpSubstrateConfig.MaxVcpusVar
-                    or GpSubstrateConfig.TiersVar)
+                    or GpSubstrateConfig.WorkloadIdVar)
                 .Select(v => $"{v.Name}={(string.IsNullOrEmpty(v.Value) ? "(lambda-default)" : v.Value)}"));
     }
 

@@ -167,14 +167,22 @@ internal sealed record GpResourceProfile(
                 "GPU geoprocessing requires an opt-in EC2/GPU AWS Batch compute environment that the default substrate does not provision.");
         }
 
-        // Loose batch.* SubmitJob overrides the server consumes. ephemeral-storage is NOT an
-        // override (it is the tier selection); GPU is omitted from the Fargate override set.
+        // Loose batch.* SubmitJob overrides the server consumes. These key strings MUST match the
+        // EXACT snake_case keys the server reads in honua-server AwsBatchParameterKeys
+        // (src/Honua.Aws/Features/ControlPlane/AwsBatchComputeBackend.cs): batch.vcpus,
+        // batch.memory_mib, batch.timeout_seconds, batch.retry_attempts. batch.ephemeral_gib is
+        // emitted because it DRIVES server-side tier selection (the only sizing dimension AWS Batch
+        // SubmitJob cannot override is ephemeral storage, so the server picks the job-def tier from
+        // this value; absent/non-positive falls back to the 20 GiB 's' tier). GPU is omitted from
+        // the Fargate override set. Drift from these keys is guarded by GpAdapterContractTests.
         Dictionary<string, string> overrides = new(StringComparer.Ordinal)
         {
             ["batch.vcpus"] = Vcpus.ToString(CultureInfo.InvariantCulture),
-            ["batch.memoryMib"] = MemoryMib.ToString(CultureInfo.InvariantCulture),
-            ["batch.timeoutSeconds"] = TimeoutSeconds.ToString(CultureInfo.InvariantCulture),
-            ["batch.retryAttempts"] = RetryAttempts.ToString(CultureInfo.InvariantCulture)
+            ["batch.memory_mib"] = MemoryMib.ToString(CultureInfo.InvariantCulture),
+            ["batch.timeout_seconds"] = TimeoutSeconds.ToString(CultureInfo.InvariantCulture),
+            ["batch.retry_attempts"] = RetryAttempts.ToString(CultureInfo.InvariantCulture),
+            ["batch.ephemeral_gib"] = (EphemeralStorageGib is { } eph && eph > 0 ? eph : TierSmallCeilingGib)
+                .ToString(CultureInfo.InvariantCulture)
         };
 
         return new GpSizingHint(
