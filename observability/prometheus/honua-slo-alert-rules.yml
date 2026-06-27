@@ -107,3 +107,52 @@ groups:
           summary: "Replication lag risk for {{ $labels.service }} in {{ $labels.environment }}"
           description: "Replication lag is above 300s. Durability and rollback confidence are degraded."
           runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      # --- In-band / GeoServices error alerts (audit S1, #113) ----------------
+      # These fire on 200+{error} envelopes the 5xx-only burn alerts above cannot
+      # see, so a release failing via GeoServices in-band errors is no longer
+      # invisible to the alert stack.
+      - alert: HonuaGeoServicesInBandErrorRate
+        expr: |
+          (honua:slo:geoservices_error_rate:ratio_5m > 0.010)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 10m
+        labels:
+          severity: critical
+          route: pagerduty-critical
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "GeoServices in-band error rate for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "GeoServices/ArcGIS REST 200+{error} envelopes are above the 1% budget. These return HTTP 200 and are invisible to 5xx-based SLOs; promotion should stop."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaEffectiveSloFastBurn
+        expr: |
+          (honua:slo:effective_burn_rate:5m > 14.4)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 5m
+        labels:
+          severity: critical
+          route: pagerduty-critical
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Fast effective SLO burn for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Error budget burn over 5m including in-band {error} envelopes is above the fast-burn threshold. Promotion should stop and rollback should be evaluated."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      - alert: HonuaEffectiveSloMediumBurn
+        expr: |
+          (honua:slo:effective_burn_rate:30m > 6.0)
+          unless on(service, environment) (honua:maintenance_window:active == 1)
+        for: 15m
+        labels:
+          severity: warning
+          route: slack-warning
+          pagerduty_service: honua-prod
+          slack_channel: "#honua-alerts"
+          email_route: sre-oncall@example.com
+        annotations:
+          summary: "Medium effective SLO burn for {{ $labels.service }} in {{ $labels.environment }}"
+          description: "Error budget burn over 30m including in-band {error} envelopes is above the warning threshold. Hold rollout progression until the burn rate stabilizes."
+          runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"

@@ -38,6 +38,7 @@ SLO_BURN_RATE_5M=1.4 \
 SLO_BURN_RATE_30M=0.9 \
 SLO_BURN_RATE_6H=0.5 \
 SLO_ENABLE_BURN_RATE_CHECKS=true \
+SLO_GEOSERVICES_ERROR_RATE_PERCENT=0.1 \
   "$REPO_ROOT/scripts/slo-release-gate.sh"
 
 echo "Validating SLO release gate failure path from direct env values"
@@ -50,6 +51,32 @@ if SLO_AVAILABILITY_PERCENT=97.8 \
   SLO_ENABLE_BURN_RATE_CHECKS=true \
   "$REPO_ROOT/scripts/slo-release-gate.sh"; then
   echo "[ERROR] SLO release gate unexpectedly passed failing metrics" >&2
+  exit 1
+fi
+
+echo "Validating SLO release gate fails on GeoServices in-band (200+{error}) breach"
+# All transport-level signals are healthy; only the in-band GeoServices error
+# rate breaches budget. The gate must still fail (audit S1, #113).
+if SLO_AVAILABILITY_PERCENT=99.9 \
+  SLO_ERROR_RATE_PERCENT=0.1 \
+  SLO_P95_MS=600 \
+  SLO_BURN_RATE_5M=0.5 \
+  SLO_BURN_RATE_30M=0.4 \
+  SLO_BURN_RATE_6H=0.3 \
+  SLO_ENABLE_BURN_RATE_CHECKS=true \
+  SLO_GEOSERVICES_ERROR_RATE_PERCENT=4.2 \
+  "$REPO_ROOT/scripts/slo-release-gate.sh"; then
+  echo "[ERROR] SLO release gate green-lit a release failing via 200+{error} envelopes" >&2
+  exit 1
+fi
+
+echo "Validating SLO release gate fails closed when GeoServices signal is required but absent"
+if SLO_AVAILABILITY_PERCENT=99.9 \
+  SLO_ERROR_RATE_PERCENT=0.1 \
+  SLO_P95_MS=600 \
+  SLO_REQUIRE_GEOSERVICES_CHECK=true \
+  "$REPO_ROOT/scripts/slo-release-gate.sh"; then
+  echo "[ERROR] SLO release gate passed despite a required-but-missing GeoServices signal" >&2
   exit 1
 fi
 
@@ -89,6 +116,7 @@ cat >"$WORKDIR/slo.json" <<'EOF'
   "availability_percent": 99.7,
   "error_rate_percent": 0.1,
   "p95_latency_ms": 640,
+  "geoservices_error_rate": 0.2,
   "burn_rates": {
     "5m": 1.1,
     "30m": 0.7,

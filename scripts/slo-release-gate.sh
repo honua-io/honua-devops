@@ -10,6 +10,15 @@ BURN_RATE_5M_MAX="${SLO_BURN_RATE_5M_MAX:-14.4}"
 BURN_RATE_30M_MAX="${SLO_BURN_RATE_30M_MAX:-6.0}"
 BURN_RATE_6H_MAX="${SLO_BURN_RATE_6H_MAX:-3.0}"
 ENABLE_BURN_RATE_CHECKS="${SLO_ENABLE_BURN_RATE_CHECKS:-auto}"
+# GeoServices/ArcGIS REST 200+{error} budget (audit S1, #113). These errors are
+# returned with an HTTP 2xx status and are invisible to the 5xx-derived error
+# rate / burn rate, so the gate would otherwise green-light a release that is
+# actively failing in-band.
+GEOSERVICES_ERROR_RATE_MAX="${SLO_GEOSERVICES_ERROR_RATE_MAX:-1.0}"
+ENABLE_GEOSERVICES_CHECK="${SLO_ENABLE_GEOSERVICES_CHECK:-auto}"
+# When the in-band signal is absent, fail closed only if explicitly required;
+# otherwise warn loudly so existing pipelines are not broken before they emit it.
+REQUIRE_GEOSERVICES_CHECK="${SLO_REQUIRE_GEOSERVICES_CHECK:-false}"
 GATE_MODE="${SLO_GATE_MODE:-pre-deploy}"
 
 AVAILABILITY="${SLO_AVAILABILITY_PERCENT:-}"
@@ -18,6 +27,7 @@ P95_MS="${SLO_P95_MS:-}"
 BURN_RATE_5M="${SLO_BURN_RATE_5M:-}"
 BURN_RATE_30M="${SLO_BURN_RATE_30M:-}"
 BURN_RATE_6H="${SLO_BURN_RATE_6H:-}"
+GEOSERVICES_ERROR_RATE="${SLO_GEOSERVICES_ERROR_RATE_PERCENT:-}"
 JSON_URL="${HONUA_SLO_JSON_URL:-}"
 MAINTENANCE_ACTIVE="${HONUA_SLO_MAINTENANCE_ACTIVE:-false}"
 MAINTENANCE_FILE="${HONUA_SLO_MAINTENANCE_FILE:-}"
@@ -122,6 +132,7 @@ if [[ -n "$JSON_URL" ]]; then
   BURN_RATE_5M="${BURN_RATE_5M:-$(extract_value "$tmp" '.burn_rate_5m // .burn_rates["5m"] // .slo.burn_rate_5m')}"
   BURN_RATE_30M="${BURN_RATE_30M:-$(extract_value "$tmp" '.burn_rate_30m // .burn_rates["30m"] // .slo.burn_rate_30m')}"
   BURN_RATE_6H="${BURN_RATE_6H:-$(extract_value "$tmp" '.burn_rate_6h // .burn_rates["6h"] // .slo.burn_rate_6h')}"
+  GEOSERVICES_ERROR_RATE="${GEOSERVICES_ERROR_RATE:-$(extract_value "$tmp" '.geoservices_error_rate_percent // .geoservices_error_rate // .slo.geoservices_error_rate // .inband_error_rate_percent // .inband_error_rate')}"
 fi
 
 if [[ "$ENABLE_BURN_RATE_CHECKS" == "auto" ]]; then
@@ -129,6 +140,14 @@ if [[ "$ENABLE_BURN_RATE_CHECKS" == "auto" ]]; then
     ENABLE_BURN_RATE_CHECKS=true
   else
     ENABLE_BURN_RATE_CHECKS=false
+  fi
+fi
+
+if [[ "$ENABLE_GEOSERVICES_CHECK" == "auto" ]]; then
+  if [[ -n "$GEOSERVICES_ERROR_RATE" ]]; then
+    ENABLE_GEOSERVICES_CHECK=true
+  else
+    ENABLE_GEOSERVICES_CHECK=false
   fi
 fi
 
@@ -198,6 +217,20 @@ else
   echo "[INFO] burn-rate checks disabled; provide SLO_BURN_RATE_* or burn_rates JSON keys to enable them."
 fi
 
+if [[ "$ENABLE_GEOSERVICES_CHECK" == "true" ]]; then
+  if float_le "$GEOSERVICES_ERROR_RATE" "$GEOSERVICES_ERROR_RATE_MAX"; then
+    echo "[PASS] geoservices_inband_error_rate ${GEOSERVICES_ERROR_RATE}% <= ${GEOSERVICES_ERROR_RATE_MAX}%"
+  else
+    echo "[FAIL] geoservices_inband_error_rate ${GEOSERVICES_ERROR_RATE}% > ${GEOSERVICES_ERROR_RATE_MAX}% (200+{error} envelopes invisible to 5xx metrics)"
+    failures=$((failures + 1))
+  fi
+elif is_truthy "$REQUIRE_GEOSERVICES_CHECK"; then
+  echo "[FAIL] GeoServices in-band error rate required but not provided. Set SLO_GEOSERVICES_ERROR_RATE_PERCENT or include geoservices_error_rate in HONUA_SLO_JSON_URL."
+  failures=$((failures + 1))
+else
+  echo "[WARN] GeoServices in-band error rate not provided; the gate is blind to 200+{error} failures. Provide SLO_GEOSERVICES_ERROR_RATE_PERCENT (or geoservices_error_rate JSON key), or set SLO_REQUIRE_GEOSERVICES_CHECK=true to fail closed."
+fi
+
 availability_budget_remaining_ratio="$(awk -v actual="$AVAILABILITY" -v target="$AVAILABILITY_MIN" '
   BEGIN {
     budget = 100 - target;
@@ -261,6 +294,17 @@ echo "[INFO] availability_error_budget_remaining_ratio=${availability_budget_rem
 echo "[INFO] error_rate_budget_remaining_ratio=${error_budget_remaining_ratio}"
 echo "[INFO] latency_headroom_ratio=${latency_headroom_ratio}"
 echo "[INFO] overall_error_budget_remaining_ratio=${overall_error_budget_remaining_ratio}"
+if [[ "$ENABLE_GEOSERVICES_CHECK" == "true" ]]; then
+  geoservices_budget_remaining_ratio="$(awk -v actual="$GEOSERVICES_ERROR_RATE" -v threshold="$GEOSERVICES_ERROR_RATE_MAX" '
+    BEGIN {
+      if (threshold <= 0) { print "1.0000"; exit 0; }
+      remaining = 1 - (actual / threshold);
+      if (remaining < 0) { remaining = 0; }
+      if (remaining > 1) { remaining = 1; }
+      printf "%.4f", remaining;
+    }')"
+  echo "[INFO] geoservices_inband_error_budget_remaining_ratio=${geoservices_budget_remaining_ratio}"
+fi
 
 if [[ "$failures" -gt 0 ]]; then
   print_alert_routes
