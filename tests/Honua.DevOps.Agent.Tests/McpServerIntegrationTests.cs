@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -217,6 +218,58 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         string[] exposedNames = [.. tools.Select(tool => tool.Name).Order()];
         Assert.Equal(ExpectedToolNames.Order().ToArray(), exposedNames);
         Assert.All(tools, tool => Assert.False(string.IsNullOrWhiteSpace(tool.Description)));
+    }
+
+    [Fact]
+    public async Task QuickstartDocs_ListEveryExposedToolAndTheCorrectCount()
+    {
+        // Guards against doc drift: the "Exposed tools" list and the tools=<n>
+        // banner in docs/QUICKSTART-MCP.md must stay in lockstep with the tools
+        // the MCP server actually exposes (i.e. CapabilityToolset registrations).
+        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(2));
+        IList<McpClientTool> tools = await fixture.Client.ListToolsAsync(cancellationToken: cts.Token);
+        HashSet<string> exposedNames = [.. tools.Select(tool => tool.Name)];
+
+        string repoRoot = FindRepoRoot();
+        string quickstart = File.ReadAllText(Path.Combine(repoRoot, "docs", "QUICKSTART-MCP.md"));
+
+        // Scope to the "## Exposed tools" section so prose elsewhere can't satisfy the check.
+        Match section = Regex.Match(
+            quickstart,
+            @"## Exposed tools.*?(?=\n## |\z)",
+            RegexOptions.Singleline);
+        Assert.True(section.Success, "docs/QUICKSTART-MCP.md is missing an '## Exposed tools' section.");
+
+        // Tool names are the only backtick tokens in that section containing an underscore
+        // (excludes prose tokens like `plan`, `pr-first`, `CapabilityToolset`).
+        HashSet<string> documentedNames =
+        [
+            .. Regex.Matches(section.Value, @"`([a-z][a-z0-9_]*_[a-z0-9_]+)`")
+                .Select(match => match.Groups[1].Value)
+        ];
+
+        Assert.Equal(exposedNames.OrderBy(name => name), documentedNames.OrderBy(name => name));
+
+        // The documented count/banner must match the live tool count.
+        Assert.Contains($"tools={exposedNames.Count}", quickstart);
+        Assert.Contains($"{exposedNames.Count} operator tools", quickstart);
+    }
+
+    private static string FindRepoRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "docs", "QUICKSTART-MCP.md")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException(
+            $"Could not locate repo root (docs/QUICKSTART-MCP.md) from {AppContext.BaseDirectory}.");
     }
 
     [Fact]

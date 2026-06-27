@@ -2,7 +2,7 @@
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 24 operator tools the interactive agent
+MCP-capable host) can call the same 34 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 In MCP mode the client LLM does the reasoning, so **no model provider
@@ -40,12 +40,12 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 24 tools), or run the
+Verify with `claude mcp list` (the server should report 34 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --mcp
-# stderr: honua-devops MCP stdio server ready (tools=24, mode=plan, tier=plan, approval=pr-first, ...)
+# stderr: honua-devops MCP stdio server ready (tools=34, mode=plan, tier=plan, approval=pr-first, ...)
 ```
 
 ## Register with Codex CLI
@@ -120,18 +120,32 @@ bottlenecks) with prioritized remediation and validation checks.
 
 ## Exposed tools (1:1 with the interactive agent)
 
+All 34 tools registered by `CapabilityToolset` (the
+`ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
+live MCP surface 1:1):
+
 `describe_environment`, `find_recent_operations`, `analyze_logs`,
 `analyze_metrics`, `tune_performance`, `troubleshoot_incident`,
 `plan_server_upgrade`, `plan_gitops_engine`,
 `generate_metadata_release_changeset`,
-`explain_metadata_release_changeset`, `deploy_service_gitops`,
-`analyze_customer_requirements`, `recommend_deployment_topology`,
-`triage_support_ticket`, `process_pending_tickets`,
-`get_support_ticket_console_view`, `honua_diagnose`,
-`honua_explain_slow_queries`, `honua_runbook_execute`,
-`honua_auto_remediation_plan`, `create_gitops_proposal`,
-`get_gitops_proposal`, `get_devops_operation_status`,
-`build_ai_devops_brief`, `explain_release_package`.
+`explain_metadata_release_changeset`, `plan_metadata_release_gitops`,
+`deploy_service_gitops`, `rollback_gitops_operation`,
+`inspect_metadata_release`, `analyze_customer_requirements`,
+`recommend_deployment_topology`, `triage_support_ticket`,
+`process_pending_tickets`, `get_support_ticket_console_view`,
+`honua_diagnose`, `honua_explain_slow_queries`, `honua_runbook_execute`,
+`honua_auto_remediation_plan`, `plan_deliverable_lifecycle`,
+`create_gitops_proposal`, `plan_gp_substrate`, `plan_gp_job_sizing`,
+`plan_azure_gp_substrate`, `plan_azure_gp_job_sizing`,
+`get_gitops_proposal`, `record_gitops_proposal_decision`,
+`get_devops_operation_status`, `build_ai_devops_brief`,
+`explain_release_package`.
+
+> The mutating/decision tools `deploy_service_gitops`,
+> `rollback_gitops_operation`, and `record_gitops_proposal_decision` stay behind
+> the same execution-mode/tier and approval gates as the interactive agent (see
+> "Safety model over MCP" below); in the default `plan` + `pr-first` posture they
+> return an approval-required projection rather than acting.
 
 ## Safety model over MCP
 
