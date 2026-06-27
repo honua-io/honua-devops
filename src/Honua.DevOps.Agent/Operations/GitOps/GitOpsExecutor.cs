@@ -129,7 +129,7 @@ internal sealed class GitOpsExecutor(
 
         // Read-only validation against RequiredChecks: preflight + plan.
         BackendCallResult preflight = await _gateway.RequestDeployPreflightAsync(includeDiagnostics: true, cancellationToken);
-        steps.Add(ToStep("deploy-preflight", preflight, mutatesState: false));
+        steps.Add(OperationBackendStep.From("deploy-preflight", preflight, mutatesState: false));
 
         BackendCallResult plan = await _gateway.PlanDeployOperationAsync(
             _runtime.DeployTargetId!,
@@ -137,7 +137,7 @@ internal sealed class GitOpsExecutor(
             currentRevision,
             parameters,
             cancellationToken);
-        steps.Add(ToStep("deploy-plan", plan, mutatesState: false));
+        steps.Add(OperationBackendStep.From("deploy-plan", plan, mutatesState: false));
 
         // Create the durable operation with submitImmediately=false: this records a durable
         // server operation (a real write) but executes NOTHING. Submission is a separate,
@@ -154,7 +154,7 @@ internal sealed class GitOpsExecutor(
             parameters,
             cancellationToken);
         bool operationRecorded = created.CallResult.IsSuccess && created.Payload is not null;
-        steps.Add(ToStep("deploy-operation-create", created.CallResult, mutatesState: operationRecorded));
+        steps.Add(OperationBackendStep.From("deploy-operation-create", created.CallResult, mutatesState: operationRecorded));
 
         string? operationId = created.Payload is null ? null : DeployOperationReader.ReadOperationId(created.Payload.RootElement);
         string? serverStatus = created.Payload is null ? null : DeployOperationReader.ReadStatus(created.Payload.RootElement);
@@ -218,7 +218,7 @@ internal sealed class GitOpsExecutor(
         CancellationToken cancellationToken)
     {
         using BackendJsonResult submitted = await _gateway.SubmitDeployOperationJsonAsync(operationId, reason, cancellationToken);
-        steps.Add(ToStep("deploy-operation-submit", submitted.CallResult, mutatesState: submitted.CallResult.IsSuccess));
+        steps.Add(OperationBackendStep.From("deploy-operation-submit", submitted.CallResult, mutatesState: submitted.CallResult.IsSuccess));
 
         if (!submitted.CallResult.IsSuccess)
         {
@@ -268,7 +268,7 @@ internal sealed class GitOpsExecutor(
 
             attempt++;
             using BackendJsonResult polled = await _gateway.GetDeployOperationJsonAsync(operationId, cancellationToken);
-            steps.Add(ToStep($"deploy-operation-poll-{attempt}", polled.CallResult, mutatesState: false));
+            steps.Add(OperationBackendStep.From($"deploy-operation-poll-{attempt}", polled.CallResult, mutatesState: false));
             if (polled.CallResult.IsSuccess && polled.Payload is not null)
             {
                 status = DeployOperationReader.ReadStatus(polled.Payload.RootElement);
@@ -320,13 +320,4 @@ internal sealed class GitOpsExecutor(
             Findings: findings,
             BlockingReasons: []);
     }
-
-    internal static OperationBackendStep ToStep(string name, BackendCallResult result, bool mutatesState)
-        => new(
-            Name: name,
-            Endpoint: result.Endpoint,
-            Success: result.IsSuccess,
-            Detail: result.Detail,
-            PayloadPreview: result.PayloadPreview,
-            MutatesState: mutatesState);
 }
