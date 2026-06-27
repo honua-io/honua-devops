@@ -276,6 +276,59 @@ internal sealed class ConsoleOperationBridge(
         return EnrichGpProposal(proposal, adapter, substrateFindings);
     }
 
+    [Description("Plan provisioning/updating the durable PER-ENVIRONMENT AZURE geoprocessing (GP) substrate and record it as a PLAN-FIRST, advisory deploy-control proposal (submitImmediately=false; never executes). The Azure equivalent of plan_gp_substrate. The substrate is the Azure Batch account, a SINGLE worker pool (VM size + node ceiling), the user-assigned task identity, the ACR holding the GDAL worker image, and the output blob container. It is provisioned RARELY (when GP capability is added/updated in an env), NOT per job. UNLIKE AWS, Azure sizes per-POOL and the MVP is a SINGLE pool, so there is NO tier selector. Per-env config: poolVmSize (e.g. Standard_D4s_v5, shared by the pool), maxNodes (pool autoscale ceiling; 0=>8), image (empty=ACR default), acrName, createWorkerGdalAcr. The substrate exposes OUTPUTS the server binds to (gp_batch_account_url, gp_pool_id, gp_batch_account_id, gp_task_identity_id, gp_task_identity_principal_id, gp_acr_login_server, gp_output_container_url, gp_control_plane_backend_name=honua-azure-batch) — never input-variable names. Per-JOB sizing (task timeout/retry/image) is a task-add-time runtime concern with zero infra change; use plan_azure_gp_job_sizing for that. The real terraform apply stays behind the agent's execution/approval gates exactly like the other runtime adapters.")]
+    public async Task<OperationResponse> PlanAzureGpSubstrateAsync(
+        string service,
+        string environmentsCsv,
+        string poolVmSize,
+        string image,
+        string acrName,
+        int maxNodes,
+        bool createWorkerGdalAcr,
+        string owner,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedService = DeploymentInputs.ValidateServiceName(service);
+        string[] environments = DeploymentInputs.ParseEnvironments(environmentsCsv, runtime.AllowedEnvironments);
+        string normalizedOwner = DeploymentInputs.SanitizeFreeText(owner, "unassigned");
+
+        AzureGpSubstrateConfig substrate = new(
+            Image: string.IsNullOrWhiteSpace(image) ? null : image.Trim(),
+            AcrName: string.IsNullOrWhiteSpace(acrName) ? string.Empty : acrName.Trim(),
+            PoolVmSize: string.IsNullOrWhiteSpace(poolVmSize) ? "Standard_D4s_v5" : poolVmSize.Trim(),
+            MaxNodes: maxNodes <= 0 ? 8 : maxNodes,
+            CreateWorkerGdalAcr: createWorkerGdalAcr);
+
+        AzureGpRuntimeAdapter adapter = new(substrate);
+        IReadOnlyList<AzureGpSubstrateVar> substrateVars = substrate.ToSubstrateVars();
+
+        List<string> substrateFindings =
+        [
+            "Per-ENV Azure GP substrate provision (rare, GitOps-gated). Per-job sizing is a task-add-time runtime concern, NOT provisioned here.",
+            "Azure sizes per-POOL; the MVP is a SINGLE pool, so there is NO tier selection (deferred fast-follow).",
+            $"honua-iac azure-cert substrate passthrough inputs (the stack hardcodes {AzureGpSubstrateConfig.EnableVar}=true):",
+            .. substrateVars.Select(v => $"  {v.Name} = {v.Value}"),
+            "Substrate OUTPUTS the server binds to (not input-variable names):",
+            .. AzureGpSubstrateOutputs.All.Select(output => $"  output {output}")
+        ];
+
+        // Record the advisory proposal through the SAME plan-first, submitImmediately=false
+        // deploy-control path the GitOps proposals use, then enrich it with the substrate step
+        // plan + the per-env substrate var mapping and OUTPUT bindings. action=apply because the
+        // proposal is a (gated) terraform apply of the durable substrate stack.
+        string changeSummary = $"Azure GP per-env substrate provision: {AzureGpSubstrateDescriptor(substrate)}";
+        OperationResponse proposal = await CreateGitOpsProposalAsync(
+            normalizedService,
+            string.Join(",", environments),
+            revision: "HEAD",
+            action: "apply",
+            changeSummary: changeSummary,
+            owner: normalizedOwner,
+            cancellationToken);
+
+        return EnrichAzureGpProposal(proposal, adapter, substrateFindings);
+    }
+
     [Description("Compute the runtime SIZING HINT for a single geoprocessing (GP) job: select the durable job-definition tier (s/m/l/xl = ephemeralStorageGib <=20/<=50/<=100/<=200) from the per-env substrate's pre-provisioned pool and produce the AWS Batch SubmitJob overrides (loose batch.* params: batch.vcpus, batch.memory_mib, batch.timeout_seconds, batch.retry_attempts, batch.ephemeral_gib) the server applies at runtime. This is a PURE PLANNING AID: it calls NO terraform, mints NO infra, and records NO deploy-control operation — per-job sizing is a SubmitJob-time concern with zero infra change. A request above 200 GiB ephemeral storage exceeds the Fargate ceiling / tier pool and is reported as an error. gpuCount>0 is surfaced as an advisory note (the default Fargate-Spot substrate has no GPU tiers; GPU needs an opt-in GPU compute-env), not a hard reject. Returns the selected tier token, the gp_job_definition_arns.<tier> output path the server resolves, and the SubmitJob override map.")]
     public Task<OperationResponse> PlanGpJobSizingAsync(
         int vcpus,
@@ -326,6 +379,59 @@ internal sealed class ConsoleOperationBridge(
                 "gp-sizing-no-terraform",
                 "gp-sizing-no-operation-recorded",
                 $"gp-sizing-tier:{hint.TierToken ?? "none"}"
+            ],
+            Risks:
+            [
+                .. hint.Errors.Select(error => $"Rejected: {error}"),
+                .. hint.Notes.Select(note => $"Advisory: {note}")
+            ]);
+
+        return Task.FromResult(response);
+    }
+
+    [Description("Compute the runtime SIZING HINT for a single AZURE geoprocessing (GP) job. The Azure equivalent of plan_gp_job_sizing, but SIMPLER: Azure sizes per-POOL and the MVP is a SINGLE pool, so there is NO tier selection and NO vCPU/memory override (those are fixed by the provisioned pool). The hint sets the constant azure.batch.pool_id (resolve from the substrate output gp_pool_id; pass poolId to embed it) plus the narrow per-task overrides Azure Batch supports: azure.batch.task_timeout_minutes, azure.batch.max_task_retry_count, and optionally azure.batch.container_image. PURE PLANNING AID: NO terraform, NO infra, NO deploy-control operation recorded — per-job sizing is a task-add-time concern with zero infra change. task_timeout_minutes<=0 or max_task_retry_count outside 0..100 is an error. Returns the azure.batch.* override map the server applies at task-add time.")]
+    public Task<OperationResponse> PlanAzureGpJobSizingAsync(
+        int taskTimeoutMinutes,
+        int maxTaskRetryCount,
+        string containerImage,
+        string poolId,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        AzureGpResourceProfile profile = new(
+            TaskTimeoutMinutes: taskTimeoutMinutes <= 0 ? 60 : taskTimeoutMinutes,
+            MaxTaskRetryCount: maxTaskRetryCount < 0 ? 1 : maxTaskRetryCount,
+            ContainerImage: string.IsNullOrWhiteSpace(containerImage) ? null : containerImage.Trim());
+
+        AzureGpSizingHint hint = profile.ToSizingHint(string.IsNullOrWhiteSpace(poolId) ? null : poolId.Trim());
+
+        List<string> findings =
+        [
+            "Azure GP job sizing hint (runtime task-add aid; NO terraform, NO infra, NO deploy-control operation).",
+            "Single-pool MVP: no tier selection, no vCPU/memory override (fixed by the provisioned pool).",
+            $"Single pool id (azure.batch.pool_id): {(hint.PoolId ?? "unset — resolve from substrate output " + AzureGpSubstrateOutputs.PoolId)}.",
+            "Per-task overrides (loose azure.batch.* params the server consumes):",
+            .. hint.SubmitTaskOverrides.Select(kvp => $"  {kvp.Key} = {kvp.Value}"),
+            .. hint.Notes.Select(note => $"Note: {note}")
+        ];
+
+        OperationResponse response = new(
+            Status: hint.IsValid ? "azure-gp-job-sizing" : "azure-gp-job-sizing-rejected",
+            Summary: hint.IsValid
+                ? $"Azure GP job sizing: single pool `{hint.PoolId ?? "(default)"}` + task overrides (task_timeout_minutes={profile.TaskTimeoutMinutes}, max_task_retry_count={profile.MaxTaskRetryCount})."
+                : $"Azure GP job sizing rejected: {string.Join("; ", hint.Errors)}",
+            Findings: findings,
+            Actions:
+            [
+                "Sizing is a pure runtime aid: the server applies the pool id + task overrides at Azure Batch task-add time with zero infra change.",
+                "Resolve azure.batch.pool_id from the substrate output gp_pool_id so the task targets the provisioned single pool."
+            ],
+            ValidationChecks:
+            [
+                hint.IsValid ? "azure-gp-job-sizing-valid:true" : "azure-gp-job-sizing-valid:false",
+                "azure-gp-sizing-no-terraform",
+                "azure-gp-sizing-no-operation-recorded",
+                "azure-gp-sizing-single-pool-no-tier"
             ],
             Risks:
             [
@@ -1404,6 +1510,86 @@ internal sealed class ConsoleOperationBridge(
         return proposal with
         {
             Summary = $"GP per-env substrate provision proposal ({adapter.Capability.Target}) for `{adapter.Substrate.WorkloadId}` — {(planFirst ? "plan-first, advisory" : "gated execute")}.",
+            Findings = findings,
+            ValidationChecks = checks,
+            Risks = risks
+        };
+    }
+
+    private static string AzureGpSubstrateDescriptor(AzureGpSubstrateConfig substrate)
+    {
+        // Compact, deterministic descriptor of the Azure substrate knobs for the proposal summary.
+        // Includes the image/ACR even though they are not terraform passthrough vars of the
+        // azure-cert stack (the module owns the structured image / derives the ACR name): they
+        // still describe the substrate the proposal stands up.
+        return string.Join(
+            ", ",
+            $"{AzureGpSubstrateConfig.PoolVmSizeVar}={substrate.PoolVmSize}",
+            $"{AzureGpSubstrateConfig.MaxNodesVar}={substrate.MaxNodes}",
+            $"worker_image={(string.IsNullOrWhiteSpace(substrate.Image) ? "(acr-default)" : substrate.Image)}",
+            $"acr={(string.IsNullOrWhiteSpace(substrate.AcrName) ? "(module-derived)" : substrate.AcrName)}");
+    }
+
+    // Build the plan-first Azure GP substrate step plan WITHOUT any backend call, so the terraform
+    // commands shown are exactly what a gated execute would run (plan in plan mode, apply when
+    // gated) against the per-env substrate stack.
+    private RuntimeAdapterWorkflow BuildAzureGpWorkflow(AzureGpRuntimeAdapter adapter)
+    {
+        RuntimeAdapterRequest request = new(
+            Service: "geoprocessing",
+            Environments: runtime.AllowedEnvironments,
+            Revision: "HEAD",
+            Action: "apply",
+            ChangeSummary: "azure gp per-env substrate provision",
+            GitOpsTool: runtime.GitOpsTool,
+            TerraformRepository: runtime.TerraformRepository,
+            TerraformRef: runtime.TerraformRef,
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            // PLAN-FIRST: DryRun is true unless the agent is in execute mode, so the
+            // apply-infra step degrades to terraform plan and mutates nothing by default.
+            DryRun: runtime.ExecutionMode != ExecutionMode.Execute,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        return adapter.BuildWorkflow(request);
+    }
+
+    private OperationResponse EnrichAzureGpProposal(
+        OperationResponse proposal,
+        AzureGpRuntimeAdapter adapter,
+        IReadOnlyList<string> substrateFindings)
+    {
+        RuntimeAdapterWorkflow workflow = BuildAzureGpWorkflow(adapter);
+        bool planFirst = runtime.ExecutionMode != ExecutionMode.Execute;
+
+        List<string> findings =
+        [
+            .. proposal.Findings,
+            $"Azure GP runtime adapter target: {adapter.Capability.Target} ({adapter.Capability.Family}).",
+            $"Azure GP substrate provision mode: {(planFirst ? "plan-first (terraform plan only; provisions nothing)" : "execute (gated terraform apply)")}.",
+            .. substrateFindings,
+            $"Validate step: {workflow.Validate.Summary}",
+            $"Plan-infra command: {workflow.PlanInfrastructure.SuggestedCommands.FirstOrDefault() ?? "(none)"}",
+            $"Apply-infra step: {workflow.ApplyInfrastructure.Summary}"
+        ];
+
+        List<string> checks =
+        [
+            .. proposal.ValidationChecks,
+            .. workflow.Validate.ValidationChecks,
+            .. workflow.PlanInfrastructure.ValidationChecks,
+            planFirst ? "azure-gp-apply-mode:plan-only" : "azure-gp-apply-mode:write-enabled-gated"
+        ];
+
+        List<string> risks =
+        [
+            .. proposal.Risks,
+            .. workflow.PlanInfrastructure.Risks,
+            .. workflow.ApplyInfrastructure.Risks
+        ];
+
+        return proposal with
+        {
+            Summary = $"Azure GP per-env substrate provision proposal ({adapter.Capability.Target}) for `{adapter.Substrate.WorkloadId}` — {(planFirst ? "plan-first, advisory" : "gated execute")}.",
             Findings = findings,
             ValidationChecks = checks,
             Risks = risks
