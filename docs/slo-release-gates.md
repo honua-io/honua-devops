@@ -9,6 +9,14 @@ Required metrics:
 - Error rate percentage
 - P95 latency in milliseconds
 - Burn rate over `5m`, `30m`, and `6h` when burn-rate checks are enabled
+- GeoServices in-band error rate (200+`{error}` envelopes) when available
+
+> The availability/error-rate/burn-rate signals are all derived from HTTP `5xx`.
+> A GeoServices/ArcGIS REST error is returned with an HTTP `200` and an `{error}`
+> body for Esri compatibility, so it is invisible to those signals. The gate
+> would otherwise green-light a release that is actively failing in-band. The
+> GeoServices in-band error-rate check closes that gap (server metric
+> `honua_geoservices_error_total` / `honua_request_error_total{in_band="true"}`).
 
 ## Thresholds
 
@@ -18,6 +26,7 @@ Required metrics:
 - Burn rate `5m`: `<= 14.4`
 - Burn rate `30m`: `<= 6.0`
 - Burn rate `6h`: `<= 3.0`
+- GeoServices in-band error rate: `<= 1.0` (`SLO_GEOSERVICES_ERROR_RATE_MAX`)
 
 The gate script now also prints:
 
@@ -56,8 +65,14 @@ Accepted JSON keys (first match wins):
 - burn rate `5m`: `burn_rate_5m`, `burn_rates["5m"]`, `slo.burn_rate_5m`
 - burn rate `30m`: `burn_rate_30m`, `burn_rates["30m"]`, `slo.burn_rate_30m`
 - burn rate `6h`: `burn_rate_6h`, `burn_rates["6h"]`, `slo.burn_rate_6h`
+- GeoServices in-band error rate: `geoservices_error_rate_percent`, `geoservices_error_rate`, `slo.geoservices_error_rate`, `inband_error_rate_percent`, `inband_error_rate`
 
 If burn-rate values are absent, the script stays backward-compatible and disables burn-rate checks unless `SLO_ENABLE_BURN_RATE_CHECKS=true`.
+
+The GeoServices in-band error-rate check enforces automatically when a value is
+provided (`SLO_GEOSERVICES_ERROR_RATE_PERCENT` or a JSON key above). When the
+value is absent the gate prints a loud `[WARN]` that it is blind to 200+`{error}`
+failures; set `SLO_REQUIRE_GEOSERVICES_CHECK=true` to fail closed instead.
 
 ## Maintenance Suppression
 
@@ -100,11 +115,20 @@ Exit codes:
 The Prometheus alert rules include:
 
 - multi-window burn-rate alerts
+- in-band / GeoServices error alerts (`HonuaGeoServicesInBandErrorRate`,
+  `HonuaEffectiveSloFastBurn`, `HonuaEffectiveSloMediumBurn`) that fire on
+  200+`{error}` envelopes the 5xx-only alerts cannot see
 - availability and latency violation alerts
 - durability alerts for backup success and replication lag
 - runbook links in annotations
 - maintenance suppression via `honua:maintenance_window:active`
 - route labels for PagerDuty, Slack, and email
+
+The recording rules add the in-band signal:
+`honua:slo:inband_error_rate:ratio_5m`,
+`honua:slo:geoservices_error_rate:ratio_5m`,
+`honua:slo:effective_error_rate:ratio_5m` (5xx + in-band), and the matching
+`honua:slo:effective_burn_rate:{5m,30m,6h}`.
 
 ## CI / PR Checks
 

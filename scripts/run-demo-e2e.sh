@@ -196,6 +196,13 @@ http_probe() {
 code_of() { printf '%s' "$1" | awk '{print $1}'; }
 ctype_of() { printf '%s' "$1" | cut -d' ' -f2- ; }
 
+# True (0) when a JSON body carries a GeoServices/ArcGIS REST {error} envelope.
+# These are returned under an HTTP 200, so checking the status alone treats a
+# failing operation as healthy (audit S1, #113).
+has_error_envelope() {
+  python3 -c "import json,sys;d=json.load(open('$1'));sys.exit(0 if isinstance(d,dict) and d.get('error') is not None else 1)" 2>/dev/null
+}
+
 # ===========================================================================
 # WORKFLOW: Demo A — AI GIS workflow (read path + gated write/AI/export path)
 # ===========================================================================
@@ -205,7 +212,9 @@ demo_a() {
   # --- A0: service reachable (catalog) ---------------------------------------
   local rest_body="$OUTPUT_DIR/logs/rest-info.json"
   local r; r="$(http_probe "$rest_body" "$BASE_URL/rest/info?f=json")"
-  if [[ "$(code_of "$r")" == "200" ]]; then
+  if [[ "$(code_of "$r")" == "200" ]] && has_error_envelope "$rest_body"; then
+    record "demoA.catalog" "Demo A" FAIL http "rest/info returned HTTP 200 carrying an {error} envelope (in-band failure)"
+  elif [[ "$(code_of "$r")" == "200" ]]; then
     local ver; ver="$(python3 -c "import json,sys;print(json.load(open('$rest_body')).get('currentVersion','?'))" 2>/dev/null || echo '?')"
     record "demoA.catalog" "Demo A" PASS http "rest/info 200, currentVersion=$ver"
   else

@@ -68,6 +68,10 @@ BASE_URL="${HONUA_PROBE_BASE_URL:-}"
 READINESS_PATH="${HONUA_PROBE_READINESS_PATH:-/healthz/ready}"
 LIVENESS_PATH="${HONUA_PROBE_LIVENESS_PATH:-/healthz/live}"
 VERSION_PATH="${HONUA_PROBE_VERSION_PATH:-/api/v1/admin/version}"
+# Optional GeoServices/ArcGIS REST endpoint to probe for in-band 200+{error}
+# envelopes (audit S1, #113). A 200 carrying an {error} member is a failure that
+# a status-only health check cannot see.
+GEOSERVICES_PROBE_PATH="${HONUA_PROBE_GEOSERVICES_PATH:-}"
 HTTP_TIMEOUT="${HONUA_PROBE_TIMEOUT_SECONDS:-20}"
 
 # Optional Helm chart source (path or URL to a Chart.yaml). Empty => BLOCKED.
@@ -286,6 +290,26 @@ http_status() {
     --max-time "$HTTP_TIMEOUT" "$url" 2>/dev/null || echo "000"
 }
 
+# GET a URL, writing the response body to $2 and echoing the HTTP status code.
+http_get() {
+  local url="$1" out="$2"
+  curl --silent --show-error --output "$out" --write-out '%{http_code}' \
+    --max-time "$HTTP_TIMEOUT" "$url" 2>/dev/null || echo "000"
+}
+
+# True (0) when a response body carries a GeoServices/ArcGIS REST {error}
+# envelope. Such bodies are returned with an HTTP 200, so a status-only check
+# treats a failing operation as healthy (audit S1, #113).
+body_has_error_envelope() {
+  local file="$1"
+  [[ -s "$file" ]] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    jq -e 'objects | has("error") and (.error != null)' "$file" >/dev/null 2>&1
+  else
+    grep -qE '"error"[[:space:]]*:[[:space:]]*[\{"0-9]' "$file"
+  fi
+}
+
 probe_server_health() {
   if [[ -z "$BASE_URL" ]]; then
     emit "server-health" "server" "blocked" \
@@ -295,15 +319,58 @@ probe_server_health() {
   fi
   require_command curl
   local base="${BASE_URL%/}"
-  local ready; ready="$(http_status "${base}${READINESS_PATH}")"
-  local live;  live="$(http_status "${base}${LIVENESS_PATH}")"
-  if [[ "$ready" == "200" && "$live" == "200" ]]; then
+  local ready_body live_body
+  ready_body="$(mktemp)"; live_body="$(mktemp)"
+  local ready live
+  ready="$(http_get "${base}${READINESS_PATH}" "$ready_body")"
+  live="$(http_get "${base}${LIVENESS_PATH}" "$live_body")"
+
+  # A 200 that carries an {error} envelope is a failure invisible to status-only
+  # checks; inspect the body, not just the code.
+  local inband=""
+  if [[ "$ready" == "200" ]] && body_has_error_envelope "$ready_body"; then
+    inband="readiness"
+  elif [[ "$live" == "200" ]] && body_has_error_envelope "$live_body"; then
+    inband="liveness"
+  fi
+  rm -f "$ready_body" "$live_body"
+
+  if [[ -n "$inband" ]]; then
+    emit "server-health" "server" "failed" \
+      "${base}: ${inband} returned HTTP 200 carrying an {error} envelope (in-band failure)."
+  elif [[ "$ready" == "200" && "$live" == "200" ]]; then
     emit "server-health" "server" "passed" \
       "${base}: readiness=${ready} liveness=${live} against a live target."
   else
     emit "server-health" "server" "failed" \
       "${base}: readiness=${ready} liveness=${live} (expected 200/200)."
   fi
+
+  probe_geoservices_inband "$base"
+}
+
+# Probe an optional GeoServices endpoint and fail a 200+{error} envelope.
+probe_geoservices_inband() {
+  local base="$1"
+  if [[ -z "$GEOSERVICES_PROBE_PATH" ]]; then
+    emit "geoservices-inband" "server" "blocked" \
+      "No GeoServices probe path configured; cannot check for 200+{error} envelopes." \
+      "HONUA_PROBE_GEOSERVICES_PATH (e.g. a /rest/services/.../FeatureServer/0/query?f=json URL path)"
+    return
+  fi
+  local body; body="$(mktemp)"
+  local code; code="$(http_get "${base}${GEOSERVICES_PROBE_PATH}" "$body")"
+  if [[ "$code" == "200" ]] && body_has_error_envelope "$body"; then
+    emit "geoservices-inband" "server" "failed" \
+      "${base}${GEOSERVICES_PROBE_PATH}: HTTP 200 with an {error} envelope (in-band GeoServices failure)."
+  elif [[ "$code" == "200" ]]; then
+    emit "geoservices-inband" "server" "passed" \
+      "${base}${GEOSERVICES_PROBE_PATH}: HTTP 200 with no {error} envelope."
+  else
+    emit "geoservices-inband" "server" "failed" \
+      "${base}${GEOSERVICES_PROBE_PATH}: HTTP ${code} (expected 200)."
+  fi
+  rm -f "$body"
 }
 
 # --- Probe: helm-metadata ----------------------------------------------------

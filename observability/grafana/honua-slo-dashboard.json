@@ -209,6 +209,50 @@
         "x": 12,
         "y": 16
       }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "GeoServices / In-band Error Rate (200+{error})",
+      "description": "Errors delivered with a 2xx transport status (GeoServices/ArcGIS REST {error} envelopes) plus the effective error rate (transport 5xx + in-band). These are invisible to the 5xx-only Availability and Burn Rate panels above.",
+      "targets": [
+        {
+          "expr": "honua:slo:geoservices_error_rate:ratio_5m",
+          "legendFormat": "geoservices {{service}} {{environment}}"
+        },
+        {
+          "expr": "honua:slo:inband_error_rate:ratio_5m",
+          "legendFormat": "in-band {{service}} {{environment}}"
+        },
+        {
+          "expr": "honua:slo:effective_error_rate:ratio_5m",
+          "legendFormat": "effective {{service}} {{environment}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      }
     }
   ]
 }

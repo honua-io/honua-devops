@@ -126,6 +126,108 @@ groups:
           )
           /
           0.010
+      # --- In-band / GeoServices error signal (audit S1, #113) ----------------
+      # honua_http_requests_total{status_code=~"5.."} is blind to a GeoServices
+      # 200+{error} envelope: the transport status reads 200 so it counts as a
+      # success. honua_request_error_total{in_band="true"} and
+      # honua_geoservices_error_total (server #2243) expose those errors so the
+      # SLO stack, alerts, dashboard, and release gate can see them.
+      - record: honua:slo:inband_error_rate:ratio_5m
+        expr: |
+          sum by (service, environment) (
+            rate(honua_request_error_total{in_band="true"}[5m])
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[5m])
+            ),
+            0.001
+          )
+      - record: honua:slo:geoservices_error_rate:ratio_5m
+        expr: |
+          sum by (service, environment) (
+            rate(honua_geoservices_error_total[5m])
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[5m])
+            ),
+            0.001
+          )
+      # Effective error rate = transport 5xx PLUS in-band {error} envelopes. This
+      # is the release-gating error signal; a 200-error storm now surfaces here.
+      - record: honua:slo:effective_error_rate:ratio_5m
+        expr: |
+          (
+            sum by (service, environment) (
+              rate(honua_http_requests_total{status_code=~"5.."}[5m])
+            )
+            +
+            sum by (service, environment) (
+              rate(honua_request_error_total{in_band="true"}[5m])
+            )
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[5m])
+            ),
+            0.001
+          )
+      - record: honua:slo:geoservices_error_rate:error_budget_remaining_ratio
+        expr: |
+          clamp_min(
+            clamp_max(
+              1,
+              1 - (honua:slo:geoservices_error_rate:ratio_5m / 0.010)
+            ),
+            0
+          )
+      - record: honua:slo:effective_burn_rate:5m
+        expr: |
+          honua:slo:effective_error_rate:ratio_5m / 0.010
+      - record: honua:slo:effective_burn_rate:30m
+        expr: |
+          (
+            sum by (service, environment) (
+              rate(honua_http_requests_total{status_code=~"5.."}[30m])
+            )
+            +
+            sum by (service, environment) (
+              rate(honua_request_error_total{in_band="true"}[30m])
+            )
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[30m])
+            ),
+            0.001
+          )
+          /
+          0.010
+      - record: honua:slo:effective_burn_rate:6h
+        expr: |
+          (
+            sum by (service, environment) (
+              rate(honua_http_requests_total{status_code=~"5.."}[6h])
+            )
+            +
+            sum by (service, environment) (
+              rate(honua_request_error_total{in_band="true"}[6h])
+            )
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_http_requests_total[6h])
+            ),
+            0.001
+          )
+          /
+          0.010
       - record: honua:maintenance_window:active
         expr: |
           max by (service, environment) (
