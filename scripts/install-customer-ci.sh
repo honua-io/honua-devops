@@ -316,13 +316,20 @@ jobs:
           set -euo pipefail
           repo="\${HONUA_DEVOPS_TERRAFORM_REPO:-$TERRAFORM_REPOSITORY}"
           ref="\${HONUA_DEVOPS_TERRAFORM_REF:-$TERRAFORM_REF}"
-          clone_url="\$repo"
-          if [[ -n "\${HONUA_DEVOPS_TERRAFORM_GIT_TOKEN:-}" && "\$repo" == https://github.com/* ]]; then
-            clone_url="\${repo/https:\/\//https:\/\/x-access-token:\${HONUA_DEVOPS_TERRAFORM_GIT_TOKEN}@}"
-          fi
-
           rm -rf "\$HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"
-          git clone --depth 1 --branch "\$ref" "\$clone_url" "\$HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"
+          if [[ -n "\${HONUA_DEVOPS_TERRAFORM_GIT_TOKEN:-}" && "\$repo" == https://github.com/* ]]; then
+            # Supply the token via GIT_ASKPASS so it is never embedded in the clone
+            # URL (which would expose it in the process list and persist it into the
+            # cloned repo's .git/config). The URL carries only the username.
+            askpass="\$(mktemp)"
+            printf '%s\n' '#!/usr/bin/env bash' 'printf "%s" "\${HONUA_DEVOPS_TERRAFORM_GIT_TOKEN}"' > "\$askpass"
+            chmod 700 "\$askpass"
+            auth_repo="\${repo/https:\/\//https:\/\/x-access-token@}"
+            GIT_ASKPASS="\$askpass" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "\$ref" "\$auth_repo" "\$HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"
+            rm -f "\$askpass"
+          else
+            git clone --depth 1 --branch "\$ref" "\$repo" "\$HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"
+          fi
 
       - name: Run preflight
         run: dotnet run --project "$OPERATOR_CHECKOUT_PATH/src/Honua.DevOps.Agent" -- --preflight

@@ -10,6 +10,60 @@ internal static class DeploymentInputs
         return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 
+    private static readonly char[] EnvironmentTokenSeparators = ['-', '_', '.', '/', ':', ' '];
+
+    /// <summary>
+    /// Classifies whether a target environment is production. Fails closed: an
+    /// absent/blank environment is treated as production, and any environment whose
+    /// configured name or token denotes production is matched, so a name such as
+    /// <c>production</c>, <c>prod-eu</c>, or <c>eu_prod</c> can never slip past the
+    /// production execution guards. An exact <see cref="StringComparer.OrdinalIgnoreCase"/>
+    /// membership test (as used previously) only matched the literal token <c>prod</c>
+    /// and let every other production alias evade the guard.
+    /// </summary>
+    /// <param name="environment">The candidate environment name.</param>
+    /// <param name="productionEnvironments">
+    /// Operator-configured production environment names; matched exactly in addition
+    /// to the built-in <c>prod*</c>/<c>prd</c> heuristic.
+    /// </param>
+    internal static bool IsProductionEnvironment(
+        string? environment,
+        IReadOnlyCollection<string>? productionEnvironments = null)
+    {
+        // Fail closed: an unknown environment is treated as production so a missing
+        // or malformed target cannot be silently downgraded to a lower-env write.
+        if (string.IsNullOrWhiteSpace(environment))
+        {
+            return true;
+        }
+
+        string normalized = environment.Trim().ToLowerInvariant();
+
+        if (productionEnvironments is not null)
+        {
+            foreach (string configured in productionEnvironments)
+            {
+                if (!string.IsNullOrWhiteSpace(configured)
+                    && string.Equals(configured.Trim(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        foreach (string token in normalized.Split(
+            EnvironmentTokenSeparators,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.StartsWith("prod", StringComparison.Ordinal) || token == "prd")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     internal static string ValidateServiceName(string value)
     {
         string service = Normalize(value, string.Empty);

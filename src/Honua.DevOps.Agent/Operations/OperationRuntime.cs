@@ -9,9 +9,22 @@ internal sealed record OperationRuntime(
     string TerraformRef,
     string TerraformLocalPath,
     string[] TerraformDeploymentTargets,
-    string? DeployTargetId = null)
+    string? DeployTargetId = null,
+    string[]? ProductionEnvironments = null)
 {
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
+    private static readonly string[] DefaultProductionEnvironments = ["prod", "production", "prd"];
+
+    /// <summary>
+    /// True when the supplied environment is production under the configured
+    /// production-environment names plus the built-in fail-closed heuristic. Used
+    /// by the deployment authorizer so production aliases (e.g. <c>production</c>)
+    /// cannot evade the production execution tiers/guards.
+    /// </summary>
+    internal bool IsProductionEnvironment(string? environment)
+        => DeploymentInputs.IsProductionEnvironment(
+            environment,
+            ProductionEnvironments is { Length: > 0 } configured ? configured : DefaultProductionEnvironments);
 
     private const string ExecutionModeVariable = "HONUA_DEVOPS_EXECUTION_MODE";
     private const string ExecutionTierVariable = "HONUA_DEVOPS_EXECUTION_TIER";
@@ -22,6 +35,7 @@ internal sealed record OperationRuntime(
     private const string TerraformTargetsVariable = "HONUA_DEVOPS_TERRAFORM_TARGETS";
     private const string TerraformLocalPathVariable = "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH";
     private const string DeployTargetIdVariable = "HONUA_DEVOPS_DEPLOY_TARGET_ID";
+    private const string ProductionEnvironmentsVariable = "HONUA_DEVOPS_PRODUCTION_ENVIRONMENTS";
 
     internal static OperationRuntime Load()
     {
@@ -62,6 +76,9 @@ internal sealed record OperationRuntime(
             Environment.GetEnvironmentVariable(DeployTargetIdVariable),
             DeployTargetIdVariable);
 
+        string[] productionEnvironments = ParseProductionEnvironments(
+            Environment.GetEnvironmentVariable(ProductionEnvironmentsVariable));
+
         return new OperationRuntime(
             mode,
             tier,
@@ -71,7 +88,23 @@ internal sealed record OperationRuntime(
             terraformRef,
             terraformLocalPath,
             terraformTargets,
-            deployTargetId);
+            deployTargetId,
+            productionEnvironments);
+    }
+
+    private static string[] ParseProductionEnvironments(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DefaultProductionEnvironments;
+        }
+
+        string[] parsed = value
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return parsed.Length == 0 ? DefaultProductionEnvironments : parsed;
     }
 
     private static ExecutionMode ParseExecutionMode(string? value)

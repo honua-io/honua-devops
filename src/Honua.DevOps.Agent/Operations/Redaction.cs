@@ -21,6 +21,28 @@ internal static partial class Redaction
         RegexOptions.CultureInvariant)]
     private static partial Regex AuthorizationHeaderPattern();
 
+    [GeneratedRegex(
+        @"^(?i)(api[_-]?key|x[_-]?api[_-]?key|scoped[_-]?key|authorization|access[_-]?token|token|secret|password|passwd)$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex SensitiveKeyNamePattern();
+
+    /// <summary>
+    /// True when an argument/field <em>name</em> (e.g. "apiKey", "token") denotes a
+    /// secret whose value must never be logged verbatim. Used for structured
+    /// key/value pairs where the value carries no inline `key=` prefix for
+    /// <see cref="Scrub"/> to latch onto.
+    /// </summary>
+    internal static bool IsSensitiveKey(string? key)
+        => !string.IsNullOrEmpty(key) && SensitiveKeyNamePattern().IsMatch(key.Trim());
+
+    /// <summary>
+    /// Redact a structured value by its key: a sensitive key name collapses the
+    /// whole value to the placeholder; any other value still runs through
+    /// <see cref="Scrub"/> in case it embeds an inline secret.
+    /// </summary>
+    internal static string ScrubValue(string? key, string? value)
+        => IsSensitiveKey(key) ? Placeholder : Scrub(value);
+
     internal static string Scrub(string? input)
     {
         if (string.IsNullOrEmpty(input))
