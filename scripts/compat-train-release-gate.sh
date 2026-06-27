@@ -178,12 +178,22 @@ for repo in $TRAIN_REPOS; do
   REPO_TARGET["$repo"]="${target:-unset}"
   REPO_COMMIT["$repo"]="${commit:-unset}"
 
-  # Normalize the run status to pass/fail/missing.
+  # Normalize the run status to pass/skipped/fail/missing. "skipped" is the
+  # non-blocking signal the conformance-gate emits for unenrolled consumers
+  # (compat-train-conformance-gate.sh) and that rc-aggregate already honors
+  # ($s != "pass" and $s != "skipped"); the release-gate must agree or it would
+  # block a train whose conformance layer legitimately passed.
   case "$status" in
     pass | passed | success | ok | green | true) status_norm="pass" ;;
+    skip | skipped | "n/a" | "not-applicable") status_norm="skipped" ;;
     "") status_norm="missing" ;;
     *) status_norm="fail" ;;
   esac
+
+  if [[ "$status_norm" == "skipped" ]]; then
+    echo "[SKIP] repo ${repo}: release-candidate evidence skipped (non-blocking)"
+    continue
+  fi
 
   if [[ "$status_norm" == "missing" ]]; then
     echo "[FAIL] repo ${repo}: no release-candidate evidence supplied"

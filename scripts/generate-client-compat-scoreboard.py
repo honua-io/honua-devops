@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any
 
 
-STATUS_PRIORITY = {"fail": 3, "warn": 2, "pending": 2, "pass": 1}
+# Severity order for aggregation. "warn" must outrank "pending": a warn is a
+# real compatibility warning that was observed, whereas pending is "not yet
+# tested". When they tied, aggregate_status() (which uses max()) could mask a
+# warn as pending depending on iteration order, leaving summary.warn at 0 so no
+# gate ever surfaced it.
+STATUS_PRIORITY = {"fail": 4, "warn": 3, "pending": 2, "pass": 1}
 
 # The closed compatibility-status vocabulary. Any value outside this set is a producer bug;
 # we fail closed rather than silently sorting it below `pass` (where it would never turn the

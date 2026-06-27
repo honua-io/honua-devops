@@ -130,6 +130,34 @@ fi
 echo "[OK] missing required repo correctly blocked"
 
 echo
+echo "Validating non-blocking path: a 'skipped' repo (unenrolled consumer) does not block the train"
+# conformance-gate emits status=skipped for unenrolled consumers and rc-aggregate
+# treats it as non-failing; the release-gate must agree rather than route it to fail.
+cat >"$WORKDIR/evidence-skipped.json" <<'EOF'
+{
+  "candidate": { "version": "2026.06.0-rc.1" },
+  "environment": "staging",
+  "repos": {
+    "honua-server": {
+      "status": "pass",
+      "local_stack": false,
+      "base_url": "https://staging.honua.example/api",
+      "commit": "abc123"
+    },
+    "honua-sdk-python": {
+      "status": "skipped",
+      "base_url": "unset"
+    }
+  }
+}
+EOF
+if ! COMPAT_TRAIN_REPOS="$TRAIN" "$GATE" "$WORKDIR/evidence-skipped.json"; then
+  echo "[ERROR] gate unexpectedly blocked a train with a skipped (non-blocking) repo" >&2
+  exit 1
+fi
+echo "[OK] skipped repo correctly treated as non-blocking"
+
+echo
 echo "Validating env-var override precedence over evidence file"
 # Evidence says honua-sdk-python used the local fallback; env override flips it to a live target.
 COMPAT_TRAIN_REPOS="$TRAIN" \
