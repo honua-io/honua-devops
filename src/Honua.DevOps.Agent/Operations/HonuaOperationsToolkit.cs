@@ -652,6 +652,7 @@ internal sealed class HonuaOperationsToolkit(
             GitOpsExecutionStatus.PlanOnly => "plan-only",
             GitOpsExecutionStatus.AwaitingApproval => "awaiting-approval",
             GitOpsExecutionStatus.Succeeded => "execute-succeeded",
+            GitOpsExecutionStatus.InProgress => "execute-in-progress",
             GitOpsExecutionStatus.RolledBack => "rolled-back",
             GitOpsExecutionStatus.Failed => "execute-failed",
             GitOpsExecutionStatus.ApprovalRequired => "approval-required",

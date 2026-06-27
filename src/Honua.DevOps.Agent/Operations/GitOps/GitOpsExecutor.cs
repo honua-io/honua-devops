@@ -21,14 +21,17 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 internal sealed class GitOpsExecutor(
     OperationRuntime runtime,
     BackendGateway gateway,
-    OperatorPolicyModel policy)
+    OperatorPolicyModel policy,
+    DeployPollPolicy? pollPolicy = null,
+    Func<TimeSpan, CancellationToken, Task>? delay = null,
+    TimeProvider? timeProvider = null)
 {
-    private const int DefaultPollAttempts = 5;
-    private const int DefaultPollDelayMs = 250;
-
     private readonly OperationRuntime _runtime = runtime;
     private readonly BackendGateway _gateway = gateway;
     private readonly OperatorPolicyModel _policy = policy;
+    private readonly DeployPollPolicy _pollPolicy = pollPolicy ?? DeployPollPolicy.Resolve();
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     internal OperationRuntime Runtime => _runtime;
 
@@ -238,28 +241,74 @@ internal sealed class GitOpsExecutor(
         string? status = submitted.Payload is null ? null : DeployOperationReader.ReadStatus(submitted.Payload.RootElement);
         findings.Add($"Operation `{operationId}` submitted (status {status ?? "unknown"}).");
 
-        // Poll to a terminal status. The reconciler advances the operation server-side.
-        for (int attempt = 0; attempt < DefaultPollAttempts && !DeployOperationReader.IsTerminal(status); attempt++)
+        // Poll to a terminal status with capped exponential backoff up to the configured
+        // total timeout. The reconciler advances the operation server-side, so a real deploy
+        // routinely takes longer than a single cycle. The first read happens immediately; on
+        // each subsequent attempt we back off (initial -> *2 -> ... -> max), never sleeping
+        // past the deadline. If the budget is exhausted while the op is still non-terminal we
+        // DO NOT collapse that into Failed — it is reported as `in-progress` below.
+        DateTimeOffset deadline = _timeProvider.GetUtcNow() + _pollPolicy.Timeout;
+        TimeSpan interval = _pollPolicy.InitialInterval;
+        int attempt = 0;
+        while (!DeployOperationReader.IsTerminal(status))
         {
-            if (attempt > 0)
+            DateTimeOffset now = _timeProvider.GetUtcNow();
+            if (now >= deadline)
             {
-                await Task.Delay(DefaultPollDelayMs, cancellationToken);
+                break;
             }
 
+            if (attempt > 0)
+            {
+                TimeSpan remaining = deadline - now;
+                await _delay(interval < remaining ? interval : remaining, cancellationToken);
+                interval = TimeSpan.FromMilliseconds(
+                    Math.Min(_pollPolicy.MaxInterval.TotalMilliseconds, interval.TotalMilliseconds * 2));
+            }
+
+            attempt++;
             using BackendJsonResult polled = await _gateway.GetDeployOperationJsonAsync(operationId, cancellationToken);
-            steps.Add(ToStep($"deploy-operation-poll-{attempt + 1}", polled.CallResult, mutatesState: false));
+            steps.Add(ToStep($"deploy-operation-poll-{attempt}", polled.CallResult, mutatesState: false));
             if (polled.CallResult.IsSuccess && polled.Payload is not null)
             {
                 status = DeployOperationReader.ReadStatus(polled.Payload.RootElement);
             }
         }
 
-        findings.Add($"Terminal/last-observed status for `{operationId}`: {status ?? "unknown"}.");
-        string resultStatus = DeployOperationReader.IsSuccess(status)
-            ? GitOpsExecutionStatus.Succeeded
-            : DeployOperationReader.IsRolledBack(status)
-                ? GitOpsExecutionStatus.RolledBack
-                : GitOpsExecutionStatus.Failed;
+        // Map the last-observed status. CRITICAL: only a genuine terminal status is allowed to
+        // resolve to Succeeded/RolledBack/Failed. A still-reconciling (non-terminal) status at
+        // budget exhaustion is `in-progress`, never Failed — the operation is healthy and the
+        // server keeps advancing it.
+        string resultStatus;
+        if (DeployOperationReader.IsSuccess(status))
+        {
+            resultStatus = GitOpsExecutionStatus.Succeeded;
+        }
+        else if (DeployOperationReader.IsRolledBack(status))
+        {
+            resultStatus = GitOpsExecutionStatus.RolledBack;
+        }
+        else if (DeployOperationReader.IsTerminal(status))
+        {
+            resultStatus = GitOpsExecutionStatus.Failed;
+        }
+        else
+        {
+            resultStatus = GitOpsExecutionStatus.InProgress;
+        }
+
+        if (resultStatus == GitOpsExecutionStatus.InProgress)
+        {
+            findings.Add(
+                $"Operation `{operationId}` is still reconciling (last-observed status: {status ?? "unknown"}) after the poll budget " +
+                $"of {_pollPolicy.Timeout.TotalSeconds:0}s; the reconciler advances it server-side. This is NOT a failure. " +
+                $"Keep watching it via the deploy-control operation/approval path. Tune the budget with " +
+                $"`{DeployPollPolicy.TimeoutSecondsVariable}` if longer waits are expected.");
+        }
+        else
+        {
+            findings.Add($"Terminal status for `{operationId}`: {status ?? "unknown"}.");
+        }
 
         return new GitOpsExecutionResult(
             Status: resultStatus,
