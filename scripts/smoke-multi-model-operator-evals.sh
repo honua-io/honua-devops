@@ -147,4 +147,22 @@ if [[ "$exit_code" -ne 2 ]]; then
   exit 1
 fi
 
+echo "Validating exit-0 with no result file is NOT credited as passed"
+set +e
+HONUA_EVAL_CODEX_ENABLED=true \
+HONUA_EVAL_CODEX_COMMAND="bash -c 'exit 0'" \
+python3 "$REPO_ROOT/scripts/run-multi-model-operator-evals.py" \
+  --server-report "$SERVER_REPORT" \
+  --scenario-dir "$SCENARIO_DIR" \
+  --output-dir "$WORKDIR/empty-result" \
+  --run-lanes \
+  --hard-fail
+exit_code=$?
+set -e
+
+if [[ "$exit_code" -ne 2 ]]; then
+  echo "[ERROR] Expected hard-fail exit code 2 when a release-gate lane exits 0 without a result file, got ${exit_code}." >&2
+  exit 1
+fi
+
 echo "Multi-model operator eval smoke check passed."
