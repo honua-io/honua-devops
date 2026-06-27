@@ -214,6 +214,35 @@ def run_devops(scenario: dict[str, Any], agent_dir: Path) -> dict[str, Any]:
         return {"ok": False, "error": "timeout", "elapsed": round(time.time() - started, 1)}
 
 
+def score_scenario(surface: str, expected: str, result: dict[str, Any]) -> tuple[str, bool]:
+    """Conservative per-scenario verdict against expected_behavior.
+
+    Returns ``(verdict, scored)``. A clean call (HTTP 200 / exit 0) is NOT automatically a
+    pass: that is exactly the false-green the audit flagged, where a refuse scenario and a
+    wrong actuation both looked "ok". We only emit ``pass``/``fail`` for behaviors we can
+    actually observe from the captured signals; everything else is reported as ``smoke``
+    (the call ran, but its behavior was not scored) and is never credited as a pass.
+    """
+    if not result.get("ok"):
+        # The call errored / timed out / returned non-2xx: it did not exhibit the behavior.
+        return "fail", True
+
+    if surface == "studio":
+        clarifications = int(result.get("clarifications", 0) or 0)
+        unmapped = int(result.get("unmapped", 0) or 0)
+        if expected == "needs-clarification":
+            return ("pass" if clarifications > 0 else "fail"), True
+        if expected == "unsupported":
+            return ("pass" if unmapped > 0 else "fail"), True
+        if expected == "generated":
+            # A clean generation must not have asked for clarification or left requests unmapped.
+            return ("pass" if clarifications == 0 and unmapped == 0 else "fail"), True
+
+    # DevOps text behaviors (description/diagnosis/analysis/proposal/changeset) and any
+    # studio behavior without an observable signal: ran cleanly but not behaviorally scored.
+    return "smoke", False
+
+
 def run_sample(manifest: dict[str, Any], args: argparse.Namespace) -> int:
     index = {sc["id"]: sc for sc in all_scenarios(manifest)}
     selected = [index[i] for i in (STUDIO_SAMPLE + DEVOPS_SAMPLE) if i in index]
@@ -242,13 +271,26 @@ def run_sample(manifest: dict[str, Any], args: argparse.Namespace) -> int:
                 r = run_studio(sc, base_url, admin_key)
         else:
             r = run_devops(sc, agent_dir)
+        verdict, scored = score_scenario(sc["_surface"], sc["expected_behavior"], r)
         results.append({"id": sc["id"], "surface": sc["_surface"],
-                        "expected_behavior": sc["expected_behavior"], "result": r})
-        print(f"    -> {r}")
+                        "expected_behavior": sc["expected_behavior"],
+                        "verdict": verdict, "scored": scored, "result": r})
+        print(f"    -> verdict={verdict} (scored={scored}) {r}")
 
-    (out_dir / "results.json").write_text(json.dumps(results, indent=2))
-    print(f"\nwrote {out_dir / 'results.json'}")
-    return 0
+    summary = collections.Counter(item["verdict"] for item in results)
+    payload = {
+        "kind": "bounded-sample",
+        "note": ("verdict=pass/fail are scored against expected_behavior from observable "
+                 "signals; verdict=smoke means the call ran but its behavior was NOT scored "
+                 "(not credited as pass). A clean HTTP 200 / exit 0 alone is never a pass."),
+        "summary": dict(summary),
+        "results": results,
+    }
+    (out_dir / "results.json").write_text(json.dumps(payload, indent=2))
+    print(f"\nsummary: " + ", ".join(f"{k}={v}" for k, v in sorted(summary.items())))
+    print(f"wrote {out_dir / 'results.json'}")
+    # Fail the bounded run when a scenario behaviorally failed; 'smoke' (unscored) is neutral.
+    return 1 if summary.get("fail", 0) > 0 else 0
 
 
 def main() -> int:

@@ -18,6 +18,29 @@ STATUS_PASSED_WITH_SKIPS = "passed-with-skips"
 STATUS_FAILED = "failed"
 STATUS_SKIPPED = "skipped"
 
+# Per-lane wall-clock budget. A single hung model invocation must not block the whole serial
+# run with no diagnostics; on expiry the lane is recorded as FAILED. Overridable per-lane
+# (matrix `timeoutSeconds`) or globally via HONUA_EVAL_LANE_TIMEOUT_SECONDS.
+DEFAULT_LANE_TIMEOUT_SECONDS = 900
+LANE_TIMEOUT_ENV = "HONUA_EVAL_LANE_TIMEOUT_SECONDS"
+
+
+def resolve_lane_timeout(lane: dict[str, Any]) -> int:
+    raw = os.environ.get(LANE_TIMEOUT_ENV, "").strip()
+    if not raw:
+        raw = str(lane.get("timeoutSeconds") or "").strip()
+    if not raw:
+        return DEFAULT_LANE_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise SystemExit(
+            f"Invalid lane timeout {raw!r}: must be a positive integer number of seconds."
+        ) from exc
+    if value < 1:
+        raise SystemExit(f"Invalid lane timeout {raw!r}: must be >= 1 second.")
+    return value
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -266,35 +289,72 @@ def run_lane_command(
     for token, replacement in replacements.items():
         formatted_command = formatted_command.replace(token, replacement)
 
-    completed = subprocess.run(
-        formatted_command,
-        shell=True,
-        check=False,
-        text=True,
-        capture_output=True,
-        env=env,
-    )
-    stdout_path.write_text(completed.stdout, encoding="utf-8")
-    stderr_path.write_text(completed.stderr, encoding="utf-8")
+    # Stream stdout/stderr straight to the lane log files (instead of buffering the whole
+    # output in memory) and enforce a per-lane timeout so one hung invocation cannot block the
+    # serial run with no diagnostics.
+    timeout_seconds = resolve_lane_timeout(lane)
+    timed_out = False
+    returncode: int | None
+    with stdout_path.open("w", encoding="utf-8") as stdout_file, \
+            stderr_path.open("w", encoding="utf-8") as stderr_file:
+        try:
+            completed = subprocess.run(
+                formatted_command,
+                shell=True,
+                check=False,
+                text=True,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                env=env,
+                timeout=timeout_seconds,
+            )
+            returncode = completed.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            returncode = None
+            stderr_file.write(
+                f"\n[eval-runner] lane '{lane_id}' scenario '{scenario_id}' timed out "
+                f"after {timeout_seconds}s and was terminated.\n"
+            )
 
+    # A usable result requires a non-empty, parseable result file.
     payload: dict[str, Any] = {}
-    if lane_output_path.exists():
-        payload = load_json(lane_output_path)
+    result_present = lane_output_path.exists() and lane_output_path.stat().st_size > 0
+    if result_present:
+        try:
+            payload = load_json(lane_output_path)
+        except (json.JSONDecodeError, ValueError):
+            payload = {}
+            result_present = False
 
-    status = normalize_lane_status(str(payload.get("status") or STATUS_PASSED))
-    if completed.returncode != 0:
+    findings = list(payload.get("findings", []))
+    if timed_out:
         status = STATUS_FAILED
+        findings.append(f"Lane timed out after {timeout_seconds}s; recorded as failed.")
+    elif returncode != 0:
+        status = STATUS_FAILED
+    elif not result_present:
+        # CRITICAL: a bare exit 0 with no usable result file must NOT be credited as a pass.
+        # Otherwise a release-gate lane goes green without actually emitting any verdict.
+        status = STATUS_FAILED
+        findings.append(
+            "Lane exited 0 but produced no usable result JSON; not credited as passed."
+        )
+    else:
+        # Present-but-statusless results also fail closed rather than defaulting to passed.
+        status = normalize_lane_status(str(payload.get("status") or STATUS_FAILED))
 
     return {
         "scenarioId": scenario_id,
         "status": status,
-        "exitCode": completed.returncode,
+        "exitCode": returncode,
+        "timedOut": timed_out,
         "metrics": payload.get("metrics", {}),
-        "findings": payload.get("findings", []),
+        "findings": findings,
         "artifacts": payload.get("artifacts", []),
         "stdoutPath": str(stdout_path),
         "stderrPath": str(stderr_path),
-        "resultPath": str(lane_output_path) if lane_output_path.exists() else None,
+        "resultPath": str(lane_output_path) if result_present else None,
     }
 
 
