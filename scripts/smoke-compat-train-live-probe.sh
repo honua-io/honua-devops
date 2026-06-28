@@ -154,6 +154,44 @@ else
   echo "  FAIL: live mode must not fail on blocked-only probes (rc=$rc)"; FAIL=$((FAIL + 1))
 fi
 
+# --- Case 6: only passed evidenceState signals are re-verified ----------------
+# A signal the manifest recorded as blocked/waived/pending must NOT be re-fetched
+# against GitHub: doing so could both falsely fail a release the manifest already
+# accounted for and manufacture "verified" coverage the manifest never asserted.
+# With every cited runUrl on a non-passed signal, the github-run probe has nothing
+# to re-verify and reports the "no run URLs" blocked sentinel rather than a
+# per-surface state derived from those non-passed runs.
+echo "[case] non-passed evidenceState signals are excluded from re-verification"
+cat >"$WORKDIR/manifest-nonpassed.json" <<'EOF'
+{
+  "releaseId": "honua-test-rc",
+  "channel": "preview",
+  "candidate": {
+    "ref": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "refSource": "feature/test",
+    "image": { "repository": "ghcr.io/honua-io/honua-server", "tag": null, "digest": null }
+  },
+  "releaseGates": [
+    { "id": "server-sdk-compatibility", "owningRepo": "honua-io/honua-server",
+      "evidenceState": "blocked",
+      "latestEvidence": { "runUrl": "https://github.com/honua-io/honua-server/actions/runs/25525446417" } }
+  ],
+  "repositoryLanes": [
+    { "id": "sdk-js-trunk-ci", "owningRepo": "honua-io/honua-sdk-js",
+      "evidenceState": "pending",
+      "latestEvidence": { "runUrl": "https://github.com/honua-io/honua-sdk-js/actions/runs/25487920652" } }
+  ]
+}
+EOF
+env -u GITHUB_TOKEN PATH="$(dirname "$(command -v jq)"):/usr/bin:/bin" \
+  HONUA_PROBE_BUNDLE_OUTPUT="$BUNDLE" \
+  HONUA_PROBE_MODE=advisory \
+  bash "$PROBE" "$WORKDIR/manifest-nonpassed.json" >/dev/null
+check "github-run reports the no-runs-to-re-verify sentinel for non-passed signals" \
+  '.probes[] | select(.id=="github-run") | .state' 'blocked'
+check "no per-surface github-run probe is emitted for non-passed signals" \
+  '[.probes[] | select(.id|startswith("github-run:"))] | length' '0'
+
 echo
 echo "[smoke] $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

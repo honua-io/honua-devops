@@ -6,11 +6,16 @@ import argparse
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Grace period between the polite group SIGTERM and the hard group SIGKILL when a lane is
+# terminated for exceeding its budget. Short, because the budget is already the patience.
+LANE_KILL_GRACE_SECONDS = 5
 
 
 STATUS_PASSED = "passed"
@@ -243,6 +248,59 @@ def build_lane_prompt(scenario: dict[str, Any], server_summary: dict[str, Any]) 
     return "\n".join(lines)
 
 
+def _new_process_group_kwargs() -> dict[str, Any]:
+    """Spawn the lane in its own process group so the timeout can kill the whole
+    tree, not just the shell wrapper. Lane commands shell out to real model
+    invocations (e.g. a provider CLI) that spawn their own children; if only the
+    direct child is killed those grandchildren are reparented to init and keep
+    running, burning CPU and live model-API quota long after the lane is recorded
+    failed. Isolating the group lets us signal every descendant."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    # POSIX: start_new_session puts the child in a new session+process group whose
+    # id equals the child pid, so os.killpg(pid, ...) reaches the whole tree.
+    return {"start_new_session": True}
+
+
+def _terminate_process_tree(proc: subprocess.Popen[Any]) -> None:
+    """Terminate a lane and every process it spawned. On POSIX we signal the
+    process group (SIGTERM, grace, then SIGKILL); on Windows we fall back to
+    Popen.terminate/kill on the group leader."""
+    if proc.poll() is not None:
+        return
+
+    if os.name != "nt":
+        try:
+            pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=LANE_KILL_GRACE_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+    else:
+        proc.terminate()
+        try:
+            proc.wait(timeout=LANE_KILL_GRACE_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    try:
+        proc.wait(timeout=LANE_KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def run_lane_command(
     lane: dict[str, Any],
     scenario: dict[str, Any],
@@ -291,30 +349,39 @@ def run_lane_command(
 
     # Stream stdout/stderr straight to the lane log files (instead of buffering the whole
     # output in memory) and enforce a per-lane timeout so one hung invocation cannot block the
-    # serial run with no diagnostics.
+    # serial run — and, just as important, cannot keep consuming CPU/model-API quota — with no
+    # diagnostics. The lane runs in its own process group (see _new_process_group_kwargs) so a
+    # timeout kills the whole tree, not just the /bin/sh wrapper, leaving no orphaned grandchild
+    # model invocations behind.
     timeout_seconds = resolve_lane_timeout(lane)
     timed_out = False
     returncode: int | None
     with stdout_path.open("w", encoding="utf-8") as stdout_file, \
             stderr_path.open("w", encoding="utf-8") as stderr_file:
+        proc = subprocess.Popen(
+            formatted_command,
+            shell=True,
+            text=True,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            env=env,
+            **_new_process_group_kwargs(),
+        )
         try:
-            completed = subprocess.run(
-                formatted_command,
-                shell=True,
-                check=False,
-                text=True,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                env=env,
-                timeout=timeout_seconds,
-            )
-            returncode = completed.returncode
+            proc.communicate(timeout=timeout_seconds)
+            returncode = proc.returncode
         except subprocess.TimeoutExpired:
             timed_out = True
             returncode = None
+            _terminate_process_tree(proc)
+            # Drain any output the killed processes already wrote.
+            try:
+                proc.communicate(timeout=LANE_KILL_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
             stderr_file.write(
                 f"\n[eval-runner] lane '{lane_id}' scenario '{scenario_id}' timed out "
-                f"after {timeout_seconds}s and was terminated.\n"
+                f"after {timeout_seconds}s; its process group was terminated.\n"
             )
 
     # A usable result requires a non-empty, parseable result file.

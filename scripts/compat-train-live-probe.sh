@@ -193,7 +193,7 @@ probe_github_runs() {
   local triples
   triples="$(jq -r '
     [ (.releaseGates // [])[], (.repositoryLanes // [])[] ]
-    | map(select(.latestEvidence.runUrl != null))
+    | map(select(.latestEvidence.runUrl != null and ((.evidenceState // "") == "passed")))
     | map({ id, repo: (.owningRepo // ""),
             url: .latestEvidence.runUrl,
             state: (.evidenceState // "unknown") })
