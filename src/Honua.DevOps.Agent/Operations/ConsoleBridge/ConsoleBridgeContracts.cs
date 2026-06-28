@@ -53,6 +53,75 @@ internal static class ProposalLifecycle
     internal const string Unknown = "unknown";
 }
 
+// The honua-server WorkflowOperationStatus members, as the single source of truth for the
+// raw status strings the agent reads back from honua-server. The server emits these in either
+// lowercased-PascalCase ("awaitingapproval") or hyphenated ("awaiting-approval") form; both
+// fold to the same member here. Recognizing the vocabulary in ONE place keeps the GitOps/
+// rollback executors, the ApprovalWaiter, and the Console bridge mappings from drifting apart
+// when honua-server adds or renames a status — previously each site parsed the strings with its
+// own hand-written switch/array and they could silently disagree.
+internal enum ServerOperationStatus
+{
+    // The status string was absent or not a recognized server WorkflowOperationStatus member.
+    Unrecognized = 0,
+    Planned,
+    AwaitingApproval,
+    Submitted,
+    Reconciling,
+    Succeeded,
+    Failed,
+    RollbackRequested,
+    RolledBack,
+    ManualInterventionRequired
+}
+
+// Canonical recognizer for the honua-server WorkflowOperationStatus vocabulary. All status
+// parsing on the devops side funnels through Recognize so the cross-repo contract is read in
+// exactly one place.
+internal static class ServerOperationStatusParser
+{
+    // Folds any casing/hyphenation of a server status onto its canonical member, or
+    // ServerOperationStatus.Unrecognized for null/empty/unknown input. Hyphens are stripped so
+    // "awaiting-approval", "AwaitingApproval", and "awaitingapproval" all map identically.
+    internal static ServerOperationStatus Recognize(string? status)
+        => Normalize(status) switch
+        {
+            "planned" => ServerOperationStatus.Planned,
+            "awaitingapproval" => ServerOperationStatus.AwaitingApproval,
+            "submitted" => ServerOperationStatus.Submitted,
+            "reconciling" => ServerOperationStatus.Reconciling,
+            "succeeded" => ServerOperationStatus.Succeeded,
+            "failed" => ServerOperationStatus.Failed,
+            "rollbackrequested" => ServerOperationStatus.RollbackRequested,
+            "rolledback" => ServerOperationStatus.RolledBack,
+            "manualinterventionrequired" => ServerOperationStatus.ManualInterventionRequired,
+            _ => ServerOperationStatus.Unrecognized
+        };
+
+    // A status the server will not progress past: succeeded, failed, rolled-back, or parked at
+    // manual-intervention-required. Used to decide when polling can stop.
+    internal static bool IsTerminal(ServerOperationStatus status)
+        => status is ServerOperationStatus.Succeeded
+            or ServerOperationStatus.Failed
+            or ServerOperationStatus.RolledBack
+            or ServerOperationStatus.ManualInterventionRequired;
+
+    internal static bool IsTerminal(string? status) => IsTerminal(Recognize(status));
+
+    internal static bool IsSuccess(string? status) => Recognize(status) == ServerOperationStatus.Succeeded;
+
+    internal static bool IsRolledBack(string? status) => Recognize(status) == ServerOperationStatus.RolledBack;
+
+    internal static bool IsAwaitingApproval(string? status)
+        => Recognize(status) == ServerOperationStatus.AwaitingApproval;
+
+    internal static bool IsManualInterventionRequired(string? status)
+        => Recognize(status) == ServerOperationStatus.ManualInterventionRequired;
+
+    private static string Normalize(string? value)
+        => (value ?? string.Empty).Trim().Replace("-", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
+}
+
 // Approve/reject decision kinds recorded against a proposal.
 internal static class ProposalDecisionKind
 {

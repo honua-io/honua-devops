@@ -141,6 +141,62 @@ public class WorkIntakeWebhookHandlerTests
         Assert.False(invoked);
     }
 
+    [Fact]
+    public async Task Handler_BoundsSlowWriteBack_AcksWithDeadlineReason()
+    {
+        // A write-back that outlives the per-request deadline must not hold the inbound
+        // delivery open (that is what triggers a sender retry and a duplicate provenance
+        // comment). The handler cancels it and still returns 202 with the work item, so the
+        // inbound ack — not the slow outbound write — drives the response.
+        WorkIntakeWebhookHandler handler = new(
+            new JiraCloudSignatureVerifier(Secret),
+            provider: WorkItem.JiraProvider,
+            projectFilter: null,
+            onAccepted: async (_, token) =>
+            {
+                // Simulate a slow backend that respects cancellation (as the connector's
+                // HttpClient does): block on the deadline token until it trips.
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            },
+            acceptedDeadline: TimeSpan.FromMilliseconds(50));
+
+        string json = BuildJiraIssuePayload();
+        byte[] body = Encoding.UTF8.GetBytes(json);
+        string signature = WebhookSignatureVerifier.ComputeSignatureHeader(Secret, json);
+
+        WorkIntakeHandlerResult result = await handler.HandleAsync(body, signature, CancellationToken.None);
+
+        Assert.Equal(202, result.StatusCode);
+        Assert.Equal("accepted-writeback-deadline", result.Reason);
+        Assert.NotNull(result.WorkItem);
+        Assert.Equal("GIS-42", result.WorkItem!.ExternalId);
+    }
+
+    [Fact]
+    public async Task Handler_PropagatesListenerShutdownCancellation()
+    {
+        // Shutdown of the listener (the outer token) is a real cancellation, not a write-back
+        // deadline; it must propagate rather than be masked as an accepted-writeback-deadline.
+        using CancellationTokenSource shutdown = new();
+        WorkIntakeWebhookHandler handler = new(
+            new JiraCloudSignatureVerifier(Secret),
+            provider: WorkItem.JiraProvider,
+            projectFilter: null,
+            onAccepted: async (_, token) =>
+            {
+                shutdown.Cancel();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            },
+            acceptedDeadline: TimeSpan.FromSeconds(30));
+
+        string json = BuildJiraIssuePayload();
+        byte[] body = Encoding.UTF8.GetBytes(json);
+        string signature = WebhookSignatureVerifier.ComputeSignatureHeader(Secret, json);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => handler.HandleAsync(body, signature, shutdown.Token));
+    }
+
     private static string BuildJiraIssuePayload()
     {
         object body = new
