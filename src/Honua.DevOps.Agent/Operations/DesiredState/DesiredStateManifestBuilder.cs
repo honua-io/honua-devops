@@ -44,17 +44,28 @@ internal static class DesiredStateManifestBuilder
                     DesiredStateApi.PlatformReleaseKind,
                     $"{normalizedService}-{normalizedEnvironment}-{normalizedRevisionToken}",
                     normalizedEnvironment);
+                // ExecutionPolicy objects are canonical, control-plane-scoped singletons:
+                // every tier resolves to execution-policy-default in the control-plane
+                // namespace, except the break-glass tier which maps to its own object.
+                // Emitting per-tier, per-environment names produced dangling references on
+                // the common gitops-deploy path (only break-glass accidentally resolved).
+                string executionPolicyName = executionTier == ExecutionTier.BreakGlass
+                    ? DesiredStateApi.ExecutionPolicyBreakGlassName
+                    : DesiredStateApi.ExecutionPolicyDefaultName;
                 DesiredStateObjectReference executionPolicyRef = new(
                     DesiredStateApi.ApiVersion,
                     DesiredStateApi.ExecutionPolicyKind,
-                    $"execution-policy-{executionTier.ToConfigValue()}",
-                    normalizedEnvironment);
+                    executionPolicyName,
+                    DesiredStateApi.ControlPlaneNamespace);
                 DesiredStateObjectReference? promotionRef = index == 0
                     ? null
                     : new DesiredStateObjectReference(
                         DesiredStateApi.ApiVersion,
                         DesiredStateApi.PromotionKind,
-                        $"{normalizedService}-{environments[index - 1]}-to-{normalizedEnvironment}",
+                        // Normalize the source-environment segment so the promotionRef name
+                        // matches the canonical normalized Promotion object for all inputs
+                        // (PROMOTION_NAME_TEMPLATE={service}-{source}-to-{target}).
+                        $"{normalizedService}-{NormalizeResourceToken(environments[index - 1], "default")}-to-{normalizedEnvironment}",
                         normalizedEnvironment);
 
                 return new ServiceBundleManifestResource(

@@ -197,7 +197,11 @@ internal static class OperationJournal
         string needle = operationId.Trim();
         foreach (string line in File.ReadLines(path))
         {
-            if (line.Contains(needle, StringComparison.Ordinal))
+            // Match on the parsed OperationId field, not a raw substring of the JSONL
+            // line. A 32-char id can appear inside other fields (e.g. Summary) of an
+            // earlier record, which would otherwise return the wrong record.
+            RecentOperation? parsed = TryParseRecord(line);
+            if (parsed is not null && string.Equals(parsed.OperationId, needle, StringComparison.Ordinal))
             {
                 writer.WriteLine(line);
                 return 0;

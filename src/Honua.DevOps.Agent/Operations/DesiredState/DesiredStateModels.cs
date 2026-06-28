@@ -11,6 +11,14 @@ internal static class DesiredStateApi
     internal const string ServiceBundleKind = "ServiceBundle";
     internal const string PromotionKind = "Promotion";
     internal const string ExecutionPolicyKind = "ExecutionPolicy";
+
+    // Canonical desired-state conventions (mirrors desired-state/conventions.env).
+    // ExecutionPolicy objects live in the shared control-plane namespace, not the
+    // per-environment namespace, and resolve to a single default object (the
+    // break-glass tier being the only exception that maps to a distinct object).
+    internal const string ControlPlaneNamespace = "control-plane";
+    internal const string ExecutionPolicyDefaultName = "execution-policy-default";
+    internal const string ExecutionPolicyBreakGlassName = "execution-policy-break-glass";
 }
 
 internal sealed record ManifestApplyRequest(

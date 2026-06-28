@@ -66,6 +66,33 @@ public class OperationJournalTests
     }
 
     [Fact]
+    public void ShowOperation_MatchesParsedIdNotRawSubstring()
+    {
+        // The earlier record mentions the later record's id inside its Summary field.
+        // A raw substring scan would return the wrong (earlier) record; field-matching
+        // on the parsed OperationId must return the record whose id actually equals it.
+        string path = Path.Combine(Path.GetTempPath(), $"honua-journal-{Guid.NewGuid():n}.jsonl");
+        try
+        {
+            File.WriteAllText(path,
+                "{\"OperationId\":\"op-aaaa\",\"ToolName\":\"deploy_service_gitops\",\"Status\":\"deploy-planned\",\"Summary\":\"superseded op-bbbb\"}\n" +
+                "{\"OperationId\":\"op-bbbb\",\"ToolName\":\"describe_environment\",\"Status\":\"environment-described\",\"Summary\":\"target record\"}\n");
+
+            using StringWriter writer = new();
+            int exit = OperationJournal.ShowOperation($"file://{path}", "op-bbbb", writer);
+
+            Assert.Equal(0, exit);
+            string output = writer.ToString();
+            Assert.Contains("environment-described", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("deploy-planned", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Find_AppliesToolMutatedAndStatusFilters()
     {
         string path = Path.Combine(Path.GetTempPath(), $"honua-journal-{Guid.NewGuid():n}.jsonl");
