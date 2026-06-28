@@ -165,4 +165,67 @@ if [[ "$exit_code" -ne 2 ]]; then
   exit 1
 fi
 
+echo "Validating per-lane timeout kills the whole process tree (no orphaned grandchildren)"
+# The lane command shells out and that shell backgrounds a long-lived grandchild — exactly the
+# shape of a real model-CLI invocation. The grandchild records its PID and sleeps far longer
+# than the lane budget. After the (timed-out) run returns, the grandchild must be dead: if only
+# the /bin/sh wrapper were killed, the reparented grandchild would survive and keep burning the
+# budget the harness claims to bound.
+GRANDCHILD_PID_FILE="$WORKDIR/grandchild.pid"
+cat >"$WORKDIR/hang_lane.sh" <<HANG
+#!/usr/bin/env bash
+# Background a grandchild that outlives the lane budget, then block on it.
+( echo \$\$ >"$GRANDCHILD_PID_FILE"; exec sleep 600 ) &
+child=\$!
+wait "\$child"
+HANG
+chmod +x "$WORKDIR/hang_lane.sh"
+
+set +e
+HONUA_EVAL_CODEX_ENABLED=true \
+HONUA_EVAL_CODEX_COMMAND="bash $WORKDIR/hang_lane.sh" \
+HONUA_EVAL_LANE_TIMEOUT_SECONDS=2 \
+python3 "$REPO_ROOT/scripts/run-multi-model-operator-evals.py" \
+  --server-report "$SERVER_REPORT" \
+  --scenario-dir "$SCENARIO_DIR" \
+  --output-dir "$WORKDIR/timeout" \
+  --run-lanes \
+  --hard-fail
+exit_code=$?
+set -e
+
+if [[ "$exit_code" -ne 2 ]]; then
+  echo "[ERROR] Expected hard-fail exit code 2 for a timed-out release-gate lane, got ${exit_code}." >&2
+  exit 1
+fi
+
+python3 - "$WORKDIR/timeout/report.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+codex = next(lane for lane in report["lanes"] if lane["id"] == "codex")
+assert codex["status"] == "failed", codex["status"]
+assert any(result.get("timedOut") for result in codex["scenarioResults"]), "expected a timedOut scenario result"
+PY
+
+if [[ ! -f "$GRANDCHILD_PID_FILE" ]]; then
+  echo "[ERROR] grandchild never recorded its PID; smoke setup is broken." >&2
+  exit 1
+fi
+grandchild_pid="$(cat "$GRANDCHILD_PID_FILE")"
+# Give the OS a brief moment to finish reaping the killed group.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if ! kill -0 "$grandchild_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.2
+done
+if kill -0 "$grandchild_pid" 2>/dev/null; then
+  echo "[ERROR] grandchild PID ${grandchild_pid} survived the lane timeout — process tree was NOT killed." >&2
+  kill -9 "$grandchild_pid" 2>/dev/null || true
+  exit 1
+fi
+
 echo "Multi-model operator eval smoke check passed."
