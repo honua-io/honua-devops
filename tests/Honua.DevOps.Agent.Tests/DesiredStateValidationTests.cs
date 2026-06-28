@@ -55,10 +55,41 @@ public sealed class DesiredStateValidationTests
             case "ServiceBundle":
                 ValidateServiceBundle(document, documents, conventions);
                 break;
+            case "OperationalWorkflow":
+                ValidateOperationalWorkflow(document);
+                break;
             default:
                 throw new Xunit.Sdk.XunitException(
                     $"Unsupported desired-state kind `{document.Kind}` in `{document.Path}`.");
         }
+    }
+
+    // OperationalWorkflow: the declarative catalog of operations the AI DevOps operator may run.
+    // Fails closed unless the workflow is rollback-safe — a non-empty rollback.procedure AND
+    // rollback.verify — because you do not let an autonomous operator run an action it cannot prove
+    // it can undo. This complements the ExecutionPolicy `rollback-intent` required-check (intent
+    // declared) by requiring the rollback be specified + verifiable per workflow.
+    private static readonly string[] OperationalWorkflowCategories =
+        ["data-ops", "platform-ops", "gp-ops", "release-ops"];
+
+    private static readonly string[] OperationalWorkflowAutonomyTiers = ["1", "2", "3"];
+
+    private static void ValidateOperationalWorkflow(DesiredStateDocument document)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(document.RequireScalar("spec", "intent")));
+        Assert.Contains(document.RequireScalar("spec", "category"), OperationalWorkflowCategories);
+        Assert.Contains(document.RequireScalar("spec", "autonomyTier"), OperationalWorkflowAutonomyTiers);
+        Assert.False(string.IsNullOrWhiteSpace(document.RequireScalar("spec", "executionPolicyRef")));
+
+        Assert.NotEmpty(document.RequireSequence("spec", "preconditions"));
+        Assert.NotEmpty(document.RequireSequence("spec", "steps"));
+        Assert.NotEmpty(document.RequireSequence("spec", "verify"));
+
+        // The safety rule: a verifiable rollback is mandatory.
+        Assert.NotEmpty(document.RequireSequence("spec", "rollback", "procedure"));
+        Assert.NotEmpty(document.RequireSequence("spec", "rollback", "verify"));
+
+        Assert.False(string.IsNullOrWhiteSpace(document.RequireScalar("spec", "integrationTest")));
     }
 
     private static void ValidatePlatformStack(DesiredStateDocument document, DesiredStateConventions conventions)
