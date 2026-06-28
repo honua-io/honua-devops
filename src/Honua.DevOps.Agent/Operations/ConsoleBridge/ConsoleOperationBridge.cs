@@ -994,17 +994,19 @@ internal sealed class ConsoleOperationBridge(
 
     private static (string Status, string Phase) MapServerStatus(string? serverStatus)
     {
-        return (serverStatus ?? string.Empty).Trim().ToLowerInvariant() switch
+        // The raw server vocabulary is recognized once by ServerOperationStatusParser; this
+        // switch only maps the canonical member onto the bridge's (status, phase) pair.
+        return ServerOperationStatusParser.Recognize(serverStatus) switch
         {
-            "planned" => ("planned", "plan"),
-            "awaitingapproval" or "awaiting-approval" => ("awaiting-approval", "approval"),
-            "submitted" => ("submitted", "execution"),
-            "reconciling" => ("reconciling", "execution"),
-            "succeeded" => ("succeeded", "complete"),
-            "failed" => ("failed", "complete"),
-            "rollbackrequested" or "rollback-requested" => ("rollback-requested", "rollback"),
-            "rolledback" or "rolled-back" => ("rolled-back", "rollback"),
-            "manualinterventionrequired" or "manual-intervention-required" => ("manual-intervention-required", "blocked"),
+            ServerOperationStatus.Planned => ("planned", "plan"),
+            ServerOperationStatus.AwaitingApproval => ("awaiting-approval", "approval"),
+            ServerOperationStatus.Submitted => ("submitted", "execution"),
+            ServerOperationStatus.Reconciling => ("reconciling", "execution"),
+            ServerOperationStatus.Succeeded => ("succeeded", "complete"),
+            ServerOperationStatus.Failed => ("failed", "complete"),
+            ServerOperationStatus.RollbackRequested => ("rollback-requested", "rollback"),
+            ServerOperationStatus.RolledBack => ("rolled-back", "rollback"),
+            ServerOperationStatus.ManualInterventionRequired => ("manual-intervention-required", "blocked"),
             _ => (BridgeStatus.Unknown, BridgeStatus.Unknown)
         };
     }
@@ -1019,17 +1021,22 @@ internal sealed class ConsoleOperationBridge(
     // decision, never by reading a server status.
     internal static string MapProposalLifecycle(string? serverStatus, bool approvalRequired)
     {
-        return (serverStatus ?? string.Empty).Trim().ToLowerInvariant() switch
+        // The raw server vocabulary is recognized once by ServerOperationStatusParser; this
+        // switch only projects the canonical member onto the ProposalLifecycle constant. The
+        // Unrecognized case is the only synthesis: a freshly recorded proposal whose status
+        // cannot be read enters the lifecycle as AwaitingApproval (the safe default the deploy
+        // target enforces) when approval is required, or Planned otherwise.
+        return ServerOperationStatusParser.Recognize(serverStatus) switch
         {
-            "planned" => ProposalLifecycle.Planned,
-            "awaitingapproval" or "awaiting-approval" => ProposalLifecycle.AwaitingApproval,
-            "submitted" => ProposalLifecycle.Submitted,
-            "reconciling" => ProposalLifecycle.Reconciling,
-            "succeeded" => ProposalLifecycle.Succeeded,
-            "failed" => ProposalLifecycle.Failed,
-            "rollbackrequested" or "rollback-requested" => ProposalLifecycle.RollbackRequested,
-            "rolledback" or "rolled-back" => ProposalLifecycle.RolledBack,
-            "manualinterventionrequired" or "manual-intervention-required" => ProposalLifecycle.ManualInterventionRequired,
+            ServerOperationStatus.Planned => ProposalLifecycle.Planned,
+            ServerOperationStatus.AwaitingApproval => ProposalLifecycle.AwaitingApproval,
+            ServerOperationStatus.Submitted => ProposalLifecycle.Submitted,
+            ServerOperationStatus.Reconciling => ProposalLifecycle.Reconciling,
+            ServerOperationStatus.Succeeded => ProposalLifecycle.Succeeded,
+            ServerOperationStatus.Failed => ProposalLifecycle.Failed,
+            ServerOperationStatus.RollbackRequested => ProposalLifecycle.RollbackRequested,
+            ServerOperationStatus.RolledBack => ProposalLifecycle.RolledBack,
+            ServerOperationStatus.ManualInterventionRequired => ProposalLifecycle.ManualInterventionRequired,
             _ => approvalRequired ? ProposalLifecycle.AwaitingApproval : ProposalLifecycle.Planned
         };
     }

@@ -14,21 +14,38 @@ namespace Honua.DevOps.Agent.Operations.WorkIntake;
 /// </summary>
 internal sealed class WorkIntakeWebhookHandler
 {
+    // Per-request deadline for the onAccepted callback. The callback does a synchronous
+    // outbound write-back to the source system (the provenance comment), whose only other
+    // bound is the connector's HttpClient timeout (~20s). Without a tighter deadline a slow
+    // backend holds the inbound delivery open long enough that the sender (e.g. Jira) hits its
+    // OWN webhook-delivery timeout and RETRIES — and because the provenance comment is a
+    // non-idempotent POST, each retry posts a duplicate "Received by honua-devops" comment.
+    // Bounding the callback to a few seconds returns the 202 well inside a typical sender
+    // delivery window, so the inbound ack — not the outbound write — drives the response. The
+    // provenance write is best-effort by design (WorkIntakeReporter already swallows its own
+    // failures), so a timed-out write-back still accepts the item.
+    internal static readonly TimeSpan DefaultAcceptedDeadline = TimeSpan.FromSeconds(5);
+
     private readonly IIntakeSignatureVerifier _verifier;
     private readonly string _provider;
     private readonly string? _projectFilter;
     private readonly Func<WorkItem, CancellationToken, Task>? _onAccepted;
+    private readonly TimeSpan _acceptedDeadline;
 
     internal WorkIntakeWebhookHandler(
         IIntakeSignatureVerifier verifier,
         string provider = WorkItem.JiraProvider,
         string? projectFilter = null,
-        Func<WorkItem, CancellationToken, Task>? onAccepted = null)
+        Func<WorkItem, CancellationToken, Task>? onAccepted = null,
+        TimeSpan? acceptedDeadline = null)
     {
         _verifier = verifier ?? throw new ArgumentNullException(nameof(verifier));
         _provider = string.IsNullOrWhiteSpace(provider) ? WorkItem.JiraProvider : provider.Trim();
         _projectFilter = string.IsNullOrWhiteSpace(projectFilter) ? null : projectFilter.Trim();
         _onAccepted = onAccepted;
+        _acceptedDeadline = acceptedDeadline is { } deadline && deadline > TimeSpan.Zero
+            ? deadline
+            : DefaultAcceptedDeadline;
     }
 
     internal async Task<WorkIntakeHandlerResult> HandleAsync(
@@ -80,7 +97,24 @@ internal sealed class WorkIntakeWebhookHandler
 
         if (_onAccepted is not null)
         {
-            await _onAccepted(workItem, cancellationToken);
+            // Bound the write-back so a slow backend cannot hold the inbound delivery open past
+            // the sender's webhook-delivery timeout (which would trigger a duplicate-comment
+            // retry). The deadline is linked to the listener token so shutdown still cancels.
+            using CancellationTokenSource deadline =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(_acceptedDeadline);
+            try
+            {
+                await _onAccepted(workItem, deadline.Token);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested
+                && !cancellationToken.IsCancellationRequested)
+            {
+                // The write-back exceeded its per-request deadline. The item is still accepted
+                // (the provenance comment is best-effort); ack now rather than risk a sender
+                // delivery-retry that would post a duplicate comment.
+                return new WorkIntakeHandlerResult(202, "accepted-writeback-deadline", workItem);
+            }
         }
 
         return new WorkIntakeHandlerResult(202, "accepted", workItem);

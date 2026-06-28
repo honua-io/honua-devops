@@ -26,8 +26,6 @@ internal sealed class ApprovalWaiter
     internal const string ApprovalTimeoutSecondsVariable = "HONUA_DEVOPS_APPROVAL_TIMEOUT_SECONDS";
     internal const int DefaultApprovalTimeoutSeconds = 3600;
 
-    private const string AwaitingApprovalStatus = "awaitingapproval";
-
     private readonly BackendGateway _gateway;
     private readonly OperatorPolicyModel _policy;
     private readonly TimeSpan _timeout;
@@ -235,10 +233,7 @@ internal sealed class ApprovalWaiter
     }
 
     private static bool IsAwaitingApproval(string status)
-        => NormalizeStatus(status) == AwaitingApprovalStatus;
-
-    private static string NormalizeStatus(string status)
-        => status.Trim().Replace("-", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
+        => ServerOperationStatusParser.IsAwaitingApproval(status);
 
     private static bool LooksLikeNotFound(string? detail)
         => detail is not null

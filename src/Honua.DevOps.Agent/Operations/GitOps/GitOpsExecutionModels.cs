@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -180,40 +181,30 @@ internal sealed record GitOpsActuationDecision(
 // metadataRelease.rollbackPlan that carries the data-affecting classification).
 internal static class DeployOperationReader
 {
-    private static readonly string[] TerminalStatuses =
-    [
-        "succeeded",
-        "failed",
-        "rolledback",
-        "rolled-back",
-        "manualinterventionrequired",
-        "manual-intervention-required"
-    ];
-
-    private static readonly string[] SuccessStatuses = ["succeeded"];
-
-    private static readonly string[] RolledBackStatuses = ["rolledback", "rolled-back"];
-
     internal static string? ReadOperationId(JsonElement root)
         => ReadString(root, "operationId", "operation_id", "id");
 
     internal static string? ReadStatus(JsonElement root)
         => ReadString(root, "status", "state", "workflowStatus");
 
+    // Status recognition delegates to the single canonical parser
+    // (ServerOperationStatusParser) so the honua-server WorkflowOperationStatus vocabulary is
+    // understood in exactly one place across the executors, the ApprovalWaiter, and the
+    // Console bridge.
     internal static bool IsTerminal(string? status)
-        => status is not null && TerminalStatuses.Contains(Normalize(status));
+        => ServerOperationStatusParser.IsTerminal(status);
 
     internal static bool IsSuccess(string? status)
-        => status is not null && SuccessStatuses.Contains(Normalize(status));
+        => ServerOperationStatusParser.IsSuccess(status);
 
     internal static bool IsRolledBack(string? status)
-        => status is not null && RolledBackStatuses.Contains(Normalize(status));
+        => ServerOperationStatusParser.IsRolledBack(status);
 
     // True when the server has parked the operation at AwaitingApproval, i.e. the deploy
     // plan required approval. The executor must NOT auto-submit such an operation under
     // pr-first; it surfaces the operationId for an external approver instead.
     internal static bool IsAwaitingApproval(string? status)
-        => Normalize(status ?? string.Empty) is "awaitingapproval" or "awaiting-approval";
+        => ServerOperationStatusParser.IsAwaitingApproval(status);
 
     internal static IReadOnlyList<string> ReadBlockingReasons(JsonElement root)
         => ReadStringArray(root, "blockingReasons", "blocking_reasons");
@@ -272,7 +263,7 @@ internal static class DeployOperationReader
     // resolve. They are tolerant of missing fields so a partial read still yields a useful signal.
 
     internal static bool IsManualInterventionRequired(string? status)
-        => Normalize(status ?? string.Empty) is "manualinterventionrequired" or "manual-intervention-required";
+        => ServerOperationStatusParser.IsManualInterventionRequired(status);
 
     internal static string? ReadCurrentPhase(JsonElement root)
         => ReadString(root, "currentPhase", "current_phase");
