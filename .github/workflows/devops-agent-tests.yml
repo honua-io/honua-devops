@@ -1,0 +1,54 @@
+name: DevOps Agent Tests
+
+# Runs the Honua.DevOps.Agent xUnit suite (rollback planner, fault injection,
+# deploy/upgrade toolkit, operator flow) on every PR and push to trunk.
+#
+# Rationale: the DevOps AI operator surface carries the release "operate" story
+# (health-gated fix-forward convergence). Its unit tests must actually execute in
+# CI, not merely build. Live/integration tests self-gate on
+# HONUA_DEVOPS_LIVE_INTEGRATION and no-op when it is unset, so the full suite is
+# safe to run here without credentials or a live backend.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - trunk
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: >-
+          dotnet test tests/Honua.DevOps.Agent.Tests/Honua.DevOps.Agent.Tests.csproj
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=devops-agent-tests.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devops-agent-test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore

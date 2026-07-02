@@ -129,7 +129,7 @@ live MCP surface 1:1):
 `plan_server_upgrade`, `plan_gitops_engine`,
 `generate_metadata_release_changeset`,
 `explain_metadata_release_changeset`, `plan_metadata_release_gitops`,
-`deploy_service_gitops`, `rollback_gitops_operation`,
+`deploy_service_gitops`, `plan_forward_fix`,
 `inspect_metadata_release`, `analyze_customer_requirements`,
 `recommend_deployment_topology`, `triage_support_ticket`,
 `process_pending_tickets`, `get_support_ticket_console_view`,
@@ -141,11 +141,13 @@ live MCP surface 1:1):
 `get_devops_operation_status`, `build_ai_devops_brief`,
 `explain_release_package`.
 
-> The mutating/decision tools `deploy_service_gitops`,
-> `rollback_gitops_operation`, and `record_gitops_proposal_decision` stay behind
-> the same execution-mode/tier and approval gates as the interactive agent (see
-> "Safety model over MCP" below); in the default `plan` + `pr-first` posture they
-> return an approval-required projection rather than acting.
+> The mutating/decision tools `deploy_service_gitops` and
+> `record_gitops_proposal_decision` stay behind the same execution-mode/tier and
+> approval gates as the interactive agent (see "Safety model over MCP" below); in
+> the default `plan` + `pr-first` posture they return an approval-required
+> projection rather than acting. Recovery uses the health-gated fix-forward planner
+> `plan_forward_fix` (verify health -> propose a corrected revision -> re-deploy),
+> not rollback (see "Release posture" under the safety model).
 
 ## Safety model over MCP
 
@@ -175,6 +177,26 @@ re-implemented and none can be bypassed by the client**:
   can read.
 - Argument redaction is unchanged: audited arguments and summaries pass
   through the same `Redaction` scrubbing.
+
+### Release posture: single-environment deploy + fix-forward
+
+The MVP operate model is a **single-environment deploy** verified against health,
+where an unhealthy outcome is recovered by rolling **forward** — never back:
+
+- **Rollback is experimental and OFF by default.** The `rollback_gitops_operation`
+  tool is *not advertised* (removed from the catalog), and the handler self-refuses
+  with `experimental-disabled`. The code is retained but gated behind
+  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`. With it enabled the catalog exposes 35
+  tools (rollback in addition to `plan_forward_fix`).
+- **Cross-environment promotion is experimental and OFF by default.**
+  `deploy_service_gitops` refuses a `promote` action or any multi-environment
+  request with `experimental-disabled`; single-environment `sync`/`apply` is
+  unaffected. Retained behind `HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION=true`.
+- **Recovery is `plan_forward_fix`** (always advertised): it verifies live
+  readiness + deploy preflight (and a prior operation's terminal/smoke evidence),
+  then returns an ordered forward-convergence plan (diagnose -> propose corrected
+  revision -> re-deploy through the governed create path -> re-verify), never a
+  rollback. It is read-only and plan-only.
 
 This server is part of the private operator surface (proprietary license). It
 is not the public geospatial-mcp data-access surface — see

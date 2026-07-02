@@ -10,7 +10,9 @@ internal sealed record OperationRuntime(
     string TerraformLocalPath,
     string[] TerraformDeploymentTargets,
     string? DeployTargetId = null,
-    string[]? ProductionEnvironments = null)
+    string[]? ProductionEnvironments = null,
+    bool RollbackEnabled = false,
+    bool CrossEnvironmentPromotionEnabled = false)
 {
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
     private static readonly string[] DefaultProductionEnvironments = ["prod", "production", "prd"];
@@ -36,6 +38,13 @@ internal sealed record OperationRuntime(
     private const string TerraformLocalPathVariable = "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH";
     private const string DeployTargetIdVariable = "HONUA_DEVOPS_DEPLOY_TARGET_ID";
     private const string ProductionEnvironmentsVariable = "HONUA_DEVOPS_PRODUCTION_ENVIRONMENTS";
+
+    // Release posture: rollback + cross-environment promotion are EXPERIMENTAL and OFF for the
+    // MVP release. The operate story is single-environment deploy with health-gated fix-forward
+    // convergence; rollback/auto-rollback and cross-environment promotion are post-release. The
+    // code is retained but not advertised/actuated unless these flags are explicitly enabled.
+    internal const string RollbackEnabledVariable = "HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK";
+    internal const string CrossEnvironmentPromotionEnabledVariable = "HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION";
 
     internal static OperationRuntime Load()
     {
@@ -79,6 +88,11 @@ internal sealed record OperationRuntime(
         string[] productionEnvironments = ParseProductionEnvironments(
             Environment.GetEnvironmentVariable(ProductionEnvironmentsVariable));
 
+        bool rollbackEnabled = ParseExperimentalFlag(
+            Environment.GetEnvironmentVariable(RollbackEnabledVariable));
+        bool crossEnvironmentPromotionEnabled = ParseExperimentalFlag(
+            Environment.GetEnvironmentVariable(CrossEnvironmentPromotionEnabledVariable));
+
         return new OperationRuntime(
             mode,
             tier,
@@ -89,7 +103,28 @@ internal sealed record OperationRuntime(
             terraformLocalPath,
             terraformTargets,
             deployTargetId,
-            productionEnvironments);
+            productionEnvironments,
+            rollbackEnabled,
+            crossEnvironmentPromotionEnabled);
+    }
+
+    /// <summary>
+    /// Parses an experimental capability flag. Default-OFF: only an explicit truthy value
+    /// (<c>true</c>/<c>1</c>/<c>yes</c>/<c>on</c>, case-insensitive) enables the capability.
+    /// Any other value (including unset, empty, or <c>false</c>) leaves it disabled.
+    /// </summary>
+    private static bool ParseExperimentalFlag(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "true" or "1" or "yes" or "on" or "enabled" => true,
+            _ => false
+        };
     }
 
     private static string[] ParseProductionEnvironments(string? value)

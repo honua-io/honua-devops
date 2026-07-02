@@ -188,7 +188,7 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         "analyze_customer_requirements",
         "recommend_deployment_topology",
         "record_gitops_proposal_decision",
-        "rollback_gitops_operation",
+        "plan_forward_fix",
         "inspect_metadata_release",
         "triage_support_ticket",
         "process_pending_tickets",
