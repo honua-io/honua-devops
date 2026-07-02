@@ -18,7 +18,7 @@ internal static class CapabilityToolset
         ConsoleOperationBridge consoleBridge = new(runtime, gateway, policy);
         ReleasePackageExplainer releaseExplainer = new(gateway.Configuration);
 
-        return
+        List<AITool> tools =
         [
             CreateTool(
                 () => toolkit.DescribeEnvironmentAsync(),
@@ -79,6 +79,11 @@ internal static class CapabilityToolset
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),
                 "deploy_service_gitops",
                 "Generate GitOps deployment actions across environments, and (only when EXECUTION_MODE=execute and the approval gate is satisfied) actuate sync/promote THROUGH the honua-server deploy-control endpoints: validate (preflight+plan), create a durable operation (submitImmediately=false), pause for external approval under pr-first or when the server requires approval, and only submit+poll to terminal when policy/approval allows. Default plan posture mutates nothing."),
+            CreateTool(
+                (string service, string environment, string forwardRevision, string priorOperationId, string symptoms)
+                    => toolkit.PlanForwardFixAsync(service, environment, forwardRevision, priorOperationId, symptoms),
+                "plan_forward_fix",
+                "Health-gated FIX-FORWARD (roll-forward convergence) planner and the release's operate-recovery loop. Verifies the health of a single-environment deploy (live readiness + deploy preflight, plus the prior operation's terminal status/failing phase/smoke evidence/server-side rollback when priorOperationId is given) and, when unhealthy, returns an ordered plan to recover by rolling FORWARD (diagnose -> propose a corrected revision -> re-deploy through the governed create path -> re-verify), NEVER by rolling back. Read-only and plan-only: no mutation, submit, promotion, or rollback. Returns readiness of healthy-converged / forward-fix-required / backend-unavailable. Use this instead of rollback for recovery in this release."),
             CreateTool(
                 (string operationId, string reason)
                     => toolkit.RollbackGitOpsOperationAsync(operationId, reason),
@@ -189,6 +194,17 @@ internal static class CapabilityToolset
                 "explain_release_package",
                 "Explain a Console release package without computing compatibility or scraping Git/CI. Input is the release-package evidence JSON (server compatibility report, script coverage, PR preview, promotion gates, rollback plan). Returns a structured, evidence-linked explanation: per-section status, promotion gates, required approvals, residual risk, a rollback classification, and a human-readable summary, with overall readiness of ready/warning/blocked/unknown/rollback-required. mode is 'explanation' (read-only, default) or 'proposal' (governed handoff only; never executes). correlationId links the Console action to the server release package and downstream PR/CI/GitOps operations.")
         ];
+
+        // Release posture: rollback is experimental/off. Do not advertise the rollback actuation
+        // tool to the AI operator unless explicitly enabled. Recovery is fix-forward (roll-forward);
+        // read-only rollback-lifecycle detection (inspect_metadata_release) stays available. The
+        // RollbackGitOpsOperationAsync method also self-refuses when the flag is off.
+        if (!runtime.RollbackEnabled)
+        {
+            tools.RemoveAll(tool => string.Equals(tool.Name, "rollback_gitops_operation", StringComparison.Ordinal));
+        }
+
+        return tools;
     }
 
     private static AITool CreateTool(Delegate function, string name, string description)

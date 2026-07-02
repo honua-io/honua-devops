@@ -249,7 +249,8 @@ public class HonuaOperationsToolkitDeployTests
             CreateRuntime(
                 mode: ExecutionMode.Execute,
                 executionTier: ExecutionTier.PromoteProd,
-                deployTargetId: "prod-api"),
+                deployTargetId: "prod-api",
+                crossEnvironmentPromotionEnabled: true),
             gateway,
             DirectAllowedPolicy());
 
@@ -487,7 +488,10 @@ public class HonuaOperationsToolkitDeployTests
         using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
 
         HonuaOperationsToolkit toolkit = new(
-            CreateRuntime(mode: ExecutionMode.Execute, executionTier: ExecutionTier.PromoteProd),
+            CreateRuntime(
+                mode: ExecutionMode.Execute,
+                executionTier: ExecutionTier.PromoteProd,
+                crossEnvironmentPromotionEnabled: true),
             gateway,
             DirectAllowedPolicy());
 
@@ -563,7 +567,8 @@ public class HonuaOperationsToolkitDeployTests
         string gitOpsTool = "honua-gitops",
         ExecutionMode mode = ExecutionMode.Plan,
         ExecutionTier executionTier = ExecutionTier.Plan,
-        string? deployTargetId = null)
+        string? deployTargetId = null,
+        bool crossEnvironmentPromotionEnabled = false)
     {
         return new OperationRuntime(
             mode,
@@ -574,7 +579,10 @@ public class HonuaOperationsToolkitDeployTests
             TerraformRef: "main",
             TerraformLocalPath: "/tmp/honua-terraform",
             TerraformDeploymentTargets: ["eks", "aks"],
-            DeployTargetId: deployTargetId);
+            DeployTargetId: deployTargetId,
+            ProductionEnvironments: null,
+            RollbackEnabled: false,
+            CrossEnvironmentPromotionEnabled: crossEnvironmentPromotionEnabled);
     }
 
     private static BackendGateway CreateGateway(Func<HttpRequestMessage, HttpResponseMessage> responder)

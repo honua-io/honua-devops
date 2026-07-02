@@ -399,6 +399,18 @@ internal sealed partial class HonuaOperationsToolkit(
         string normalizedTerraformRepository = SanitizePayloadValue(runtime.TerraformRepository, "terraform repository");
         string normalizedTerraformRef = ValidateRevision(runtime.TerraformRef, "terraform ref");
         string[] normalizedDeploymentTargets = ValidateDeploymentTargets(runtime.TerraformDeploymentTargets);
+
+        // Release posture: cross-environment promotion is experimental/off. A `promote` action or
+        // any multi-environment deploy is a cross-environment promotion; refuse it and keep the
+        // single-environment forward path. Retained behind HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION.
+        if (!runtime.CrossEnvironmentPromotionEnabled &&
+            (normalizedAction.Equals("promote", StringComparison.OrdinalIgnoreCase) || targetEnvironments.Length > 1))
+        {
+            return ReleaseCapabilityGate.BuildCrossEnvironmentPromotionDisabledResponse(
+                targetEnvironments,
+                normalizedAction);
+        }
+
         DeploymentAuthorization authorization = AuthorizeDeployment(targetEnvironments, normalizedAction);
         RuntimeAdapterRequest adapterRequest = new(
             Service: normalizedService,
@@ -671,6 +683,14 @@ internal sealed partial class HonuaOperationsToolkit(
         string reason,
         CancellationToken cancellationToken = default)
     {
+        // Release posture: rollback is experimental/off. Recovery is fix-forward (roll-forward).
+        // The rollback executor is retained but not actuated unless HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK
+        // is explicitly enabled. Belt-and-suspenders: the tool is also unadvertised in CapabilityToolset.
+        if (!runtime.RollbackEnabled)
+        {
+            return ReleaseCapabilityGate.BuildRollbackDisabledResponse();
+        }
+
         string normalizedOperationId = DeploymentInputs.Normalize(operationId, string.Empty);
         if (normalizedOperationId.Length is < 1 or > 200 ||
             normalizedOperationId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
