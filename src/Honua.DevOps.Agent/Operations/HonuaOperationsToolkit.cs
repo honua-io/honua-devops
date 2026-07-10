@@ -666,6 +666,7 @@ internal sealed partial class HonuaOperationsToolkit(
     private static string MapActuationStatus(string actuationStatus)
         => actuationStatus switch
         {
+            GitOpsExecutionStatus.ExperimentalDisabled => "experimental-disabled",
             GitOpsExecutionStatus.PlanOnly => "plan-only",
             GitOpsExecutionStatus.AwaitingApproval => "awaiting-approval",
             GitOpsExecutionStatus.Succeeded => "execute-succeeded",
@@ -683,33 +684,18 @@ internal sealed partial class HonuaOperationsToolkit(
         string reason,
         CancellationToken cancellationToken = default)
     {
-        // Release posture: rollback is experimental/off. Recovery is fix-forward (roll-forward).
-        // The rollback executor is retained but not actuated unless HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK
-        // is explicitly enabled. Belt-and-suspenders: the tool is also unadvertised in CapabilityToolset.
-        if (!runtime.RollbackEnabled)
-        {
-            return ReleaseCapabilityGate.BuildRollbackDisabledResponse();
-        }
-
-        string normalizedOperationId = DeploymentInputs.Normalize(operationId, string.Empty);
-        if (normalizedOperationId.Length is < 1 or > 200 ||
-            normalizedOperationId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
-        {
-            throw new InvalidOperationException("Operation id must be 1-200 characters with no whitespace or control characters.");
-        }
-
-        string normalizedReason = SanitizeFreeText(reason, "not provided");
-        // Rollback authorization mirrors a destructive action: never treated as plan/dry-run by
-        // request shape; the executor folds EXECUTION_MODE + approval mode + tier into its decision.
-        DeploymentAuthorization authorization = AuthorizeDeployment(["prod"], "rollback");
-
-        RollbackExecutor rollbackExecutor = new(runtime, gateway, EffectivePolicy);
-        GitOpsExecutionResult execution = await rollbackExecutor.ExecuteRollbackAsync(
-            normalizedOperationId,
-            normalizedReason,
-            authorization.DryRun,
-            authorization.PolicyGate,
+        RollbackExecutionAttempt attempt = await ExecuteGovernedRollbackAsync(
+            operationId,
+            reason,
+            ["prod"],
             cancellationToken);
+        if (attempt.CapabilityRefusal is not null)
+        {
+            return attempt.CapabilityRefusal;
+        }
+
+        GitOpsExecutionResult execution = attempt.Execution!;
+        string normalizedOperationId = attempt.OperationId;
 
         List<string> findings =
         [
@@ -746,6 +732,55 @@ internal sealed partial class HonuaOperationsToolkit(
             ],
             BackendSteps: execution.BackendSteps);
     }
+
+    // The sole toolkit path for rollback actuation. It applies the release capability gate,
+    // validates the operation id, resolves execution tier / approval policy, and delegates to
+    // RollbackExecutor for server-side classification before any rollback POST is possible.
+    // Runbooks and auto-remediation must use this coordinator instead of the raw gateway.
+    private async Task<RollbackExecutionAttempt> ExecuteGovernedRollbackAsync(
+        string operationId,
+        string reason,
+        IReadOnlyList<string> targetEnvironments,
+        CancellationToken cancellationToken)
+    {
+        OperationResponse? capabilityRefusal = ReleaseCapabilityGate.GetRollbackRefusal(runtime);
+        if (capabilityRefusal is not null)
+        {
+            return new RollbackExecutionAttempt(operationId, capabilityRefusal, null);
+        }
+
+        string normalizedOperationId = DeploymentInputs.Normalize(operationId, string.Empty);
+        if (normalizedOperationId.Length is < 1 or > 200 ||
+            normalizedOperationId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
+        {
+            throw new InvalidOperationException("Operation id must be 1-200 characters with no whitespace or control characters.");
+        }
+
+        string normalizedReason = SanitizeFreeText(reason, "not provided");
+        DeploymentAuthorization authorization = AuthorizeDeployment(targetEnvironments, "rollback");
+        RollbackExecutor rollbackExecutor = new(runtime, gateway, EffectivePolicy);
+        GitOpsExecutionResult execution = await rollbackExecutor.ExecuteRollbackAsync(
+            normalizedOperationId,
+            normalizedReason,
+            authorization.DryRun,
+            authorization.PolicyGate,
+            cancellationToken);
+
+        if (execution.Status == GitOpsExecutionStatus.ExperimentalDisabled)
+        {
+            return new RollbackExecutionAttempt(
+                normalizedOperationId,
+                ReleaseCapabilityGate.BuildRollbackDisabledResponse(),
+                null);
+        }
+
+        return new RollbackExecutionAttempt(normalizedOperationId, null, execution);
+    }
+
+    private sealed record RollbackExecutionAttempt(
+        string OperationId,
+        OperationResponse? CapabilityRefusal,
+        GitOpsExecutionResult? Execution);
 
     [Description("Detect and diagnose the outcome of an additive metadata-release layer-evolution operation by package id (honua-server metadata-release lifecycle). Read-only: it reads the durable server operation, reports whether the post-publish Smoke health gate ran, whether the deploy was rolled back (metadata reactivation + reversible down-script, i.e. DB-inclusive), the rollback class, the failing phase/error, and the smoke evidence. Use this after submitting a layer change to confirm the safe-rollback closed loop fired, then propose a human-approved resolve. It never mutates server state.")]
     public async Task<OperationResponse> InspectMetadataReleaseAsync(
@@ -1571,19 +1606,45 @@ internal sealed partial class HonuaOperationsToolkit(
             runtime.ExecutionTier is ExecutionTier.ExecuteLowerEnv or ExecutionTier.PromoteProd or ExecutionTier.BreakGlass;
         bool readOnlyRunbook = IsReadOnlyHonuaRunbook(normalizedRunbook);
         bool writeHonuaRunbook = IsWriteHonuaRunbook(normalizedRunbook);
+        bool rollbackRunbook = IsRollbackHonuaRunbook(normalizedRunbook);
+
+        if (rollbackRunbook && ReleaseCapabilityGate.GetRollbackRefusal(runtime) is { } capabilityRefusal)
+        {
+            return capabilityRefusal;
+        }
+
         BackendCallResult? executionResult = null;
+        GitOpsExecutionResult? rollbackExecution = null;
         string status = !confirmed
             ? "confirmation-required"
             : executionAllowed || readOnlyRunbook ? "runbook-execute-ready" : "runbook-plan-ready";
 
         if (confirmed && (readOnlyRunbook || (executionAllowed && writeHonuaRunbook)))
         {
-            executionResult = await ExecuteHonuaRunbookAsync(
-                normalizedRunbook,
-                parameters,
-                executionAllowed,
-                cancellationToken);
-            status = executionResult.IsSuccess ? "runbook-executed" : "backend-error";
+            if (rollbackRunbook)
+            {
+                RollbackExecutionAttempt attempt = await ExecuteGovernedRollbackAsync(
+                    ExtractRequiredParameter(parameters, "operationId"),
+                    SanitizeFreeText(parameters, "approved runbook rollback"),
+                    [normalizedEnvironment],
+                    cancellationToken);
+                if (attempt.CapabilityRefusal is not null)
+                {
+                    return attempt.CapabilityRefusal;
+                }
+
+                rollbackExecution = attempt.Execution!;
+                status = MapRunbookRollbackStatus(rollbackExecution.Status);
+            }
+            else
+            {
+                executionResult = await ExecuteHonuaRunbookAsync(
+                    normalizedRunbook,
+                    parameters,
+                    executionAllowed,
+                    cancellationToken);
+                status = executionResult.IsSuccess ? "runbook-executed" : "backend-error";
+            }
         }
 
         List<string> findings =
@@ -1599,6 +1660,11 @@ internal sealed partial class HonuaOperationsToolkit(
             findings.Add($"Honua runbook result: {executionResult.Detail}");
             findings.Add($"Honua runbook response: {executionResult.PayloadPreview}");
         }
+        if (rollbackExecution is not null)
+        {
+            findings.Add($"Rollback actuation status: {rollbackExecution.Status} (mutated={rollbackExecution.Mutated}).");
+            findings.AddRange(rollbackExecution.Findings.Select(finding => $"Rollback: {finding}"));
+        }
 
         return new OperationResponse(
             Status: status,
@@ -1606,8 +1672,10 @@ internal sealed partial class HonuaOperationsToolkit(
             Findings: findings,
             Actions:
             [
-                executionResult is not null
+                executionResult is not null || rollbackExecution?.Mutated == true
                     ? "Persist the runbook response with the incident or support ticket evidence."
+                    : rollbackExecution is not null
+                        ? "Rollback was not issued; follow the approval, classification, and recovery findings above."
                     : executionAllowed
                         ? "Execute the runbook through the approved operator path and capture command output."
                     : "Prepare the runbook plan only; do not perform write-capable steps.",
@@ -1633,9 +1701,11 @@ internal sealed partial class HonuaOperationsToolkit(
                 "enterprise-runbook",
                 status,
                 SanitizeFreeText(parameters, "none")),
-            BackendSteps: executionResult is null
-                ? null
-                : [OperationBackendStep.From($"runbook:{normalizedRunbook}", executionResult, mutatesState: !readOnlyRunbook)]);
+            BackendSteps: rollbackExecution is not null
+                ? rollbackExecution.BackendSteps
+                : executionResult is null
+                    ? null
+                    : [OperationBackendStep.From($"runbook:{normalizedRunbook}", executionResult, mutatesState: !readOnlyRunbook)]);
     }
 
     private async Task<BackendCallResult> ExecuteHonuaRunbookAsync(
@@ -1656,11 +1726,6 @@ internal sealed partial class HonuaOperationsToolkit(
                 await gateway.SubmitDeployOperationAsync(
                     ExtractRequiredParameter(parameters, "operationId"),
                     SanitizeFreeText(parameters, "approved runbook submit"),
-                    cancellationToken),
-            "deploy-rollback" or "rollback" when writeExecutionAllowed =>
-                await gateway.RollbackDeployOperationAsync(
-                    ExtractRequiredParameter(parameters, "operationId"),
-                    SanitizeFreeText(parameters, "approved runbook rollback"),
                     cancellationToken),
             _ => new BackendCallResult(
                 IsSuccess: false,
@@ -1688,6 +1753,19 @@ internal sealed partial class HonuaOperationsToolkit(
             "deploy-rollback" or
             "rollback";
     }
+
+    private static bool IsRollbackHonuaRunbook(string runbookName)
+        => runbookName.Trim().ToLowerInvariant() is "deploy-rollback" or "rollback";
+
+    private static string MapRunbookRollbackStatus(string executionStatus)
+        => executionStatus switch
+        {
+            GitOpsExecutionStatus.RolledBack or GitOpsExecutionStatus.Succeeded => "runbook-executed",
+            GitOpsExecutionStatus.AwaitingApproval or GitOpsExecutionStatus.ApprovalRequired => "runbook-approval-required",
+            GitOpsExecutionStatus.PlanOnly => "runbook-plan-ready",
+            GitOpsExecutionStatus.ExperimentalDisabled => "experimental-disabled",
+            _ => "backend-error"
+        };
 
     private static string ExtractRequiredParameter(string parameters, string key)
     {
@@ -1765,17 +1843,31 @@ internal sealed partial class HonuaOperationsToolkit(
         string sanitizedOutcome = SanitizeFreeText(desiredOutcome, "restore service health");
         string? operationId = TryExtractParameter($"{detectedIssue} {desiredOutcome}", "operationId") ??
                               TryExtractParameter($"{detectedIssue} {desiredOutcome}", "operation-id");
+        if (!string.IsNullOrWhiteSpace(operationId) &&
+            ReleaseCapabilityGate.GetRollbackRefusal(runtime) is { } capabilityRefusal)
+        {
+            return capabilityRefusal;
+        }
+
         BackendCallResult? remediationResult = null;
+        GitOpsExecutionResult? rollbackExecution = null;
 
         if (canApply)
         {
             if (!string.IsNullOrWhiteSpace(operationId))
             {
-                remediationResult = await gateway.RollbackDeployOperationAsync(
+                RollbackExecutionAttempt attempt = await ExecuteGovernedRollbackAsync(
                     operationId,
                     $"auto-remediation:{normalizedService}:{sanitizedIssue}",
+                    [normalizedEnvironment],
                     cancellationToken);
-                status = remediationResult.IsSuccess ? "auto-remediation-applied" : "backend-error";
+                if (attempt.CapabilityRefusal is not null)
+                {
+                    return attempt.CapabilityRefusal;
+                }
+
+                rollbackExecution = attempt.Execution!;
+                status = MapAutoRemediationRollbackStatus(rollbackExecution.Status);
             }
             else if (Contains(sanitizedIssue, "drift") || Contains(sanitizedOutcome, "drift"))
             {
@@ -1801,6 +1893,11 @@ internal sealed partial class HonuaOperationsToolkit(
             findings.Add($"Honua remediation result: {remediationResult.Detail}");
             findings.Add($"Honua remediation response: {remediationResult.PayloadPreview}");
         }
+        if (rollbackExecution is not null)
+        {
+            findings.Add($"Rollback actuation status: {rollbackExecution.Status} (mutated={rollbackExecution.Mutated}).");
+            findings.AddRange(rollbackExecution.Findings.Select(finding => $"Rollback: {finding}"));
+        }
 
         return new OperationResponse(
             Status: status,
@@ -1808,8 +1905,10 @@ internal sealed partial class HonuaOperationsToolkit(
             Findings: findings,
             Actions:
             [
-                remediationResult is not null
+                remediationResult is not null || rollbackExecution?.Mutated == true
                     ? "Record the Honua remediation response and keep observing health until the issue signature clears."
+                    : rollbackExecution is not null
+                    ? "Rollback was not issued; follow the approval, classification, and recovery findings above."
                     : canApply
                     ? "Apply the narrow remediation through the operator execution path and capture rollback evidence."
                     : "Generate remediation proposal only; require approval before mutation.",
@@ -1835,10 +1934,22 @@ internal sealed partial class HonuaOperationsToolkit(
                 "enterprise-auto-remediation",
                 status,
                 sanitizedIssue),
-            BackendSteps: remediationResult is null
-                ? null
-                : [OperationBackendStep.From("auto-remediation", remediationResult, mutatesState: !string.IsNullOrWhiteSpace(operationId))]);
+            BackendSteps: rollbackExecution is not null
+                ? rollbackExecution.BackendSteps
+                : remediationResult is null
+                    ? null
+                    : [OperationBackendStep.From("auto-remediation", remediationResult, mutatesState: false)]);
     }
+
+    private static string MapAutoRemediationRollbackStatus(string executionStatus)
+        => executionStatus switch
+        {
+            GitOpsExecutionStatus.RolledBack or GitOpsExecutionStatus.Succeeded => "auto-remediation-applied",
+            GitOpsExecutionStatus.AwaitingApproval or GitOpsExecutionStatus.ApprovalRequired => "auto-remediation-approval-required",
+            GitOpsExecutionStatus.PlanOnly => "auto-remediation-approval-required",
+            GitOpsExecutionStatus.ExperimentalDisabled => "experimental-disabled",
+            _ => "backend-error"
+        };
 
     [Description(
         "Plan a deliverable's draft->preview->approved->published lifecycle (issue #77) bound to environments. " +

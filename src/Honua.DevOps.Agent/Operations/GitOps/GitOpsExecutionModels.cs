@@ -18,6 +18,9 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 // whether anything mutated and why.
 internal static class GitOpsExecutionStatus
 {
+    // The release capability is experimental and disabled. Nothing was read or mutated.
+    internal const string ExperimentalDisabled = "experimental-disabled";
+
     // EXECUTION_MODE=plan (default): nothing was created, submitted, or rolled back.
     internal const string PlanOnly = "plan-only";
 

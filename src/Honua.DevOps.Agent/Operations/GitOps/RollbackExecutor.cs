@@ -33,6 +33,23 @@ internal sealed class RollbackExecutor(
         string policyGate,
         CancellationToken cancellationToken)
     {
+        OperationResponse? capabilityRefusal = ReleaseCapabilityGate.GetRollbackRefusal(_runtime);
+        if (capabilityRefusal is not null)
+        {
+            return new GitOpsExecutionResult(
+                Status: GitOpsExecutionStatus.ExperimentalDisabled,
+                OperationId: operationId,
+                ServerStatus: null,
+                Mutated: false,
+                Decision: GitOpsActuationDecision.PlanOnly(
+                    _policy.ApprovalMode.ToConfigValue(),
+                    "release-capability-disabled",
+                    capabilityRefusal.Summary),
+                BackendSteps: [],
+                Findings: [.. capabilityRefusal.Findings, .. capabilityRefusal.Actions],
+                BlockingReasons: ["rollback-experimental-disabled"]);
+        }
+
         GitOpsActuationDecision decision = GitOpsActuationDecision.Resolve(
             _runtime.ExecutionMode,
             _policy,

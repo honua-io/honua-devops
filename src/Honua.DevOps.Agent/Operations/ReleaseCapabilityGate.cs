@@ -21,6 +21,17 @@ internal static class ReleaseCapabilityGate
     private const string RollbackEnableVariable = OperationRuntime.RollbackEnabledVariable;
     private const string CrossEnvEnableVariable = OperationRuntime.CrossEnvironmentPromotionEnabledVariable;
 
+    /// <summary>
+    /// Returns the canonical rollback refusal when the release capability is disabled,
+    /// otherwise <see langword="null"/>. Every rollback coordinator and executor uses
+    /// this shared decision so alternate tool names cannot bypass the release posture.
+    /// </summary>
+    internal static OperationResponse? GetRollbackRefusal(OperationRuntime runtime)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        return runtime.RollbackEnabled ? null : BuildRollbackDisabledResponse();
+    }
+
     /// <summary>Refusal for the rollback surface when it is disabled for the release.</summary>
     internal static OperationResponse BuildRollbackDisabledResponse()
         => new(

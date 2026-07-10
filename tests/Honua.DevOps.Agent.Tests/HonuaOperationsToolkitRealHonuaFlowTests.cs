@@ -34,7 +34,7 @@ public class HonuaOperationsToolkitRealHonuaFlowTests
     }
 
     [Fact]
-    public async Task RunbookExecuteAsync_ExecutesDeployRollbackAgainstHonuaAdminContract()
+    public async Task RunbookExecuteAsync_DeployRollbackDisabled_ReturnsSharedRefusalWithoutBackendCall()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
@@ -52,20 +52,130 @@ public class HonuaOperationsToolkitRealHonuaFlowTests
             confirmed: true,
             edition: "enterprise");
 
-        Assert.Equal("runbook-executed", response.Status);
-        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
-        Assert.Equal("POST", captured.Method);
-        Assert.Contains("/api/v1/admin/deploy/operations/deploy-123/rollback", captured.Uri, StringComparison.Ordinal);
-        using JsonDocument requestJson = JsonDocument.Parse(captured.Body!);
-        Assert.Equal("operationId=deploy-123", requestJson.RootElement.GetProperty("reason").GetString());
-        Assert.NotNull(response.BackendSteps);
-        OperationBackendStep step = Assert.Single(response.BackendSteps!);
-        Assert.Equal("runbook:deploy-rollback", step.Name);
-        Assert.True(step.MutatesState);
+        Assert.Equal("experimental-disabled", response.Status);
+        Assert.Contains(response.Actions, action => action.Contains("forward", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(handler.CapturedRequests);
     }
 
     [Fact]
-    public async Task AutoRemediationPlanAsync_RollsBackDeployOperationWhenOperationIdIsProvided()
+    public async Task RunbookExecuteAsync_ExecutesDeployRollbackAgainstHonuaAdminContract()
+    {
+        TestHttpMessageHandler handler = new(CreateMetadataOnlyRollbackResponse);
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv, rollbackEnabled: true),
+            gateway,
+            DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.RunbookExecuteAsync(
+            runbookName: "deploy-rollback",
+            service: "roads-api",
+            environment: "dev",
+            parameters: "operationId=deploy-123",
+            confirmed: true,
+            edition: "enterprise");
+
+        Assert.Equal("runbook-executed", response.Status);
+        Assert.Equal(2, handler.CapturedRequests.Count);
+        Assert.Equal("GET", handler.CapturedRequests[0].Method);
+        CapturedRequest rollbackRequest = handler.CapturedRequests[1];
+        Assert.Equal("POST", rollbackRequest.Method);
+        Assert.Contains("/api/v1/admin/deploy/operations/deploy-123/rollback", rollbackRequest.Uri, StringComparison.Ordinal);
+        using JsonDocument requestJson = JsonDocument.Parse(rollbackRequest.Body!);
+        Assert.Equal("operationId=deploy-123", requestJson.RootElement.GetProperty("reason").GetString());
+        Assert.NotNull(response.BackendSteps);
+        Assert.Collection(
+            response.BackendSteps!,
+            step =>
+            {
+                Assert.Equal("deploy-operation-read", step.Name);
+                Assert.False(step.MutatesState);
+            },
+            step =>
+            {
+                Assert.Equal("deploy-operation-rollback", step.Name);
+                Assert.True(step.MutatesState);
+            });
+    }
+
+    [Fact]
+    public async Task RunbookExecuteAsync_RollbackEnabledWithoutConfirmation_DoesNotCallBackend()
+    {
+        TestHttpMessageHandler handler = new(CreateMetadataOnlyRollbackResponse);
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv, rollbackEnabled: true),
+            gateway,
+            DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.RunbookExecuteAsync(
+            runbookName: "deploy-rollback",
+            service: "roads-api",
+            environment: "dev",
+            parameters: "operationId=deploy-123",
+            confirmed: false,
+            edition: "enterprise");
+
+        Assert.Equal("confirmation-required", response.Status);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task RunbookExecuteAsync_RollbackEnabledWithPrFirst_DoesNotCallBackend()
+    {
+        TestHttpMessageHandler handler = new(CreateMetadataOnlyRollbackResponse);
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv, rollbackEnabled: true),
+            gateway,
+            OperatorPolicyModel.Default);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => toolkit.RunbookExecuteAsync(
+            runbookName: "deploy-rollback",
+            service: "roads-api",
+            environment: "dev",
+            parameters: "operationId=deploy-123",
+            confirmed: true,
+            edition: "enterprise"));
+
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task RunbookExecuteAsync_DataAffectingRollback_ReturnsApprovalRequiredWithoutPost()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new
+        {
+            operationId = "deploy-123",
+            status = "Succeeded",
+            metadataRelease = new { rollbackPlan = new { @class = "SnapshotRestore", isDataAffecting = true } }
+        }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv, rollbackEnabled: true),
+            gateway,
+            DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.RunbookExecuteAsync(
+            runbookName: "deploy-rollback",
+            service: "roads-api",
+            environment: "dev",
+            parameters: "operationId=deploy-123",
+            confirmed: true,
+            edition: "enterprise");
+
+        Assert.Equal("runbook-approval-required", response.Status);
+        CapturedRequest readRequest = Assert.Single(handler.CapturedRequests);
+        Assert.Equal("GET", readRequest.Method);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.EndsWith("/rollback", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AutoRemediationPlanAsync_RollbackDisabled_ReturnsSharedRefusalWithoutBackendCall()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
@@ -83,21 +193,91 @@ public class HonuaOperationsToolkitRealHonuaFlowTests
             autoApply: true,
             edition: "enterprise");
 
+        Assert.Equal("experimental-disabled", response.Status);
+        Assert.Contains(response.Actions, action => action.Contains("forward", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task AutoRemediationPlanAsync_RollsBackDeployOperationWhenOperationIdIsProvided()
+    {
+        TestHttpMessageHandler handler = new(CreateMetadataOnlyRollbackResponse);
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv, rollbackEnabled: true),
+            gateway,
+            DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "dev",
+            detectedIssue: "failed rollout operationId=deploy-123",
+            desiredOutcome: "rollback to last healthy revision",
+            autoApply: true,
+            edition: "enterprise");
+
         Assert.Equal("auto-remediation-applied", response.Status);
-        CapturedRequest captured = Assert.Single(handler.CapturedRequests);
-        Assert.Equal("POST", captured.Method);
-        Assert.Contains("/api/v1/admin/deploy/operations/deploy-123/rollback", captured.Uri, StringComparison.Ordinal);
-        using JsonDocument requestJson = JsonDocument.Parse(captured.Body!);
+        Assert.Equal(2, handler.CapturedRequests.Count);
+        Assert.Equal("GET", handler.CapturedRequests[0].Method);
+        CapturedRequest rollbackRequest = handler.CapturedRequests[1];
+        Assert.Equal("POST", rollbackRequest.Method);
+        Assert.Contains("/api/v1/admin/deploy/operations/deploy-123/rollback", rollbackRequest.Uri, StringComparison.Ordinal);
+        using JsonDocument requestJson = JsonDocument.Parse(rollbackRequest.Body!);
         Assert.Contains("auto-remediation:roads-api", requestJson.RootElement.GetProperty("reason").GetString(), StringComparison.Ordinal);
         Assert.NotNull(response.BackendSteps);
-        OperationBackendStep step = Assert.Single(response.BackendSteps!);
-        Assert.Equal("auto-remediation", step.Name);
-        Assert.True(step.MutatesState);
+        Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-operation-rollback" && step.MutatesState);
+    }
+
+    [Fact]
+    public async Task AutoRemediationPlanAsync_RollbackEnabledWithPrFirst_DoesNotCallBackend()
+    {
+        TestHttpMessageHandler handler = new(CreateMetadataOnlyRollbackResponse);
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv, rollbackEnabled: true),
+            gateway,
+            OperatorPolicyModel.Default);
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "dev",
+            detectedIssue: "failed rollout operationId=deploy-123",
+            desiredOutcome: "rollback to last healthy revision",
+            autoApply: true,
+            edition: "enterprise");
+
+        Assert.Equal("auto-remediation-approval-required", response.Status);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task AutoRemediationPlanAsync_ExecuteLowerEnvCannotRollbackProd()
+    {
+        TestHttpMessageHandler handler = new(CreateMetadataOnlyRollbackResponse);
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv, rollbackEnabled: true),
+            gateway,
+            DirectAllowedPolicy());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "prod",
+            detectedIssue: "failed rollout operationId=deploy-123",
+            desiredOutcome: "rollback to last healthy revision",
+            autoApply: true,
+            edition: "enterprise"));
+
+        Assert.Empty(handler.CapturedRequests);
     }
 
     private static OperationRuntime CreateRuntime(
         ExecutionMode mode = ExecutionMode.Plan,
-        ExecutionTier executionTier = ExecutionTier.Plan)
+        ExecutionTier executionTier = ExecutionTier.Plan,
+        bool rollbackEnabled = false)
     {
         return new OperationRuntime(
             mode,
@@ -107,7 +287,8 @@ public class HonuaOperationsToolkitRealHonuaFlowTests
             TerraformRepository: "https://github.com/honua-io/honua-terraform",
             TerraformRef: "main",
             TerraformLocalPath: "/tmp/honua-terraform",
-            TerraformDeploymentTargets: ["eks", "aks"]);
+            TerraformDeploymentTargets: ["eks", "aks"],
+            RollbackEnabled: rollbackEnabled);
     }
 
     private static BackendConfiguration CreateBackendConfiguration()
@@ -134,6 +315,22 @@ public class HonuaOperationsToolkitRealHonuaFlowTests
             HonuaManifestExportPath: "api/v1/admin/manifest",
             HonuaManifestApplyPath: "api/v1/admin/manifest/apply",
             RequestTimeout: TimeSpan.FromSeconds(5));
+    }
+
+    private static HttpResponseMessage CreateMetadataOnlyRollbackResponse(HttpRequestMessage request)
+    {
+        if (request.Method == HttpMethod.Post &&
+            request.RequestUri!.AbsolutePath.EndsWith("/rollback", StringComparison.Ordinal))
+        {
+            return TestHttpMessageHandler.JsonOk(new { operationId = "deploy-123", status = "RolledBack" });
+        }
+
+        return TestHttpMessageHandler.JsonOk(new
+        {
+            operationId = "deploy-123",
+            status = "Succeeded",
+            metadataRelease = new { rollbackPlan = new { @class = "MetadataOnly", isDataAffecting = false } }
+        });
     }
 
     private static OperatorPolicyModel DirectAllowedPolicy()

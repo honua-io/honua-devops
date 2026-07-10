@@ -432,17 +432,6 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
-    internal Task<BackendCallResult> RollbackDeployOperationAsync(
-        string operationId,
-        string reason,
-        CancellationToken cancellationToken)
-    {
-        return PostToHonuaAsync(
-            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
-            new { reason },
-            cancellationToken);
-    }
-
     // JSON-returning rollback variant: the executor needs the server's resulting status
     // and, when the OperatorApprovalGate denies a data-affecting rollback, the structured
     // 403 body so it can surface the approval requirement instead of inventing one.
