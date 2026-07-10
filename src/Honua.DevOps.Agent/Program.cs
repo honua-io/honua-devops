@@ -4,6 +4,7 @@ using Honua.DevOps.Agent.Configuration;
 using Honua.DevOps.Agent.Mcp;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Audit;
+using Honua.DevOps.Agent.Operations.BugReport;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.WorkIntake;
@@ -147,6 +148,50 @@ try
             onAccepted: (workItem, token) => intakeReporter.ReportAsync(workItem, token));
         await using WorkIntakeWebhookListener intakeListener = new(intakeConfiguration, intakeHandler);
         await intakeListener.RunAsync(cancellationTokenSource.Token);
+        return;
+    }
+
+    if (options.BugReportListen)
+    {
+        BugReportConfiguration bugReportConfiguration = BugReportConfiguration.Load();
+        if (!bugReportConfiguration.IsEnabled)
+        {
+            Console.Error.WriteLine(
+                "bugreport-disabled: set HONUA_DEVOPS_BUGREPORT_WEBHOOK_SECRET to enable the ticket.bug_report.v1 issue adapter.");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        // honua-devops — not the support service — may hold a GitHub token. When one
+        // is not configured the connector reports graceful-disabled and the reporter
+        // stays report-only (sanitized issue prepared, not filed).
+        using GitHubIssueConnector issueTracker = new(bugReportConfiguration, sharedHttpClient);
+        BugReportReporter bugReportReporter = new(issueTracker, bugReportConfiguration.Labels);
+
+        // Durably audit every security-relevant outcome (invalid-signature,
+        // stale/replay, unmapped-component, duplicate-skip, filing-failure) through
+        // the shared JSONL audit hook, not just stderr.
+        IAuditSink bugReportAuditSink = AuditSinkFactory.Create(policy.AuditHookTarget);
+        await using (bugReportAuditSink)
+        {
+            AuditContext bugReportAuditContext = new(
+                Guid.NewGuid().ToString("n"),
+                runtime.ExecutionMode.ToString().ToLowerInvariant(),
+                runtime.ExecutionTier.ToConfigValue(),
+                policy.ApprovalMode.ToConfigValue(),
+                options.Provider.ToConfigValue(),
+                bugReportAuditSink);
+
+            BugReportWebhookHandler bugReportHandler = new(
+                bugReportConfiguration.WebhookSecret,
+                bugReportConfiguration.Allowlist,
+                bugReportConfiguration.ReplayWindow,
+                onAccepted: (report, repo, token) => bugReportReporter.ReportAsync(report, repo, token),
+                auditContext: bugReportAuditContext);
+            await using BugReportWebhookListener bugReportListener = new(bugReportConfiguration, bugReportHandler);
+            await bugReportListener.RunAsync(cancellationTokenSource.Token);
+        }
+
         return;
     }
 

@@ -13,6 +13,7 @@ internal sealed record CliOptions(
     int OperationLimit,
     bool Listen,
     bool IntakeListen,
+    bool BugReportListen,
     bool Mcp,
     string? AwaitApproval)
 {
@@ -27,6 +28,7 @@ internal sealed record CliOptions(
     private const string LimitFlag = "--limit";
     private const string ListenFlag = "--listen";
     private const string IntakeListenFlag = "--intake-listen";
+    private const string BugReportListenFlag = "--bugreport-listen";
     private const string McpFlag = "--mcp";
     private const string AwaitApprovalFlag = "--await-approval";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
@@ -50,6 +52,9 @@ Options:
   --listen                    Run the escalation webhook receiver. Requires HONUA_DEVOPS_WEBHOOK_SECRET.
   --intake-listen             Run the work-intake webhook receiver (Jira). Enterprise edition only.
                               Requires HONUA_DEVOPS_INTAKE_PROVIDER=jira and HONUA_DEVOPS_INTAKE_WEBHOOK_SECRET.
+  --bugreport-listen          Run the signed ticket.bug_report.v1 issue adapter: verify + freshness +
+                              idempotency, resolve the destination repo from the server-owned allowlist,
+                              dedupe, then file a sanitized issue. Requires HONUA_DEVOPS_BUGREPORT_WEBHOOK_SECRET.
   --mcp                       Run the operator toolset as an MCP stdio server (for Claude Code, Codex,
                               and other MCP clients). No model provider key is required; gates and
                               audit follow the same HONUA_DEVOPS_* runtime controls. See docs/QUICKSTART-MCP.md.
@@ -78,6 +83,18 @@ Environment (--intake-listen, Enterprise only):
   HONUA_DEVOPS_JIRA_USER_EMAIL        Jira Cloud account email (Basic auth username).
   HONUA_DEVOPS_JIRA_PROJECT_FILTER    Optional. Only accept issues from this project key.
 
+Environment (--bugreport-listen):
+  HONUA_DEVOPS_BUGREPORT_WEBHOOK_SECRET  Required. Shared HMAC-SHA256 secret matching honua-support.
+  HONUA_DEVOPS_BUGREPORT_PORT            Optional. TCP port to bind (default 8092).
+  HONUA_DEVOPS_BUGREPORT_PATH            Optional. URL path to accept POSTs on (default /bug-reports).
+  HONUA_DEVOPS_BUGREPORT_REPLAY_WINDOW_SECONDS  Optional. Replay/freshness window (default 300).
+  HONUA_DEVOPS_BUGREPORT_COMPONENT_MAP   Server-owned allowlist: `component=owner/repo,component2=owner/repo`.
+                                         The SOLE source of the destination repo; an unmapped component is refused.
+  HONUA_DEVOPS_BUGREPORT_LABELS          Optional. Comma-separated issue labels (default `bug,honua-support`).
+  HONUA_DEVOPS_GITHUB_API_BASE_URL       Optional. GitHub API base (e.g. https://api.github.com). Unset = report-only.
+  HONUA_DEVOPS_GITHUB_TOKEN              Optional. GitHub token for filing. Unset = report-only (plan) posture.
+  HONUA_DEVOPS_BUGREPORT_ALLOWED_HOSTS   Comma-separated hosts allowed for GitHub API calls.
+
 Examples:
   honua-devops --preflight
   honua-devops --provider codex --prompt "describe the environment"
@@ -86,6 +103,7 @@ Examples:
   honua-devops --show-operation 7d2b9f...
   honua-devops --listen
   honua-devops --intake-listen
+  honua-devops --bugreport-listen
   honua-devops --mcp
   honua-devops --await-approval 7d2b9f...
 """;
@@ -102,6 +120,7 @@ Examples:
         int operationLimit = 20;
         bool listen = false;
         bool intakeListen = false;
+        bool bugReportListen = false;
         bool mcp = false;
         string? awaitApproval = null;
 
@@ -178,6 +197,12 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(BugReportListenFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                bugReportListen = true;
+                continue;
+            }
+
             if (argument.Equals(McpFlag, StringComparison.OrdinalIgnoreCase))
             {
                 mcp = true;
@@ -208,7 +233,7 @@ Examples:
             }
 
             throw new InvalidOperationException(
-                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {McpFlag}, {AwaitApprovalFlag}, or {HelpFlag}.");
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {BugReportListenFlag}, {McpFlag}, {AwaitApprovalFlag}, or {HelpFlag}.");
         }
 
         if (help || listTools || listOperations || showOperation is not null || mcp)
@@ -224,6 +249,7 @@ Examples:
                 operationLimit,
                 listen,
                 intakeListen,
+                bugReportListen,
                 mcp,
                 awaitApproval);
         }
@@ -249,6 +275,7 @@ Examples:
             operationLimit,
             listen,
             intakeListen,
+            bugReportListen,
             mcp,
             awaitApproval);
     }
