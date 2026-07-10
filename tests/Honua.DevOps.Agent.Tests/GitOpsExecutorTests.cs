@@ -313,6 +313,24 @@ public class GitOpsExecutorTests
     // ---- Invariant 4: data-affecting rollback without approval is refused. ----
 
     [Fact]
+    public async Task ExecuteRollbackAsync_ReleaseCapabilityDisabled_IssuesNothing()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        RollbackExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await executor.ExecuteRollbackAsync(
+            "op-7f3", "incident-123", authorizationDryRun: false, policyGate: "break-glass", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ExperimentalDisabled, result.Status);
+        Assert.False(result.Mutated);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
     public async Task ExecuteRollbackAsync_DataAffecting_RefusesEvenUnderDirectAllowed()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new
@@ -323,7 +341,7 @@ public class GitOpsExecutorTests
         }));
         using BackendGateway gateway = CreateGateway(handler);
         RollbackExecutor executor = new(
-            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api", rollbackEnabled: true),
             gateway,
             DirectAllowedPolicy());
 
@@ -344,7 +362,7 @@ public class GitOpsExecutorTests
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Succeeded" }));
         using BackendGateway gateway = CreateGateway(handler);
         RollbackExecutor executor = new(
-            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api", rollbackEnabled: true),
             gateway,
             DirectAllowedPolicy());
 
@@ -361,7 +379,7 @@ public class GitOpsExecutorTests
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         using BackendGateway gateway = CreateGateway(handler);
         RollbackExecutor executor = new(
-            CreateRuntime(ExecutionMode.Plan, deployTargetId: "prod-api"),
+            CreateRuntime(ExecutionMode.Plan, deployTargetId: "prod-api", rollbackEnabled: true),
             gateway,
             DirectAllowedPolicy());
 
@@ -394,7 +412,7 @@ public class GitOpsExecutorTests
         });
         using BackendGateway gateway = CreateGateway(handler);
         RollbackExecutor executor = new(
-            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api", rollbackEnabled: true),
             gateway,
             DirectAllowedPolicy());
 
@@ -417,7 +435,7 @@ public class GitOpsExecutorTests
         }));
         using BackendGateway gateway = CreateGateway(handler);
         RollbackExecutor executor = new(
-            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api", rollbackEnabled: true),
             gateway,
             OperatorPolicyModel.Default); // pr-first
 
@@ -453,7 +471,10 @@ public class GitOpsExecutorTests
             policyGate: authorizationDryRun ? "plan-only" : "lower-env-execution",
             CancellationToken.None);
 
-    private static OperationRuntime CreateRuntime(ExecutionMode mode, string? deployTargetId)
+    private static OperationRuntime CreateRuntime(
+        ExecutionMode mode,
+        string? deployTargetId,
+        bool rollbackEnabled = false)
         => new(
             mode,
             mode == ExecutionMode.Execute ? ExecutionTier.ExecuteLowerEnv : ExecutionTier.Plan,
@@ -463,7 +484,8 @@ public class GitOpsExecutorTests
             TerraformRef: "main",
             TerraformLocalPath: "/tmp/honua-terraform",
             TerraformDeploymentTargets: ["eks", "aks"],
-            DeployTargetId: deployTargetId);
+            DeployTargetId: deployTargetId,
+            RollbackEnabled: rollbackEnabled);
 
     private static BackendGateway CreateGateway(TestHttpMessageHandler handler)
     {
