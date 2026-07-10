@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Honua.DevOps.Agent.Operations.Audit;
 
 namespace Honua.DevOps.Agent.Operations.BugReport;
 
@@ -18,39 +19,44 @@ namespace Honua.DevOps.Agent.Operations.BugReport;
 ///   bounded replay window (past or future). Stale ⇒ 400.</item>
 ///   <item><b>Allowlist</b> — the destination repo is resolved ONLY from the
 ///   server-owned <see cref="ComponentRepoAllowlist"/>. An unmapped component ⇒
-///   422, no filing.</item>
-///   <item><b>Idempotency</b> — a per-<c>eventId</c> claim guarantees the same
-///   event never files twice; a duplicate ⇒ 409, no filing.</item>
+///   422 (permanent, non-retryable), no filing.</item>
+///   <item><b>Idempotency</b> — an eventId already filed short-circuits to 409.</item>
 /// </list>
-/// Only after all five does it invoke <c>onAccepted</c> (duplicate-issue
-/// detection + sanitized filing), bounded by a per-request deadline so a slow
-/// GitHub write cannot hold the inbound delivery open past the sender's retry
-/// window.
+/// Only then is the accept-side filing invoked (duplicate-issue detection +
+/// sanitized filing), bounded by a per-request deadline. The eventId is consumed
+/// ONLY after the filing confirms a terminal outcome; a transient
+/// search/file/deadline failure leaves the id unclaimed and returns a non-2xx so
+/// the signed sender retries — the repo-side duplicate search keeps that retry
+/// from ever filing twice.
 /// </summary>
 internal sealed class BugReportWebhookHandler
 {
     // See WorkIntakeWebhookHandler for the rationale: bound the outbound write so a
-    // slow backend cannot hold the inbound delivery open long enough that the
-    // sender retries. Per-eventId idempotency + issue dedupe already make a retry a
-    // no-op, but returning promptly avoids the retry entirely.
+    // slow backend cannot hold the inbound delivery open indefinitely. When the
+    // write outlives the deadline we cannot confirm it landed, so we ask the sender
+    // to retry rather than consume the id on an unconfirmed file.
     internal static readonly TimeSpan DefaultAcceptedDeadline = TimeSpan.FromSeconds(10);
+
+    private const string AuditToolName = "bug_report.webhook";
 
     private readonly byte[] _secret;
     private readonly ComponentRepoAllowlist _allowlist;
     private readonly TimeSpan _replayWindow;
     private readonly IEventIdempotencyStore _idempotencyStore;
     private readonly Func<DateTimeOffset> _now;
-    private readonly Func<BugReport, RepoRef, CancellationToken, Task>? _onAccepted;
+    private readonly Func<BugReport, RepoRef, CancellationToken, Task<BugReportFilingOutcome>>? _onAccepted;
     private readonly TimeSpan _acceptedDeadline;
+    private readonly AuditContext? _auditContext;
 
     internal BugReportWebhookHandler(
         string secret,
         ComponentRepoAllowlist allowlist,
         TimeSpan replayWindow,
-        Func<BugReport, RepoRef, CancellationToken, Task>? onAccepted = null,
+        Func<BugReport, RepoRef, CancellationToken, Task<BugReportFilingOutcome>>? onAccepted = null,
         IEventIdempotencyStore? idempotencyStore = null,
         Func<DateTimeOffset>? now = null,
-        TimeSpan? acceptedDeadline = null)
+        TimeSpan? acceptedDeadline = null,
+        AuditContext? auditContext = null)
     {
         if (string.IsNullOrEmpty(secret))
         {
@@ -60,12 +66,15 @@ internal sealed class BugReportWebhookHandler
         _secret = Encoding.UTF8.GetBytes(secret);
         _allowlist = allowlist ?? throw new ArgumentNullException(nameof(allowlist));
         _replayWindow = replayWindow > TimeSpan.Zero ? replayWindow : TimeSpan.FromSeconds(BugReportConfiguration.DefaultReplayWindowSeconds);
-        _onAccepted = onAccepted;
-        _idempotencyStore = idempotencyStore ?? new InMemoryEventIdempotencyStore();
         _now = now ?? (() => DateTimeOffset.UtcNow);
+        _onAccepted = onAccepted;
+        // Bound the default store to the replay window: an event older than that is
+        // rejected on freshness grounds, so an entry never needs to outlive it.
+        _idempotencyStore = idempotencyStore ?? new InMemoryEventIdempotencyStore(_replayWindow, _now);
         _acceptedDeadline = acceptedDeadline is { } deadline && deadline > TimeSpan.Zero
             ? deadline
             : DefaultAcceptedDeadline;
+        _auditContext = auditContext;
     }
 
     internal async Task<BugReportHandlerResult> HandleAsync(
@@ -76,7 +85,9 @@ internal sealed class BugReportWebhookHandler
         // 1. Signature — over the raw bytes, constant-time. Unsigned/invalid rejected.
         if (!WebhookSignatureVerifier.TryVerify(_secret, body, signatureHeader))
         {
-            return Reject(401, "invalid-signature");
+            return await RejectAsync(
+                401, "invalid-signature", "Rejected bug-report webhook: signature missing or invalid.",
+                report: null, repo: null, cancellationToken);
         }
 
         // 2. Shape.
@@ -87,84 +98,186 @@ internal sealed class BugReportWebhookHandler
         }
         catch (JsonException)
         {
-            return Reject(400, "malformed-json");
+            return await RejectAsync(400, "malformed-json", "Rejected bug-report webhook: body is not valid JSON.", null, null, cancellationToken);
         }
 
         if (payload is null)
         {
-            return Reject(400, "empty-payload");
+            return await RejectAsync(400, "empty-payload", "Rejected bug-report webhook: empty payload.", null, null, cancellationToken);
         }
 
         if (!string.Equals(payload.EventType, BugReportWebhookPayload.ExpectedEvent, StringComparison.Ordinal))
         {
-            return Reject(400, $"unexpected-event:{payload.EventType ?? "(none)"}");
+            return await RejectAsync(400, $"unexpected-event:{payload.EventType ?? "(none)"}", "Rejected bug-report webhook: unexpected event type.", null, null, cancellationToken);
         }
 
         if (string.IsNullOrWhiteSpace(payload.EventId))
         {
-            return Reject(400, "missing-event-id");
+            return await RejectAsync(400, "missing-event-id", "Rejected bug-report webhook: missing eventId.", null, null, cancellationToken);
         }
 
         if (string.IsNullOrWhiteSpace(payload.TicketId))
         {
-            return Reject(400, "missing-ticket-id");
+            return await RejectAsync(400, "missing-ticket-id", "Rejected bug-report webhook: missing ticketId.", null, null, cancellationToken);
         }
 
         if (string.IsNullOrWhiteSpace(payload.Component))
         {
-            return Reject(400, "missing-component");
+            return await RejectAsync(400, "missing-component", "Rejected bug-report webhook: missing component.", null, null, cancellationToken);
         }
 
         if (payload.EmittedAt is not { } emittedAt)
         {
-            return Reject(400, "missing-emitted-at");
-        }
-
-        // 3. Freshness / replay window — reject events too old OR too far in the
-        // future (clock skew). This bounds the replay surface for a captured event.
-        TimeSpan age = _now() - emittedAt;
-        if (age > _replayWindow || age < -_replayWindow)
-        {
-            return Reject(400, "stale-timestamp");
+            return await RejectAsync(400, "missing-emitted-at", "Rejected bug-report webhook: missing emittedAt.", null, null, cancellationToken);
         }
 
         BugReport report = Normalize(payload, emittedAt);
 
+        // 3. Freshness / replay window — reject events too old OR too far in the
+        // future (clock skew). This bounds the replay surface for a captured event.
+        TimeSpan age = _now() - report.EmittedAt;
+        if (age > _replayWindow || age < -_replayWindow)
+        {
+            return await RejectAsync(400, "stale-timestamp", "Rejected bug-report: emittedAt is outside the replay window.", report, null, cancellationToken);
+        }
+
         // 4. Allowlist — the destination repo comes ONLY from server-owned config.
-        //    The event's component is just a lookup key; an unmapped component is a
-        //    surfaced, audited refusal with no filing.
+        //    The event's component is just a lookup key. An unmapped component is a
+        //    PERMANENT refusal (422, non-retryable) that consumes no id.
         if (!_allowlist.TryResolve(report.Component, out RepoRef repo))
         {
-            return new BugReportHandlerResult(422, $"unmapped-component:{report.Component}", report, Repo: null);
+            return await RejectAsync(
+                422, $"unmapped-component:{report.Component}",
+                $"Refused bug-report: component `{report.Component}` is not mapped in the server-owned allowlist.",
+                report, repo: null, cancellationToken);
         }
 
-        // 5. Idempotency — claim the eventId AFTER the allowlist resolves so an
-        //    unmapped event does not consume the id, but BEFORE filing so the same
-        //    event can never file two issues. The claim is atomic.
-        if (!_idempotencyStore.TryMarkProcessed(report.EventId))
+        // 5. Idempotency fast path — an eventId already filed is a no-op duplicate.
+        if (_idempotencyStore.IsProcessed(report.EventId))
         {
-            return new BugReportHandlerResult(409, "duplicate-event", report, repo);
+            return await RejectAsync(409, "duplicate-event", "Skipped bug-report: eventId already filed.", report, repo, cancellationToken);
         }
 
+        // 6. Accept-side filing, bounded by a per-request deadline.
+        BugReportFilingOutcome outcome = BugReportFilingOutcome.ReportOnly;
         if (_onAccepted is not null)
         {
             using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(_acceptedDeadline);
             try
             {
-                await _onAccepted(report, repo, deadline.Token);
+                outcome = await _onAccepted(report, repo, deadline.Token);
             }
             catch (OperationCanceledException)
                 when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
-                // The filing outlived its per-request deadline. The event is still
-                // accepted (idempotency already claimed the id; a sender retry is a
-                // no-op) — ack now rather than risk a delivery-retry.
-                return new BugReportHandlerResult(202, "accepted-filing-deadline", report, repo);
+                // The filing outlived its per-request deadline: we cannot confirm a
+                // durable file, so DO NOT consume the id. Signal a retry; the
+                // repo-side duplicate search makes it a no-op if the write landed.
+                return await RejectAsync(503, "filing-timeout", "Bug-report filing exceeded its deadline; requesting sender retry.", report, repo, cancellationToken);
             }
         }
 
-        return new BugReportHandlerResult(202, "accepted", report, repo);
+        // 7. Consume the eventId only on a confirmed terminal outcome; a transient
+        //    failure leaves it unclaimed so the signed sender retries.
+        return outcome switch
+        {
+            BugReportFilingOutcome.Filed => await AcceptAsync(
+                report, repo, "accepted", "Filed sanitized bug-report issue.", mutated: true, cancellationToken),
+            BugReportFilingOutcome.DuplicateSkipped => await AcceptAsync(
+                report, repo, "duplicate-skip", "Bug already tracked by an open issue; no duplicate filed.", mutated: false, cancellationToken),
+            BugReportFilingOutcome.ReportOnly => await AcceptAsync(
+                report, repo, "accepted-report-only", "Issue filing disabled; sanitized issue prepared, not filed.", mutated: false, cancellationToken),
+            BugReportFilingOutcome.SearchFailed => await RejectAsync(
+                503, "duplicate-check-failed", "Could not confirm absence of a duplicate; requesting sender retry.", report, repo, cancellationToken),
+            _ => await RejectAsync(
+                502, "filing-failed", "Bug-report issue filing failed; requesting sender retry.", report, repo, cancellationToken),
+        };
+    }
+
+    private async Task<BugReportHandlerResult> AcceptAsync(
+        BugReport report,
+        RepoRef repo,
+        string reason,
+        string summary,
+        bool mutated,
+        CancellationToken cancellationToken)
+    {
+        // The event is terminally handled — claim the id so a redelivery is a fast
+        // no-op. A concurrent in-flight delivery is caught by the repo-side search.
+        _idempotencyStore.TryMarkProcessed(report.EventId);
+        await AuditAsync(reason, summary, report, repo, mutated, cancellationToken);
+        return new BugReportHandlerResult(202, reason, report, repo);
+    }
+
+    private async Task<BugReportHandlerResult> RejectAsync(
+        int statusCode,
+        string reason,
+        string summary,
+        BugReport? report,
+        RepoRef? repo,
+        CancellationToken cancellationToken)
+    {
+        await AuditAsync(reason, summary, report, repo, mutated: false, cancellationToken);
+        return new BugReportHandlerResult(statusCode, reason, report, repo);
+    }
+
+    private async Task AuditAsync(
+        string status,
+        string summary,
+        BugReport? report,
+        RepoRef? repo,
+        bool mutated,
+        CancellationToken cancellationToken)
+    {
+        if (_auditContext is null || _auditContext.Sink is NullAuditSink)
+        {
+            return;
+        }
+
+        Dictionary<string, string> arguments = new(StringComparer.Ordinal)
+        {
+            ["eventType"] = BugReportWebhookPayload.ExpectedEvent,
+        };
+        if (report is not null)
+        {
+            arguments["eventId"] = Redaction.Scrub(report.EventId);
+            arguments["ticketId"] = Redaction.Scrub(report.TicketId);
+            arguments["component"] = Redaction.Scrub(report.Component);
+        }
+        if (repo is not null)
+        {
+            arguments["repo"] = repo.FullName;
+        }
+
+        AuditRecord record = new(
+            Timestamp: _now(),
+            SessionId: _auditContext.SessionId,
+            OperationId: Guid.NewGuid().ToString("n"),
+            ToolName: AuditToolName,
+            Arguments: arguments,
+            Status: status,
+            Summary: Redaction.Scrub(summary),
+            Mutated: mutated,
+            ExecutionMode: _auditContext.ExecutionMode,
+            ExecutionTier: _auditContext.ExecutionTier,
+            ApprovalMode: _auditContext.ApprovalMode,
+            Provider: _auditContext.Provider,
+            BackendSteps: null,
+            Evidence: null);
+
+        try
+        {
+            await _auditContext.Sink.WriteAsync(record, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"warn: bug-report audit write failed: {exception.Message}");
+        }
     }
 
     private static BugReport Normalize(BugReportWebhookPayload payload, DateTimeOffset emittedAt)
@@ -198,9 +311,6 @@ internal sealed class BugReportWebhookHandler
             .Select(reference => reference.Trim())
             .ToArray();
     }
-
-    private static BugReportHandlerResult Reject(int statusCode, string reason)
-        => new(statusCode, reason, Report: null, Repo: null);
 }
 
 internal sealed record BugReportHandlerResult(

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Honua.DevOps.Agent.Operations.BugReport;
@@ -6,12 +7,16 @@ namespace Honua.DevOps.Agent.Operations.BugReport;
 /// A composed, ready-to-file GitHub issue. The <see cref="DedupeMarker"/> is a
 /// stable, machine-readable token embedded in the body so duplicate-issue
 /// detection can find an already-filed issue for the same bug.
+/// <see cref="DedupeSearchToken"/> is the exact string to search the destination
+/// repo for — the same hash embedded in the marker — so a just-filed issue is
+/// always findable on a redelivery.
 /// </summary>
 internal sealed record GeneratedIssue(
     string Title,
     string Body,
     IReadOnlyList<string> Labels,
-    string DedupeMarker);
+    string DedupeMarker,
+    string DedupeSearchToken);
 
 /// <summary>
 /// Builds a <em>sanitized</em> GitHub issue from a <see cref="BugReport"/>.
@@ -32,22 +37,56 @@ internal static class BugReportIssueComposer
 {
     private const string MarkerPrefix = "honua-bug-fingerprint:";
 
+    /// <summary>
+    /// The dedupe token embedded in the marker and used as the repo search term: a
+    /// SHA-256 hex digest of the dedupe key. Hashing (not the raw key) means no
+    /// customer-controlled bytes reach the <c>&lt;!-- ... --&gt;</c> comment, so a
+    /// key containing <c>--&gt;</c> cannot break out of it; a hex string never can.
+    /// </summary>
+    internal static string ComputeDedupeHash(BugReport report)
+        => ComputeDedupeHash(report.DedupeKey);
+
+    internal static string ComputeDedupeHash(string dedupeKey)
+    {
+        // Normalize: the dedupe key falls back to the always-present ticket id, so
+        // an empty key is a defensive case only; a stable sentinel keeps the hash
+        // representable rather than hashing an empty string.
+        string normalized = dedupeKey?.Trim() ?? string.Empty;
+        if (normalized.Length == 0)
+        {
+            normalized = "(empty-dedupe-key)";
+        }
+
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
     internal static string BuildDedupeMarker(BugReport report)
-        => $"<!-- {MarkerPrefix} {Redaction.Scrub(report.DedupeKey)} -->";
+        => $"<!-- {MarkerPrefix} {ComputeDedupeHash(report)} -->";
 
     internal static GeneratedIssue Compose(BugReport report, RepoRef repo, IReadOnlyList<string> labels)
     {
-        string marker = BuildDedupeMarker(report);
+        string hash = ComputeDedupeHash(report);
+        string marker = $"<!-- {MarkerPrefix} {hash} -->";
         string title = BuildTitle(report);
         string body = BuildBody(report, repo, marker);
-        return new GeneratedIssue(title, body, labels, marker);
+        return new GeneratedIssue(title, body, labels, marker, hash);
     }
 
     private static string BuildTitle(BugReport report)
     {
-        string subject = string.IsNullOrWhiteSpace(report.Title)
+        // Neutralize the whole subject (mentions/refs/HTML), collapse to a single
+        // line, and length-cap it so a crafted title cannot ping a team, backlink
+        // an issue, or wrap onto multiple lines in the destination repo.
+        string rawSubject = string.IsNullOrWhiteSpace(report.Title)
             ? $"Bug report from support ticket {report.TicketId}"
-            : Redaction.Scrub(report.Title!.Trim());
+            : report.Title!;
+
+        string subject = BugReportSanitizer.NeutralizeTitle(rawSubject);
+        if (subject.Length == 0)
+        {
+            subject = "Bug report from support ticket";
+        }
 
         // Prefix keeps support-routed issues visually distinct and greppable.
         return $"[support-bug] {subject}";
@@ -63,8 +102,8 @@ internal static class BugReportIssueComposer
 
         builder.AppendLine("| Field | Value |");
         builder.AppendLine("| --- | --- |");
-        builder.Append("| Ticket | `").Append(Redaction.Scrub(report.TicketId)).AppendLine("` |");
-        builder.Append("| Component | `").Append(Redaction.Scrub(report.Component)).AppendLine("` |");
+        builder.Append("| Ticket | `").Append(BugReportSanitizer.NeutralizeCode(report.TicketId)).AppendLine("` |");
+        builder.Append("| Component | `").Append(BugReportSanitizer.NeutralizeCode(report.Component)).AppendLine("` |");
         builder.Append("| Destination | `").Append(repo.FullName).AppendLine("` |");
         AppendOptionalRow(builder, "Severity", report.Severity);
         AppendOptionalRow(builder, "Environment", report.Environment);
@@ -80,7 +119,7 @@ internal static class BugReportIssueComposer
         {
             builder.AppendLine("## Summary");
             builder.AppendLine();
-            builder.AppendLine(Redaction.Scrub(report.Summary!.Trim()));
+            builder.AppendLine(BugReportSanitizer.NeutralizeText(report.Summary));
             builder.AppendLine();
         }
 
@@ -92,7 +131,9 @@ internal static class BugReportIssueComposer
         if (!string.IsNullOrWhiteSpace(report.TicketUrl))
         {
             builder.AppendLine();
-            builder.Append("Source ticket: ").AppendLine(Redaction.Scrub(report.TicketUrl!.Trim()));
+            // Wrap the customer-supplied URL in a code span so it is inert text (no
+            // autolink, no Markdown link injection) in the destination repo.
+            builder.Append("Source ticket: `").Append(BugReportSanitizer.NeutralizeCode(report.TicketUrl)).AppendLine("`");
         }
 
         builder.AppendLine();
@@ -107,7 +148,7 @@ internal static class BugReportIssueComposer
             return;
         }
 
-        builder.Append("| ").Append(label).Append(" | `").Append(Redaction.Scrub(value.Trim())).AppendLine("` |");
+        builder.Append("| ").Append(label).Append(" | `").Append(BugReportSanitizer.NeutralizeCode(value)).AppendLine("` |");
     }
 
     private static void AppendRefList(StringBuilder builder, string label, IReadOnlyList<string> refs)
@@ -122,7 +163,7 @@ internal static class BugReportIssueComposer
 
         foreach (string reference in refs)
         {
-            builder.Append("- `").Append(Redaction.Scrub(reference.Trim())).AppendLine("`");
+            builder.Append("- `").Append(BugReportSanitizer.NeutralizeCode(reference)).AppendLine("`");
         }
     }
 }

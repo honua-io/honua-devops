@@ -167,13 +167,31 @@ try
         // stays report-only (sanitized issue prepared, not filed).
         using GitHubIssueConnector issueTracker = new(bugReportConfiguration, sharedHttpClient);
         BugReportReporter bugReportReporter = new(issueTracker, bugReportConfiguration.Labels);
-        BugReportWebhookHandler bugReportHandler = new(
-            bugReportConfiguration.WebhookSecret,
-            bugReportConfiguration.Allowlist,
-            bugReportConfiguration.ReplayWindow,
-            onAccepted: (report, repo, token) => bugReportReporter.ReportAsync(report, repo, token));
-        await using BugReportWebhookListener bugReportListener = new(bugReportConfiguration, bugReportHandler);
-        await bugReportListener.RunAsync(cancellationTokenSource.Token);
+
+        // Durably audit every security-relevant outcome (invalid-signature,
+        // stale/replay, unmapped-component, duplicate-skip, filing-failure) through
+        // the shared JSONL audit hook, not just stderr.
+        IAuditSink bugReportAuditSink = AuditSinkFactory.Create(policy.AuditHookTarget);
+        await using (bugReportAuditSink)
+        {
+            AuditContext bugReportAuditContext = new(
+                Guid.NewGuid().ToString("n"),
+                runtime.ExecutionMode.ToString().ToLowerInvariant(),
+                runtime.ExecutionTier.ToConfigValue(),
+                policy.ApprovalMode.ToConfigValue(),
+                options.Provider.ToConfigValue(),
+                bugReportAuditSink);
+
+            BugReportWebhookHandler bugReportHandler = new(
+                bugReportConfiguration.WebhookSecret,
+                bugReportConfiguration.Allowlist,
+                bugReportConfiguration.ReplayWindow,
+                onAccepted: (report, repo, token) => bugReportReporter.ReportAsync(report, repo, token),
+                auditContext: bugReportAuditContext);
+            await using BugReportWebhookListener bugReportListener = new(bugReportConfiguration, bugReportHandler);
+            await bugReportListener.RunAsync(cancellationTokenSource.Token);
+        }
+
         return;
     }
 

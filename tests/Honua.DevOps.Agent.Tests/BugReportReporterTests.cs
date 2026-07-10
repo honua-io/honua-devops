@@ -31,8 +31,9 @@ public class BugReportReporterTests
         StringWriter stdout = new();
         BugReportReporter reporter = new(tracker, Labels, stdout, new StringWriter());
 
-        await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
+        BugReportFilingOutcome outcome = await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
 
+        Assert.Equal(BugReportFilingOutcome.ReportOnly, outcome);
         Assert.Equal(0, tracker.FileCount);
         Assert.Equal(0, tracker.SearchCount);
         Assert.Contains("issue filing disabled", stdout.ToString(), StringComparison.Ordinal);
@@ -45,13 +46,19 @@ public class BugReportReporterTests
         StringWriter stdout = new();
         BugReportReporter reporter = new(tracker, Labels, stdout, new StringWriter());
 
-        await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
+        BugReportFilingOutcome outcome = await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
 
+        Assert.Equal(BugReportFilingOutcome.Filed, outcome);
         Assert.Equal(1, tracker.SearchCount);
         Assert.Equal(1, tracker.FileCount);
         Assert.NotNull(tracker.LastFiledIssue);
-        // Filed body is reference-only and carries the dedupe marker.
-        Assert.Contains("honua-bug-fingerprint: fp-abc123", tracker.LastFiledIssue!.Body, StringComparison.Ordinal);
+        // Filed body carries the hashed dedupe marker, and the SAME hash is used as
+        // the repo search term so the just-filed issue is always findable (FIX 2/6).
+        string expectedHash = BugReportIssueComposer.ComputeDedupeHash(SampleReport());
+        Assert.Contains($"honua-bug-fingerprint: {expectedHash}", tracker.LastFiledIssue!.Body, StringComparison.Ordinal);
+        Assert.Equal(expectedHash, tracker.LastSearchToken);
+        // The raw fingerprint never appears inside the dedupe marker comment.
+        Assert.DoesNotContain($"honua-bug-fingerprint: fp-abc123", tracker.LastFiledIssue.Body, StringComparison.Ordinal);
         Assert.Contains("filed sanitized issue", stdout.ToString(), StringComparison.Ordinal);
     }
 
@@ -62,8 +69,9 @@ public class BugReportReporterTests
         StringWriter stdout = new();
         BugReportReporter reporter = new(tracker, Labels, stdout, new StringWriter());
 
-        await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
+        BugReportFilingOutcome outcome = await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
 
+        Assert.Equal(BugReportFilingOutcome.DuplicateSkipped, outcome);
         Assert.Equal(1, tracker.SearchCount);
         Assert.Equal(0, tracker.FileCount);
         Assert.Contains("not filing a duplicate", stdout.ToString(), StringComparison.Ordinal);
@@ -76,11 +84,27 @@ public class BugReportReporterTests
         StringWriter stderr = new();
         BugReportReporter reporter = new(tracker, Labels, new StringWriter(), stderr);
 
-        await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
+        BugReportFilingOutcome outcome = await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
 
+        Assert.Equal(BugReportFilingOutcome.SearchFailed, outcome);
         Assert.Equal(1, tracker.SearchCount);
         Assert.Equal(0, tracker.FileCount);
-        Assert.Contains("skipping filing", stderr.ToString(), StringComparison.Ordinal);
+        Assert.Contains("will retry", stderr.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FilingFailure_ReturnsFilingFailed()
+    {
+        FakeIssueTracker tracker = new(enabled: true, duplicateFound: false, fileSucceeds: false);
+        StringWriter stderr = new();
+        BugReportReporter reporter = new(tracker, Labels, new StringWriter(), stderr);
+
+        BugReportFilingOutcome outcome = await reporter.ReportAsync(SampleReport(), Repo, CancellationToken.None);
+
+        Assert.Equal(BugReportFilingOutcome.FilingFailed, outcome);
+        Assert.Equal(1, tracker.SearchCount);
+        Assert.Equal(1, tracker.FileCount);
+        Assert.Contains("issue filing failed", stderr.ToString(), StringComparison.Ordinal);
     }
 
     private sealed class FakeIssueTracker : IIssueTracker
@@ -88,17 +112,20 @@ public class BugReportReporterTests
         private readonly bool _enabled;
         private readonly bool _duplicateFound;
         private readonly bool _searchSucceeds;
+        private readonly bool _fileSucceeds;
         private readonly string? _existingUrl;
 
         internal FakeIssueTracker(
             bool enabled,
             bool duplicateFound = false,
             bool searchSucceeds = true,
+            bool fileSucceeds = true,
             string? existingUrl = null)
         {
             _enabled = enabled;
             _duplicateFound = duplicateFound;
             _searchSucceeds = searchSucceeds;
+            _fileSucceeds = fileSucceeds;
             _existingUrl = existingUrl;
         }
 
@@ -107,10 +134,12 @@ public class BugReportReporterTests
         internal int SearchCount { get; private set; }
         internal int FileCount { get; private set; }
         internal GeneratedIssue? LastFiledIssue { get; private set; }
+        internal string? LastSearchToken { get; private set; }
 
-        public Task<IssueSearchResult> FindOpenIssueAsync(RepoRef repo, string dedupeKey, CancellationToken cancellationToken = default)
+        public Task<IssueSearchResult> FindOpenIssueAsync(RepoRef repo, string dedupeSearchToken, CancellationToken cancellationToken = default)
         {
             SearchCount++;
+            LastSearchToken = dedupeSearchToken;
             return Task.FromResult(new IssueSearchResult(
                 IsSuccess: _searchSucceeds,
                 DuplicateFound: _duplicateFound,
@@ -122,7 +151,9 @@ public class BugReportReporterTests
         {
             FileCount++;
             LastFiledIssue = issue;
-            return Task.FromResult(new IssueFilingResult(IsSuccess: true, IssueUrl: "https://github.com/honua-io/honua-sdk-js/issues/42", Detail: "201 Created"));
+            return Task.FromResult(_fileSucceeds
+                ? new IssueFilingResult(IsSuccess: true, IssueUrl: "https://github.com/honua-io/honua-sdk-js/issues/42", Detail: "201 Created")
+                : new IssueFilingResult(IsSuccess: false, IssueUrl: null, Detail: "file-failed: 502"));
         }
     }
 }

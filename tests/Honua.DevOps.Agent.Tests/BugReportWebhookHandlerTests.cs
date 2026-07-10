@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.BugReport;
 
 namespace Honua.DevOps.Agent.Tests;
@@ -13,11 +14,19 @@ public class BugReportWebhookHandlerTests
     private static ComponentRepoAllowlist Allowlist()
         => ComponentRepoAllowlist.Parse("sdk-js=honua-io/honua-sdk-js,server=honua-io/honua-server");
 
+    private static Func<BugReport, RepoRef, CancellationToken, Task<BugReportFilingOutcome>> Files(Action? onCall = null)
+        => (_, _, _) =>
+        {
+            onCall?.Invoke();
+            return Task.FromResult(BugReportFilingOutcome.Filed);
+        };
+
     private static BugReportWebhookHandler NewHandler(
-        Func<BugReport, RepoRef, CancellationToken, Task>? onAccepted = null,
+        Func<BugReport, RepoRef, CancellationToken, Task<BugReportFilingOutcome>>? onAccepted = null,
         IEventIdempotencyStore? store = null,
         TimeSpan? window = null,
-        TimeSpan? deadline = null)
+        TimeSpan? deadline = null,
+        AuditContext? audit = null)
         => new(
             Secret,
             Allowlist(),
@@ -25,7 +34,11 @@ public class BugReportWebhookHandlerTests
             onAccepted,
             idempotencyStore: store,
             now: () => FixedNow,
-            acceptedDeadline: deadline);
+            acceptedDeadline: deadline,
+            auditContext: audit);
+
+    private static AuditContext AuditWith(RecordingAuditSink sink)
+        => new("session-test", "plan", "standard", "pr-first", "codex", sink);
 
     private static (byte[] Body, string Signature) SignedBody(object payload)
     {
@@ -61,7 +74,7 @@ public class BugReportWebhookHandlerTests
     public async Task Rejects_UnsignedRequest()
     {
         bool invoked = false;
-        BugReportWebhookHandler handler = NewHandler((_, _, _) => { invoked = true; return Task.CompletedTask; });
+        BugReportWebhookHandler handler = NewHandler(Files(() => invoked = true));
         (byte[] body, _) = SignedBody(ValidPayload());
 
         BugReportHandlerResult result = await handler.HandleAsync(body, signatureHeader: null, CancellationToken.None);
@@ -160,7 +173,7 @@ public class BugReportWebhookHandlerTests
     public async Task Rejects_StaleTimestamp_TooOld()
     {
         bool invoked = false;
-        BugReportWebhookHandler handler = NewHandler((_, _, _) => { invoked = true; return Task.CompletedTask; });
+        BugReportWebhookHandler handler = NewHandler(Files(() => invoked = true));
         (byte[] body, string signature) = SignedBody(ValidPayload(emittedAt: FixedNow.AddMinutes(-10)));
 
         BugReportHandlerResult result = await handler.HandleAsync(body, signature, CancellationToken.None);
@@ -186,7 +199,7 @@ public class BugReportWebhookHandlerTests
     public async Task Rejects_UnmappedComponent_NoFiling()
     {
         bool invoked = false;
-        BugReportWebhookHandler handler = NewHandler((_, _, _) => { invoked = true; return Task.CompletedTask; });
+        BugReportWebhookHandler handler = NewHandler(Files(() => invoked = true));
         (byte[] body, string signature) = SignedBody(ValidPayload(component: "some-unknown-component"));
 
         BugReportHandlerResult result = await handler.HandleAsync(body, signature, CancellationToken.None);
@@ -206,7 +219,7 @@ public class BugReportWebhookHandlerTests
         {
             capturedReport = report;
             capturedRepo = repo;
-            return Task.CompletedTask;
+            return Task.FromResult(BugReportFilingOutcome.Filed);
         });
 
         // The event names component `server`; the destination must come from the
@@ -231,7 +244,7 @@ public class BugReportWebhookHandlerTests
         int fileCount = 0;
         IEventIdempotencyStore store = new InMemoryEventIdempotencyStore();
         BugReportWebhookHandler handler = NewHandler(
-            (_, _, _) => { Interlocked.Increment(ref fileCount); return Task.CompletedTask; },
+            Files(() => Interlocked.Increment(ref fileCount)),
             store: store);
 
         (byte[] body, string signature) = SignedBody(ValidPayload(eventId: "evt-dup"));
@@ -255,13 +268,13 @@ public class BugReportWebhookHandlerTests
         IEventIdempotencyStore store = new InMemoryEventIdempotencyStore();
 
         BugReportWebhookHandler unmapped = NewHandler(
-            (_, _, _) => { Interlocked.Increment(ref fileCount); return Task.CompletedTask; }, store: store);
+            Files(() => Interlocked.Increment(ref fileCount)), store: store);
         (byte[] badBody, string badSig) = SignedBody(ValidPayload(eventId: "evt-x", component: "nope"));
         BugReportHandlerResult refused = await unmapped.HandleAsync(badBody, badSig, CancellationToken.None);
         Assert.Equal(422, refused.StatusCode);
 
         BugReportWebhookHandler mapped = NewHandler(
-            (_, _, _) => { Interlocked.Increment(ref fileCount); return Task.CompletedTask; }, store: store);
+            Files(() => Interlocked.Increment(ref fileCount)), store: store);
         (byte[] goodBody, string goodSig) = SignedBody(ValidPayload(eventId: "evt-x", component: "sdk-js"));
         BugReportHandlerResult accepted = await mapped.HandleAsync(goodBody, goodSig, CancellationToken.None);
 
@@ -270,17 +283,117 @@ public class BugReportWebhookHandlerTests
     }
 
     [Fact]
-    public async Task BoundsSlowFiling_AcksWithDeadlineReason()
+    public async Task SlowFiling_ExceedsDeadline_DoesNotConsumeId_RequestsRetry()
     {
+        // FIX 3: an unconfirmed (deadline-exceeded) filing must not consume the id;
+        // the handler asks the sender to retry with a non-2xx.
+        InMemoryEventIdempotencyStore store = new();
         BugReportWebhookHandler handler = NewHandler(
-            onAccepted: async (_, _, token) => await Task.Delay(Timeout.InfiniteTimeSpan, token),
+            onAccepted: async (_, _, token) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return BugReportFilingOutcome.Filed;
+            },
+            store: store,
             deadline: TimeSpan.FromMilliseconds(50));
-        (byte[] body, string signature) = SignedBody(ValidPayload());
+        (byte[] body, string signature) = SignedBody(ValidPayload(eventId: "evt-slow"));
+
+        BugReportHandlerResult result = await handler.HandleAsync(body, signature, CancellationToken.None);
+
+        Assert.Equal(503, result.StatusCode);
+        Assert.Equal("filing-timeout", result.Reason);
+        Assert.False(store.IsProcessed("evt-slow"));
+    }
+
+    [Fact]
+    public async Task TransientFilingFailure_DoesNotConsumeId_ReturnsNon2xx_ThenRetrySucceeds()
+    {
+        // FIX 3: a transient file failure leaves the id unclaimed and returns a
+        // non-2xx; a subsequent retry (same eventId) then files and consumes it.
+        InMemoryEventIdempotencyStore store = new();
+        int attempts = 0;
+        BugReportWebhookHandler handler = NewHandler(
+            onAccepted: (_, _, _) =>
+            {
+                attempts++;
+                return Task.FromResult(attempts == 1
+                    ? BugReportFilingOutcome.FilingFailed
+                    : BugReportFilingOutcome.Filed);
+            },
+            store: store);
+        (byte[] body, string signature) = SignedBody(ValidPayload(eventId: "evt-transient"));
+
+        BugReportHandlerResult first = await handler.HandleAsync(body, signature, CancellationToken.None);
+        Assert.Equal(502, first.StatusCode);
+        Assert.Equal("filing-failed", first.Reason);
+        Assert.False(store.IsProcessed("evt-transient"));
+
+        BugReportHandlerResult second = await handler.HandleAsync(body, signature, CancellationToken.None);
+        Assert.Equal(202, second.StatusCode);
+        Assert.Equal("accepted", second.Reason);
+        Assert.True(store.IsProcessed("evt-transient"));
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task SearchFailure_DoesNotConsumeId_RequestsRetry()
+    {
+        InMemoryEventIdempotencyStore store = new();
+        BugReportWebhookHandler handler = NewHandler(
+            onAccepted: (_, _, _) => Task.FromResult(BugReportFilingOutcome.SearchFailed),
+            store: store);
+        (byte[] body, string signature) = SignedBody(ValidPayload(eventId: "evt-search"));
+
+        BugReportHandlerResult result = await handler.HandleAsync(body, signature, CancellationToken.None);
+
+        Assert.Equal(503, result.StatusCode);
+        Assert.Equal("duplicate-check-failed", result.Reason);
+        Assert.False(store.IsProcessed("evt-search"));
+    }
+
+    [Fact]
+    public async Task DuplicateSkipped_ConsumesId_Acks()
+    {
+        InMemoryEventIdempotencyStore store = new();
+        BugReportWebhookHandler handler = NewHandler(
+            onAccepted: (_, _, _) => Task.FromResult(BugReportFilingOutcome.DuplicateSkipped),
+            store: store);
+        (byte[] body, string signature) = SignedBody(ValidPayload(eventId: "evt-dupskip"));
 
         BugReportHandlerResult result = await handler.HandleAsync(body, signature, CancellationToken.None);
 
         Assert.Equal(202, result.StatusCode);
-        Assert.Equal("accepted-filing-deadline", result.Reason);
+        Assert.Equal("duplicate-skip", result.Reason);
+        Assert.True(store.IsProcessed("evt-dupskip"));
+    }
+
+    [Fact]
+    public async Task Audit_RecordsInvalidSignature_Unmapped_And_FilingFailure()
+    {
+        // FIX 4: rejected/unmapped/failed outcomes must produce a durable audit
+        // record, not just stderr.
+        RecordingAuditSink sink = new();
+
+        BugReportWebhookHandler signatureHandler = NewHandler(audit: AuditWith(sink));
+        (byte[] body, _) = SignedBody(ValidPayload(eventId: "evt-audit-sig"));
+        await signatureHandler.HandleAsync(body, signatureHeader: null, CancellationToken.None);
+
+        BugReportWebhookHandler unmappedHandler = NewHandler(Files(), audit: AuditWith(sink));
+        (byte[] unmappedBody, string unmappedSig) = SignedBody(ValidPayload(eventId: "evt-audit-unmapped", component: "nope"));
+        await unmappedHandler.HandleAsync(unmappedBody, unmappedSig, CancellationToken.None);
+
+        BugReportWebhookHandler failHandler = NewHandler(
+            onAccepted: (_, _, _) => Task.FromResult(BugReportFilingOutcome.FilingFailed),
+            audit: AuditWith(sink));
+        (byte[] failBody, string failSig) = SignedBody(ValidPayload(eventId: "evt-audit-fail"));
+        await failHandler.HandleAsync(failBody, failSig, CancellationToken.None);
+
+        Assert.Contains(sink.Records, r => r.Status == "invalid-signature");
+        Assert.Contains(sink.Records, r => r.Status.StartsWith("unmapped-component", StringComparison.Ordinal));
+        Assert.Contains(sink.Records, r => r.Status == "filing-failed");
+        // The unmapped record carries the component for triage.
+        AuditRecord unmapped = sink.Records.First(r => r.Status.StartsWith("unmapped-component", StringComparison.Ordinal));
+        Assert.Equal("nope", unmapped.Arguments["component"]);
     }
 
     [Fact]
@@ -292,11 +405,27 @@ public class BugReportWebhookHandlerTests
             {
                 shutdown.Cancel();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return BugReportFilingOutcome.Filed;
             },
             deadline: TimeSpan.FromSeconds(30));
         (byte[] body, string signature) = SignedBody(ValidPayload());
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => handler.HandleAsync(body, signature, shutdown.Token));
+    }
+
+    private sealed class RecordingAuditSink : IAuditSink
+    {
+        public List<AuditRecord> Records { get; } = new();
+
+        public string Target => "recording";
+
+        public Task WriteAsync(AuditRecord record, CancellationToken cancellationToken = default)
+        {
+            Records.Add(record);
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

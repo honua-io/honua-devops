@@ -25,7 +25,12 @@ public class GitHubIssueConnectorTests
     private static readonly RepoRef Repo = new("honua-io", "honua-sdk-js");
 
     private static GeneratedIssue SampleIssue()
-        => new("[support-bug] Tiles fail", "body with references only", ["bug"], "<!-- honua-bug-fingerprint: fp-1 -->");
+        => new(
+            "[support-bug] Tiles fail",
+            "body with references only",
+            ["bug"],
+            "<!-- honua-bug-fingerprint: deadbeef -->",
+            "deadbeef");
 
     [Fact]
     public async Task FindOpenIssue_ReportsDuplicate_WhenSearchReturnsMatch()
@@ -38,7 +43,7 @@ public class GitHubIssueConnectorTests
         using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
         using GitHubIssueConnector connector = new(Configuration(), httpClient);
 
-        IssueSearchResult result = await connector.FindOpenIssueAsync(Repo, "fp-1");
+        IssueSearchResult result = await connector.FindOpenIssueAsync(Repo, "abc123hash");
 
         Assert.True(result.IsSuccess);
         Assert.True(result.DuplicateFound);
@@ -48,6 +53,8 @@ public class GitHubIssueConnectorTests
         Assert.Equal("GET", captured.Method);
         Assert.Contains("/search/issues", captured.Uri, StringComparison.Ordinal);
         Assert.Contains("repo%3Ahonua-io%2Fhonua-sdk-js", captured.Uri, StringComparison.Ordinal);
+        // The dedupe hash is used as the exact search term (FIX 6).
+        Assert.Contains("abc123hash", captured.Uri, StringComparison.Ordinal);
         Assert.Equal("Bearer", captured.AuthorizationScheme);
         Assert.Equal("ghp_test", captured.AuthorizationParameter);
     }

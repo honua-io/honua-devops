@@ -40,7 +40,7 @@ internal sealed class BugReportReporter
         _stderr = stderr ?? Console.Error;
     }
 
-    internal async Task ReportAsync(BugReport report, RepoRef repo, CancellationToken cancellationToken)
+    internal async Task<BugReportFilingOutcome> ReportAsync(BugReport report, RepoRef repo, CancellationToken cancellationToken)
     {
         GeneratedIssue issue = BugReportIssueComposer.Compose(report, repo, _labels);
         WriteHeader(report, repo, issue);
@@ -49,27 +49,31 @@ internal sealed class BugReportReporter
         {
             _stdout.WriteLine(
                 $"[bug-report] issue filing disabled (no GitHub token) — sanitized issue prepared for {repo.FullName} but not filed.");
-            return;
+            return BugReportFilingOutcome.ReportOnly;
         }
 
         try
         {
             // Duplicate-issue detection BEFORE filing: never open a second issue for
-            // a bug already tracked in the destination repo.
-            IssueSearchResult search = await _tracker.FindOpenIssueAsync(repo, report.DedupeKey, cancellationToken);
+            // a bug already tracked in the destination repo. The search term is the
+            // dedupe hash embedded in every filed issue, so a redelivery of a bug we
+            // already filed reliably matches.
+            IssueSearchResult search = await _tracker.FindOpenIssueAsync(repo, issue.DedupeSearchToken, cancellationToken);
             if (search.IsSuccess && search.DuplicateFound)
             {
                 _stdout.WriteLine(
-                    $"[bug-report] open issue already references `{report.DedupeKey}` in {repo.FullName} ({search.ExistingIssueUrl ?? "url-unknown"}) — not filing a duplicate.");
-                return;
+                    $"[bug-report] open issue already tracks `{report.DedupeKey}` in {repo.FullName} ({search.ExistingIssueUrl ?? "url-unknown"}) — not filing a duplicate.");
+                return BugReportFilingOutcome.DuplicateSkipped;
             }
 
             if (!search.IsSuccess)
             {
-                // Fail closed: if we cannot confirm there is no duplicate, do not file.
+                // Transient: we could not confirm there is no duplicate. Do not file
+                // and do not consume the event id — signal the handler to request a
+                // retry rather than risk a possible duplicate.
                 _stderr.WriteLine(
-                    $"warn: duplicate-issue check failed for {repo.FullName} ({search.Detail}) — skipping filing to avoid a possible duplicate.");
-                return;
+                    $"warn: duplicate-issue check failed for {repo.FullName} ({search.Detail}) — not filing; will retry.");
+                return BugReportFilingOutcome.SearchFailed;
             }
 
             IssueFilingResult filing = await _tracker.FileIssueAsync(repo, issue, cancellationToken);
@@ -77,21 +81,24 @@ internal sealed class BugReportReporter
             {
                 _stdout.WriteLine(
                     $"[bug-report] filed sanitized issue in {repo.FullName}: {filing.IssueUrl ?? "url-unknown"}.");
+                return BugReportFilingOutcome.Filed;
             }
-            else
-            {
-                _stderr.WriteLine(
-                    $"warn: issue filing failed for {repo.FullName}: {filing.Detail}");
-            }
+
+            _stderr.WriteLine(
+                $"warn: issue filing failed for {repo.FullName}: {filing.Detail} — will retry.");
+            return BugReportFilingOutcome.FilingFailed;
         }
         catch (OperationCanceledException)
         {
+            // Deadline/shutdown cancellation is handled by the caller (the handler
+            // treats a deadline as an unconfirmed, retryable filing).
             throw;
         }
         catch (Exception exception)
         {
             _stderr.WriteLine(
-                $"warn: issue filing errored for {repo.FullName}: {exception.GetType().Name} {exception.Message}");
+                $"warn: issue filing errored for {repo.FullName}: {exception.GetType().Name} {exception.Message} — will retry.");
+            return BugReportFilingOutcome.FilingFailed;
         }
     }
 

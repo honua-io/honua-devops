@@ -38,7 +38,7 @@ public class BugReportWebhookListenerTests
             onAccepted: (report, repo, _) =>
             {
                 tcs.TrySetResult((report, repo));
-                return Task.CompletedTask;
+                return Task.FromResult(BugReportFilingOutcome.Filed);
             });
 
         await using BugReportWebhookListener listener = new(configuration, handler, new StringWriter(), new StringWriter());

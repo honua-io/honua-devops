@@ -38,7 +38,7 @@ internal sealed class GitHubIssueConnector : IIssueTracker, IDisposable
 
     public async Task<IssueSearchResult> FindOpenIssueAsync(
         RepoRef repo,
-        string dedupeKey,
+        string dedupeSearchToken,
         CancellationToken cancellationToken = default)
     {
         if (!TryGuard(out string? guard))
@@ -46,9 +46,10 @@ internal sealed class GitHubIssueConnector : IIssueTracker, IDisposable
             return new IssueSearchResult(IsSuccess: false, DuplicateFound: false, ExistingIssueUrl: null, Detail: guard!);
         }
 
-        // GitHub code-search-style issue query. Quoting the key keeps it an exact
-        // phrase match; scoping to the repo + open issues bounds the result set.
-        string query = $"repo:{repo.FullName} is:issue is:open \"{dedupeKey}\"";
+        // GitHub code-search-style issue query. The search term is the SHA-256
+        // dedupe hash embedded in the filed issue's marker; quoting keeps it an
+        // exact phrase match, scoping to the repo + open issues bounds the results.
+        string query = $"repo:{repo.FullName} is:issue is:open \"{dedupeSearchToken}\"";
         string relativePath = $"search/issues?q={Uri.EscapeDataString(query)}&per_page=1";
         Uri endpoint = BackendGateway.BuildEndpoint(_configuration.GitHubApiBaseUri!, relativePath);
         if (!HostAllowed(endpoint, out string? hostRejection))

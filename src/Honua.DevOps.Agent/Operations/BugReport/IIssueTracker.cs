@@ -26,14 +26,15 @@ internal interface IIssueTracker
     bool IsEnabled { get; }
 
     /// <summary>
-    /// Looks for an already-open issue in <paramref name="repo"/> that references
-    /// <paramref name="dedupeKey"/> (the report fingerprint or ticket id, which the
-    /// composed body always renders as visible, searchable text). Used to avoid
-    /// filing a second issue for a bug that is already tracked.
+    /// Looks for an already-open issue in <paramref name="repo"/> whose body carries
+    /// <paramref name="dedupeSearchToken"/> — the SHA-256 dedupe hash that the
+    /// composer embeds in the issue's dedupe marker. Searching the same hash that
+    /// was filed guarantees a just-filed issue is findable on a redelivery. Used to
+    /// avoid filing a second issue for a bug that is already tracked.
     /// </summary>
     Task<IssueSearchResult> FindOpenIssueAsync(
         RepoRef repo,
-        string dedupeKey,
+        string dedupeSearchToken,
         CancellationToken cancellationToken = default);
 
     /// <summary>Files the composed issue into <paramref name="repo"/>.</summary>
