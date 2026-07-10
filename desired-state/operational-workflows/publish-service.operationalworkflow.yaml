@@ -1,0 +1,33 @@
+apiVersion: honua.io/v1alpha1
+kind: OperationalWorkflow
+metadata:
+  name: publish-service
+  namespace: control-plane
+  labels:
+    managed-by: honua-devops
+    workflow-category: data-ops
+spec:
+  intent: "Publish a feature service to the live GeoServices catalog from a validated definition."
+  category: data-ops
+  autonomyTier: 2
+  executionPolicyRef: execution-policy-default
+  preconditions:
+    - "candidate server healthy (/healthz 200)"
+    - "service definition validated (schema + layer fields)"
+    - "no existing service with the same id"
+  steps:
+    - "POST the service definition to the control-plane publish endpoint"
+    - "wait for the service to appear in GET /rest/services"
+    - "warm a query to confirm the layer is queryable"
+  verify:
+    - "GET /rest/services lists the new service"
+    - "a query against layer 0 returns a featureset, not a 200+{error} envelope"
+    - "honua_geoservices_error_total did not rise during publish"
+  rollback:
+    procedure:
+      - "DELETE the published service via the control-plane"
+      - "wait for it to disappear from GET /rest/services"
+    verify:
+      - "GET /rest/services no longer lists the service"
+      - "catalog matches the pre-publish snapshot (no orphaned layers)"
+  integrationTest: "tests/operational/publish-service-rollback"

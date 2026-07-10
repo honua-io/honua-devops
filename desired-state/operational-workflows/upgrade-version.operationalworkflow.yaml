@@ -1,0 +1,38 @@
+apiVersion: honua.io/v1alpha1
+kind: OperationalWorkflow
+metadata:
+  name: upgrade-version
+  namespace: control-plane
+  labels:
+    managed-by: honua-devops
+    workflow-category: platform-ops
+spec:
+  intent: "Upgrade a deployment from the current pinned platform release to a target release."
+  category: platform-ops
+  autonomyTier: 1
+  executionPolicyRef: execution-policy-default
+  preconditions:
+    - "current and target are both certified platform releases (gate-report all-green)"
+    - "upgrade gate passed: target keeps all current clients supported + DB schema forward-only"
+    - "a fresh backup/snapshot exists (DB + config)"
+    - "preflight dry-run of DB migrations succeeded"
+  steps:
+    - "apply the target platform-manifest via IaC/Helm (expand-contract; additive migrations first)"
+    - "run forward DB migrations"
+    - "switch reads to the new server; drain the old"
+    - "warm canonical queries on the new version"
+  verify:
+    - "every component reports the target version"
+    - "canonical parity set passes on the upgraded deployment"
+    - "old clients (N-1) still succeed within the support window"
+    - "no error-budget regression (honua_geoservices_error_total rate within SLO)"
+  rollback:
+    procedure:
+      - "switch reads back to the prior server (blue/green) or redeploy the prior pinned manifest"
+      - "run rollback (contract) migrations for any additive change not yet backfilled"
+      - "restore config to the prior release's schema"
+    verify:
+      - "every component reports the prior version"
+      - "canonical parity set passes on the rolled-back deployment"
+      - "data written during the attempted upgrade is intact (no loss from the rollback)"
+  integrationTest: "tests/operational/upgrade-version-rollback"
