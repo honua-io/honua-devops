@@ -14,3 +14,9 @@ missing a non-empty `rollback.procedure` AND `rollback.verify` is rejected — y
 autonomous operator run an action it cannot prove it can undo. This complements the existing
 `ExecutionPolicy` `rollback-intent` required-check (intent declared) by requiring the rollback be
 *specified and verifiable* per workflow.
+
+`ops-finding-proposal` binds the AI-assisted day-2 loop to the same catalog. Its
+read phase is MCP-only and bounded; its only write is the deterministic finding
+id handed to the server's finding-proposal route. Honua retains the opaque
+execution payload and owns executor discovery, autonomy, approval, execution,
+and compensation.

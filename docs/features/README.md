@@ -7,6 +7,7 @@
 - Provider-pluggable agent runtime with Codex, Claude, and `local-llama` configuration paths.
 - Plan/execute modes, execution tiers, approval modes, audit hooks, support-session posture, and break-glass controls.
 - Built-in operations toolkit for diagnostics, metrics review, slow-query explanation, index recommendations, capacity forecasts, runbook execution, incident summaries, migration advice, and remediation planning.
+- Primary day-2 `honua_observe_diagnose_propose` loop over bounded honua-server MCP health/findings/alerts/timeline/platform-release/deploy evidence, with at-most-one deterministic finding-id proposal through the server-owned gateway and approval lane.
 - Honua API, OTEL, and `honua-support` backend integration, including diagnosis evidence, scorecard posting, and signed escalation webhook intake for support tickets.
 - Desired-state control repo model with typed service bundles, platform stacks, promotions, execution policies, and releases.
 - Customer bootstrap scripts that emit validation, preflight, and operator CI workflows.

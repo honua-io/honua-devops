@@ -30,7 +30,7 @@ The operator surface is intentionally split into distinct control zones:
 - Desired state: Git commits and typed operator objects are the source of desired intent.
 - Runtime adapters: translate desired state into Terraform, Helm, or control-plane operations for each target family.
 - Honua control plane: reconciles GIS and service state through Honua APIs.
-- Telemetry truth: OTEL and Honua metrics provide observed health, drift, and release evidence.
+- Telemetry truth: the bounded Honua-server MCP ops contract provides primary health, findings, alert, timeline, release, and deploy evidence; OTEL logs/metrics are secondary drill-down sources.
 - Approval layer: humans or policy gates decide whether proposed state can advance to execution.
 
 For the contract boundary between what `honua-devops` owns as private
@@ -54,7 +54,7 @@ Execution tier answers "what class of write is allowed, and under what guardrail
 | --- | --- | --- |
 | `observe` | no writes | incident review, evidence gathering, health checks |
 | `plan` | no writes | dry-run diff, rollout planning, operator rehearsal |
-| `propose` | no writes | prepare desired-state payloads and PR-ready changes |
+| `propose` | durable proposal records only; no direct execution | route a reviewed finding or desired-state change into the approval lane |
 | `execute-lower-env` | gated writes to non-prod only | dev and staging rollout execution |
 | `promote-prod` | gated prod promotion only | promote a previously validated revision into prod |
 | `break-glass` | emergency direct execution | incident recovery with explicit audit burden |
@@ -85,7 +85,8 @@ Current deployment actions:
 
 Contract rules:
 
-- `observe`, `plan`, and `propose` always resolve to dry-run behavior even if the caller requests `apply`
+- `observe` and `plan` always resolve to dry-run behavior even if the caller requests `apply`
+- `propose` may create a durable, idempotent approval proposal but never approves, submits, or directly executes it from the DevOps brain
 - `execute-lower-env` rejects any `prod` target
 - `promote-prod` requires action `promote` when `prod` is targeted
 - `break-glass` allows direct execution but must produce elevated-risk evidence

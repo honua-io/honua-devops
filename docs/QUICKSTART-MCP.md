@@ -2,7 +2,7 @@
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 34 operator tools the interactive agent
+MCP-capable host) can call the same 35 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 In MCP mode the client LLM does the reasoning, so **no model provider
@@ -40,12 +40,12 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 34 tools), or run the
+Verify with `claude mcp list` (the server should report 35 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --mcp
-# stderr: honua-devops MCP stdio server ready (tools=34, mode=plan, tier=plan, approval=pr-first, ...)
+# stderr: honua-devops MCP stdio server ready (tools=35, mode=plan, tier=plan, approval=pr-first, ...)
 ```
 
 ## Register with Codex CLI
@@ -120,11 +120,12 @@ bottlenecks) with prioritized remediation and validation checks.
 
 ## Exposed tools (1:1 with the interactive agent)
 
-All 34 tools registered by `CapabilityToolset` (the
+All 35 tools registered by `CapabilityToolset` (the
 `ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
 live MCP surface 1:1):
 
-`describe_environment`, `find_recent_operations`, `analyze_logs`,
+`describe_environment`, `honua_observe_diagnose_propose`,
+`find_recent_operations`, `analyze_logs`,
 `analyze_metrics`, `tune_performance`, `troubleshoot_incident`,
 `plan_server_upgrade`, `plan_gitops_engine`,
 `generate_metadata_release_changeset`,
@@ -148,6 +149,19 @@ live MCP surface 1:1):
 > projection rather than acting. Recovery uses the health-gated fix-forward planner
 > `plan_forward_fix` (verify health -> propose a corrected revision -> re-deploy),
 > not rollback (see "Release posture" under the safety model).
+
+`honua_observe_diagnose_propose` is the primary day-2 operator entry point. It
+reads honua_ops_health, honua_ops_findings, honua_alert_events,
+honua_operate_events, honua_platform_release_status, and
+honua_deploy_operations from the connected server over a bounded MCP session.
+It caps history at 50 entries and 168 hours, caps the MCP response at 1 MiB and
+each projected text value at 2,048 characters, de-duplicates deterministic
+finding ids, and reports the live `supportedKinds` executor catalog. With
+`proposeRecommendedAction=true`, it routes at most one supported finding through
+`POST findings/{findingId}/propose` only at execution tier `propose` or higher.
+That server endpoint reconstructs the intentionally hidden execution payload and
+applies the existing operation gateway, autonomy, and Console approval policy;
+the DevOps brain never synthesizes a payload or approves/executes the operation.
 
 ## Safety model over MCP
 
@@ -186,7 +200,7 @@ where an unhealthy outcome is recovered by rolling **forward** — never back:
 - **Rollback is experimental and OFF by default.** The `rollback_gitops_operation`
   tool is *not advertised* (removed from the catalog), and the handler self-refuses
   with `experimental-disabled`. The code is retained but gated behind
-  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`. With it enabled the catalog exposes 35
+  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`. With it enabled the catalog exposes 36
   tools (rollback in addition to `plan_forward_fix`).
 - **Cross-environment promotion is experimental and OFF by default.**
   `deploy_service_gitops` refuses a `promote` action or any multi-environment
