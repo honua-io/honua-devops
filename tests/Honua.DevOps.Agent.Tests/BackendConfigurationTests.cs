@@ -101,6 +101,20 @@ public class BackendConfigurationTests
         Assert.Equal("api/v1/admin/manifest/versions", configuration.HonuaManifestVersionsPath);
     }
 
+    [Fact]
+    public void Load_ConfiguresMcpReadAndFindingProposalPaths()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_HONUA_MCP_PATH", "/operator/mcp");
+        environment.Set("HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH", "/api/v1/admin/observability/findings");
+
+        BackendConfiguration configuration = BackendConfiguration.Load();
+
+        Assert.Equal("operator/mcp", configuration.HonuaMcpPath);
+        Assert.Equal("api/v1/admin/observability/findings", configuration.HonuaOpsFindingsPath);
+    }
+
     private static void ResetBackendVariables(TestEnvironmentVariableScope environment)
     {
         string[] variableNames =
@@ -131,6 +145,8 @@ public class BackendConfigurationTests
             "HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH",
             "HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH",
             "HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH",
+            "HONUA_DEVOPS_HONUA_MCP_PATH",
+            "HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH",
             "HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH",
             "HONUA_DEVOPS_HONUA_TUNE_PATH",
             "HONUA_DEVOPS_HONUA_UPGRADE_PATH",

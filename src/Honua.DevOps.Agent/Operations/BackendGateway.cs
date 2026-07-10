@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations.DesiredState;
 using Honua.DevOps.Agent.Operations.GitOps;
+using Honua.DevOps.Agent.Operations.Observability;
 
 namespace Honua.DevOps.Agent.Operations;
 
@@ -26,6 +27,35 @@ internal sealed class BackendGateway : IDisposable
     }
 
     internal BackendConfiguration Configuration => configuration;
+
+    internal HonuaMcpOpsClient CreateMcpOpsClient()
+    {
+        Uri endpoint = BuildEndpoint(configuration.HonuaApiBaseUri, configuration.HonuaMcpPath);
+        return new HonuaMcpOpsClient(
+            _httpClient,
+            endpoint,
+            request => ApplyApiKey(request, configuration.HonuaApiKey, ApiKeyTransport.XApiKey));
+    }
+
+    internal Task<BackendJsonResult> ProposeOpsFindingAsync(
+        string findingId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(findingId))
+        {
+            throw new ArgumentException("Finding id is required.", nameof(findingId));
+        }
+
+        string path = $"{configuration.HonuaOpsFindingsPath.TrimEnd('/')}/{Uri.EscapeDataString(findingId.Trim())}/propose";
+        return SendJsonAsync(
+            configuration.HonuaApiBaseUri,
+            HttpMethod.Post,
+            path,
+            payload: null,
+            configuration.HonuaApiKey,
+            ApiKeyTransport.XApiKey,
+            cancellationToken);
+    }
 
     internal Task<BackendCallResult> QueryLogsAsync(
         string service,

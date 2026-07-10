@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Honua.DevOps.Agent.Operations.Observability;
 
 namespace Honua.DevOps.Agent.Operations.Audit;
 
@@ -73,6 +74,20 @@ internal static class ToolCallAuditor
                 }
                 backendSteps = scrubbedSteps;
             }
+        }
+        else if (toolResult is OpsLoopReport opsLoop)
+        {
+            status = opsLoop.Status;
+            summary = Redaction.Scrub(
+                $"Honua MCP ops loop: health={opsLoop.OverallHealth ?? "unknown"}, findings={opsLoop.Findings.Count}, proposals={opsLoop.Findings.Count(finding => finding.Proposal is not null)}.");
+            mutated = opsLoop.Findings.Any(finding =>
+                finding.Proposal?.GatewayStatus is
+                    "ProposalCreated" or
+                    "Executed" or
+                    "Failed" or
+                    "RolledBack" or
+                    "Indeterminate" or
+                    "Canceled");
         }
         else if (toolResult is not null)
         {

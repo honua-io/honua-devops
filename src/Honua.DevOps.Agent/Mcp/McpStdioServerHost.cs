@@ -76,7 +76,9 @@ internal static class McpStdioServerHost
                     "apply manifests, submit, or roll back deploy operations. Edition-gated tools " +
                     "(honua_runbook_execute, honua_auto_remediation_plan) return approval-required or edition-gated " +
                     "responses unless the runtime gates allow execution. Call describe_environment first when the " +
-                    "request lacks an explicit service, environment, or edition."
+                    "request lacks an explicit service, environment, or edition. For day-2 health, findings, alerts, " +
+                    "or operation history, call honua_observe_diagnose_propose first with proposeRecommendedAction=false; " +
+                    "only request a proposal when the operator explicitly asks and the configured tier permits it."
             };
 
             Console.Error.WriteLine(

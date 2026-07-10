@@ -25,6 +25,17 @@ internal static class CapabilityToolset
                 "describe_environment",
                 "Discover the connected Honua environment: readiness, edition, manifest scope, deploy targets, and allowed environments. Call first when the operator's request lacks an explicit service, environment, or edition."),
             CreateTool(
+                (string findingId, string severity, string rule, int lookbackHours, int pageSize, bool proposeRecommendedAction)
+                    => toolkit.ObserveDiagnoseProposeAsync(
+                        findingId,
+                        severity,
+                        rule,
+                        lookbackHours,
+                        pageSize,
+                        proposeRecommendedAction),
+                "honua_observe_diagnose_propose",
+                "Run the primary Honua day-2 loop against the server-owned MCP contracts: bounded ops health, deterministic findings/recommendedAction/evidenceRefs, alert history, Operate timeline, platform release and deploy history, plus truthful supportedKinds discovery. Correlates evidence and, only when explicitly requested and execution tier is propose or higher, routes at most one live finding by deterministic finding id through Honua's existing operation gateway and Console approval/autonomy policy. Never supplies a hidden execution payload, directly executes, approves, submits, or rolls back. Empty findingId/severity/rule means no filter; lookback defaults to 24h and caps at 168h; pageSize defaults to 25 and caps at 50."),
+            CreateTool(
                 (string toolFilter, bool mutatedOnly, string statusContains, int limit)
                     => toolkit.FindRecentOperationsAsync(toolFilter, mutatedOnly, statusContains, limit),
                 "find_recent_operations",

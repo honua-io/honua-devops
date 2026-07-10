@@ -37,7 +37,9 @@ internal sealed record BackendConfiguration(
     bool SupportAutoBundleEnabled = false,
     IReadOnlyList<string>? SupportAutoBundleAllowedHosts = null,
     string? SupportAutoBundleApiKey = null,
-    Uri? ConsoleBaseUri = null)
+    Uri? ConsoleBaseUri = null,
+    string HonuaMcpPath = "mcp",
+    string HonuaOpsFindingsPath = "api/v1/admin/observability/findings")
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
     private const string OTelBaseUrlVariable = "HONUA_DEVOPS_OTEL_BASE_URL";
@@ -71,6 +73,8 @@ internal sealed record BackendConfiguration(
     private const string HonuaMetadataReleaseByPackagePathVariable = "HONUA_DEVOPS_HONUA_METADATA_RELEASE_BY_PACKAGE_PATH";
     private const string HonuaManifestDriftPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH";
     private const string HonuaManifestVersionsPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH";
+    private const string HonuaMcpPathVariable = "HONUA_DEVOPS_HONUA_MCP_PATH";
+    private const string HonuaOpsFindingsPathVariable = "HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH";
 
     // Backwards-compatible aliases from the original /ops route placeholders.
     private const string LegacyTroubleshootPathVariable = "HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH";
@@ -200,6 +204,14 @@ internal sealed record BackendConfiguration(
             Environment.GetEnvironmentVariable(HonuaManifestVersionsPathVariable),
             "/api/v1/admin/manifest/versions",
             HonuaManifestVersionsPathVariable);
+        string honuaMcpPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaMcpPathVariable),
+            "/mcp",
+            HonuaMcpPathVariable);
+        string honuaOpsFindingsPath = ParseRelativePath(
+            Environment.GetEnvironmentVariable(HonuaOpsFindingsPathVariable),
+            "/api/v1/admin/observability/findings",
+            HonuaOpsFindingsPathVariable);
 
         TimeSpan timeout = ParseTimeout(Environment.GetEnvironmentVariable(TimeoutSecondsVariable));
 
@@ -258,7 +270,9 @@ internal sealed record BackendConfiguration(
             SupportAutoBundleEnabled: supportAutoBundleEnabled,
             SupportAutoBundleAllowedHosts: supportAutoBundleAllowedHosts,
             SupportAutoBundleApiKey: supportAutoBundleApiKey,
-            ConsoleBaseUri: consoleBaseUri);
+            ConsoleBaseUri: consoleBaseUri,
+            HonuaMcpPath: honuaMcpPath,
+            HonuaOpsFindingsPath: honuaOpsFindingsPath);
     }
 
     private static bool ParseBoolean(string? value, bool fallback, string variableName)

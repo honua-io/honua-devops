@@ -29,7 +29,7 @@ than building a local equivalent.
 | honua-terraform modules | honua-terraform | Infra plan/apply for 6 targets (azure-functions, lambda, eks, aks, ecs, aca) | Active | — |
 | OTEL telemetry | OTEL standard | Log and metrics queries via BackendGateway | Active | — |
 | geospatial-grpc services | geospatial-grpc | ProcessService/PipelineService RPCs, typed job/progress/result/artifact/error models, dry-run semantics | Not yet consumed | geospatial-grpc-6 |
-| geospatial-mcp tool surface | geospatial-mcp | MCP tool taxonomy (Analyze, Publish, Build, Automate/Deploy), resource model, interaction-plane boundaries | Not yet consumed | geospatial-mcp-2 |
+| honua-server MCP ops surface | geospatial-mcp + honua-server | Session-aware bounded reads of ops health, findings, alerts, Operate timeline, platform release, and deploy operations; finding-id proposal handoff remains server-owned | Active (ops subset) | geospatial-mcp#57; honua-server#2555/#2566 |
 
 ## Private Orchestration Inventory
 
@@ -65,19 +65,20 @@ The Azure host planner records these intended gRPC responsibilities as
 contract-consumption stages; it does not introduce local client stubs or
 replacement service contracts.
 
-## Future Consumption: geospatial-mcp
+## Remaining Consumption: geospatial-mcp
 
-Once `geospatial-mcp-2` lands:
+The bounded operator-observability subset is consumed now. Remaining broader
+interaction-plane work still tracked by `geospatial-mcp-2` should:
 
 - Invoke MCP tools through the published taxonomy, not a parallel tool registry
 - Use MCP resource model for data access
 - Respect interaction-plane boundary: MCP for discovery/interaction, gRPC for execution
 - Delegate geospatial operations to MCP tool surfaces rather than embedding logic directly
 
-This section documents intended patterns; details may shift when the
-upstream contract closes.
-The Azure host planner records these intended MCP responsibilities as
-contract-consumption stages; it does not create a parallel tool taxonomy.
+The active ops client consumes the published server tool names and structured
+results without redefining them. The Azure host planner records remaining MCP
+responsibilities as contract-consumption stages; it does not create a parallel
+tool taxonomy.
 
 ## Non-Goals
 
@@ -93,10 +94,10 @@ contract-consumption stages; it does not create a parallel tool taxonomy.
 
 ## Lockstep Dependencies
 
-`geospatial-mcp-2` and `geospatial-grpc-6` are active contracts not yet
-delivered. Until they land, this document records intended consumption
-patterns without stubs or alternative paths.
+The ops subset of geospatial MCP is active; `geospatial-mcp-2` still tracks the
+remaining broader interaction surface. `geospatial-grpc-6` is not yet consumed.
+Until those remaining contracts land, this document records intended
+consumption patterns without stubs or alternative paths.
 
-When the dependencies land, update the matrix rows from "Not yet consumed"
-to "Active" and revise the future-consumption sections with concrete
-integration details.
+When the remaining dependencies land, update the relevant matrix status and
+revise the remaining-consumption sections with concrete integration details.

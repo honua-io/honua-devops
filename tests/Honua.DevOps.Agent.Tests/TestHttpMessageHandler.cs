@@ -20,7 +20,13 @@ internal sealed class TestHttpMessageHandler(Func<HttpRequestMessage, HttpRespon
             body)
         {
             AuthorizationScheme = request.Headers.Authorization?.Scheme,
-            AuthorizationParameter = request.Headers.Authorization?.Parameter
+            AuthorizationParameter = request.Headers.Authorization?.Parameter,
+            ApiKey = request.Headers.TryGetValues("X-API-Key", out IEnumerable<string>? apiKeys)
+                ? apiKeys.SingleOrDefault()
+                : null,
+            McpSessionId = request.Headers.TryGetValues("Mcp-Session-Id", out IEnumerable<string>? sessionIds)
+                ? sessionIds.SingleOrDefault()
+                : null
         });
 
         return responder(request);
@@ -42,4 +48,8 @@ internal sealed record CapturedRequest(
 {
     internal string? AuthorizationScheme { get; init; }
     internal string? AuthorizationParameter { get; init; }
+
+    internal string? ApiKey { get; init; }
+
+    internal string? McpSessionId { get; init; }
 }

@@ -1,4 +1,5 @@
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.Observability;
 
 namespace Honua.DevOps.Agent.Tests;
 
@@ -63,6 +64,34 @@ public class LiveHonuaIntegrationTests
             CancellationToken.None);
 
         Assert.True(plan.IsSuccess, $"{plan.Detail}: {plan.PayloadPreview}");
+    }
+
+    [Fact]
+    public async Task LiveHonua_McpOpsReadLoopIsReachableWhenEnabled()
+    {
+        if (!LiveIntegrationEnabled())
+        {
+            return;
+        }
+
+        using BackendGateway gateway = new(BackendConfiguration.Load());
+        OpsObserveDiagnoseProposeLoop loop = new(OperationRuntime.Load(), gateway);
+
+        OpsLoopReport report = await loop.RunAsync(
+            findingId: string.Empty,
+            severity: string.Empty,
+            rule: string.Empty,
+            lookbackHours: 1,
+            pageSize: 10,
+            proposeRecommendedAction: false,
+            CancellationToken.None);
+
+        Assert.NotEqual("observability-unavailable", report.Status);
+        Assert.Equal("honua-server-mcp", report.ObservabilitySource);
+        Assert.Contains("honua_ops_health", report.McpToolsUsed);
+        Assert.Contains("honua_ops_findings", report.McpToolsUsed);
+        Assert.Contains("honua_alert_events", report.McpToolsUsed);
+        Assert.Contains("honua_operate_events", report.McpToolsUsed);
     }
 
     private static bool LiveIntegrationEnabled()

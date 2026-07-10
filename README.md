@@ -40,6 +40,7 @@ open-core runtime promise.
 - Log analysis and root-cause guidance (via OTEL endpoints)
 - Metrics analysis and performance tuning plans (via OTEL + Honua API)
 - Troubleshooting and optimization workflows (via Honua API)
+- Server-owned day-2 operations loop (`honua_observe_diagnose_propose`): bounded MCP health/findings/alerts/timeline/platform-release/deploy evidence, with finding-id proposals routed through Honua's existing gateway and Console approval lane
 - Honua support ticket triage through `honua-support` (`process_pending_tickets`)
 - Server upgrade planning with rollback gates (via Honua API)
 - GitOps-driven multi-environment deployment planning (Honua-native GitOps; see `honua-server` #351/#363)
@@ -47,7 +48,7 @@ open-core runtime promise.
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 - Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`) projecting stable, evidence-linked proposal/operation/brief and read-only release-explanation contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
-- MCP stdio server mode (`--mcp`) exposing the full 34-tool operator surface 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
+- MCP stdio server mode (`--mcp`) exposing the full 35-tool operator surface 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
 
 ## Provider Configuration
 
@@ -147,6 +148,8 @@ OTEL path overrides:
 
 Honua endpoint contract overrides (defaults map to implemented `honua-server` routes):
 
+- `HONUA_DEVOPS_HONUA_MCP_PATH` (`/mcp`) — primary read source for the day-2 operator loop
+- `HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH` (`/api/v1/admin/observability/findings`) — canonical finding-id proposal route; the server materializes hidden action payloads and applies gateway/autonomy policy
 - `HONUA_DEVOPS_HONUA_ADMIN_ERRORS_PATH` (`/api/v1/admin/observability/errors`)
 - `HONUA_DEVOPS_HONUA_ADMIN_TELEMETRY_PATH` (`/api/v1/admin/observability/telemetry`)
 - `HONUA_DEVOPS_HONUA_METRICS_HEALTH_PATH` (`/api/v1/metrics/health`)
@@ -292,7 +295,7 @@ Register with Claude Code:
 claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
 ```
 
-All 34 operator tools are exposed 1:1 with the interactive agent — same
+All 35 operator tools are exposed 1:1 with the interactive agent — same
 handlers, same execution-mode/approval/edition gates, and one JSONL audit
 record per tool call (stdout-targeted audit evidence moves to stderr because
 stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)

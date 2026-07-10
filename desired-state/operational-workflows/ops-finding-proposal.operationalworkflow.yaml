@@ -1,0 +1,37 @@
+apiVersion: honua.io/v1alpha1
+kind: OperationalWorkflow
+metadata:
+  name: ops-finding-proposal
+  namespace: control-plane
+  labels:
+    managed-by: honua-devops
+    workflow-category: platform-ops
+spec:
+  intent: "Observe a live server condition, diagnose its deterministic finding, and propose one supported remediation through the shared operation gateway."
+  category: platform-ops
+  autonomyTier: 1
+  executionPolicyRef: execution-policy-default
+  preconditions:
+    - "the server MCP session is authenticated and authorized for ops reads"
+    - "health, findings, alerts, and Operate timeline reads complete within the bounded window"
+    - "the finding still exists and has a recommendedAction"
+    - "recommendedAction.kind is present in the server-reported supportedKinds executor catalog"
+    - "proposal creation was explicitly requested and the DevOps execution tier is propose or higher"
+  steps:
+    - "read health, findings, alert history, Operate timeline, platform release, and deploy history from the server MCP contract"
+    - "correlate recommendedAction and evidenceRefs by deterministic finding id, operation id, release id, target id, and event reference"
+    - "POST the deterministic finding id to the server findings propose route; never reconstruct its hidden execution payload"
+    - "allow the server operation gateway, autonomy evaluator, and Console approval lane to decide the outcome"
+  verify:
+    - "the result names the same deterministic finding id as the observed condition"
+    - "the gateway returns ProposalCreated, Blocked, NotSupported, or an explicit terminal action outcome (Executed, Failed, RolledBack, Indeterminate, Canceled) without a client-side direct action"
+    - "at most one finding was proposed in the invocation and duplicate live finding ids produced no duplicate request"
+  rollback:
+    procedure:
+      - "for a read-only or blocked invocation: no-op because no operation was created"
+      - "for a pending proposal: reject it through the Console approval lane before execution"
+      - "for a server-policy execution: use the action-specific compensator and verification owned by the server executor catalog"
+    verify:
+      - "no unapproved proposal remains executable"
+      - "the action-specific server verification confirms the prior safe posture when compensation was required"
+  integrationTest: "tests/Honua.DevOps.Agent.Tests/OpsObserveDiagnoseProposeLoopTests"
