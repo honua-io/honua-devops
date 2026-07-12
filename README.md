@@ -49,6 +49,7 @@ open-core runtime promise.
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 - Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`) projecting stable, evidence-linked proposal/operation/brief and read-only release-explanation contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
 - MCP stdio server mode (`--mcp`) exposing the full 35-tool operator surface 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
+- Signed support bug-report intake (`--bugreport-listen`) with durable cross-restart `eventId` replay protection — see [docs/bug-report-idempotency.md](docs/bug-report-idempotency.md)
 
 ## Provider Configuration
 

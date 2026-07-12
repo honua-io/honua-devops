@@ -25,7 +25,7 @@ than building a local equivalent.
 | --- | --- | --- | --- | --- |
 | honua-server REST API | honua-server | BackendGateway HTTP to 13 readiness/admin/metrics/manifest endpoints | Active | — |
 | honua-support ticket API and escalation webhook | honua-support | SupportGateway polls/posts ticket diagnosis records; `--listen` accepts signed `ticket.escalation_requested` webhooks | Active | — |
-| honua-support bug-report event | honua-support | `--bugreport-listen` accepts the signed, operator-approved `ticket.bug_report.v1` event (HMAC-SHA256 + freshness/replay window + `eventId` idempotency), resolves the destination repo ONLY from a server-owned component→repo allowlist, dedupes, and files a sanitized (references-only) GitHub issue | Active | honua-support#44 |
+| honua-support bug-report event | honua-support | `--bugreport-listen` accepts the signed, operator-approved `ticket.bug_report.v1` event (HMAC-SHA256 + freshness/replay window + durable bounded `eventId` idempotency), resolves the destination repo ONLY from a server-owned component→repo allowlist, dedupes, and files a sanitized (references-only) GitHub issue | Active | honua-support#44; honua-devops#141 |
 | honua-server packaging | honua-server | Docker images, Helm charts, image registries consumed by runtime adapters | Active | — |
 | honua-terraform modules | honua-terraform | Infra plan/apply for 6 targets (azure-functions, lambda, eks, aks, ecs, aca) | Active | — |
 | OTEL telemetry | OTEL standard | Log and metrics queries via BackendGateway | Active | — |
