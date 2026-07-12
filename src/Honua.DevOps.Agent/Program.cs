@@ -167,6 +167,9 @@ try
         // stays report-only (sanitized issue prepared, not filed).
         using GitHubIssueConnector issueTracker = new(bugReportConfiguration, sharedHttpClient);
         BugReportReporter bugReportReporter = new(issueTracker, bugReportConfiguration.Labels);
+        IEventIdempotencyStore eventIdempotencyStore = EventIdempotencyStoreFactory.Create(
+            bugReportConfiguration,
+            Console.Error);
 
         // Durably audit every security-relevant outcome (invalid-signature,
         // stale/replay, unmapped-component, duplicate-skip, filing-failure) through
@@ -187,6 +190,7 @@ try
                 bugReportConfiguration.Allowlist,
                 bugReportConfiguration.ReplayWindow,
                 onAccepted: (report, repo, token) => bugReportReporter.ReportAsync(report, repo, token),
+                idempotencyStore: eventIdempotencyStore,
                 auditContext: bugReportAuditContext);
             await using BugReportWebhookListener bugReportListener = new(bugReportConfiguration, bugReportHandler);
             await bugReportListener.RunAsync(cancellationTokenSource.Token);
@@ -403,4 +407,3 @@ static string ExtractStatus(object? toolResult)
     string raw = toolResult.ToString() ?? string.Empty;
     return raw.Length > 120 ? raw[..120] + "..." : raw;
 }
-

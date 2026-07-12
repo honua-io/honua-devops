@@ -260,6 +260,39 @@ public class BugReportWebhookHandlerTests
     }
 
     [Fact]
+    public async Task DurableEventId_AfterHandlerRestart_SkipsSecondFiling()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"honua-devops-handler-restart-{Guid.NewGuid():n}");
+        string path = Path.Combine(directory, "event-ids.json");
+        try
+        {
+            int fileCount = 0;
+            BugReportWebhookHandler firstHandler = NewHandler(
+                Files(() => Interlocked.Increment(ref fileCount)),
+                store: new FileEventIdempotencyStore(path, TimeSpan.FromHours(1), now: () => FixedNow));
+            (byte[] body, string signature) = SignedBody(ValidPayload(eventId: "evt-restart-handler"));
+
+            BugReportHandlerResult first = await firstHandler.HandleAsync(body, signature, CancellationToken.None);
+            BugReportWebhookHandler restartedHandler = NewHandler(
+                Files(() => Interlocked.Increment(ref fileCount)),
+                store: new FileEventIdempotencyStore(path, TimeSpan.FromHours(1), now: () => FixedNow));
+            BugReportHandlerResult replay = await restartedHandler.HandleAsync(body, signature, CancellationToken.None);
+
+            Assert.Equal(202, first.StatusCode);
+            Assert.Equal(409, replay.StatusCode);
+            Assert.Equal("duplicate-event", replay.Reason);
+            Assert.Equal(1, fileCount);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task UnmappedComponent_DoesNotConsumeEventId()
     {
         // An unmapped component is refused before the idempotency claim, so a later

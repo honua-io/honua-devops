@@ -20,6 +20,10 @@ public class BugReportConfigurationTests
         Assert.Null(configuration.GitHubApiBaseUri);
         Assert.Null(configuration.GitHubToken);
         Assert.Empty(configuration.AllowedHosts);
+        Assert.Equal(EventIdempotencyStoreKind.File, configuration.IdempotencyStore);
+        Assert.Equal(TimeSpan.FromSeconds(BugReportConfiguration.DefaultIdempotencyRetentionSeconds), configuration.IdempotencyRetention);
+        Assert.Equal(BugReportConfiguration.DefaultIdempotencyMaxEntries, configuration.IdempotencyMaxEntries);
+        Assert.True(Path.IsPathFullyQualified(configuration.IdempotencyFilePath));
     }
 
     [Fact]
@@ -35,6 +39,10 @@ public class BugReportConfigurationTests
         scope.Set("HONUA_DEVOPS_GITHUB_API_BASE_URL", "https://api.github.com");
         scope.Set("HONUA_DEVOPS_GITHUB_TOKEN", "ghp_x");
         scope.Set("HONUA_DEVOPS_BUGREPORT_ALLOWED_HOSTS", "api.github.com, GHE.example.com");
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_STORE", "file");
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_PATH", "./state/test-event-ids.json");
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_RETENTION_SECONDS", "3600");
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_MAX_ENTRIES", "500");
 
         BugReportConfiguration configuration = BugReportConfiguration.Load();
 
@@ -51,6 +59,10 @@ public class BugReportConfigurationTests
         Assert.Equal("ghp_x", configuration.GitHubToken);
         Assert.Contains("api.github.com", configuration.AllowedHosts);
         Assert.Contains("ghe.example.com", configuration.AllowedHosts);
+        Assert.Equal(EventIdempotencyStoreKind.File, configuration.IdempotencyStore);
+        Assert.Equal(Path.GetFullPath("./state/test-event-ids.json"), configuration.IdempotencyFilePath);
+        Assert.Equal(TimeSpan.FromHours(1), configuration.IdempotencyRetention);
+        Assert.Equal(500, configuration.IdempotencyMaxEntries);
     }
 
     [Fact]
@@ -93,6 +105,27 @@ public class BugReportConfigurationTests
         Assert.Throws<InvalidOperationException>(BugReportConfiguration.Load);
     }
 
+    [Fact]
+    public void Load_RejectsRetentionShorterThanReplayWindow()
+    {
+        using TestEnvironmentVariableScope scope = NewScope();
+        scope.Set("HONUA_DEVOPS_BUGREPORT_REPLAY_WINDOW_SECONDS", "600");
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_RETENTION_SECONDS", "599");
+
+        Assert.Throws<InvalidOperationException>(BugReportConfiguration.Load);
+    }
+
+    [Fact]
+    public void Load_AllowsExplicitInMemoryFallback()
+    {
+        using TestEnvironmentVariableScope scope = NewScope();
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_STORE", "memory");
+
+        BugReportConfiguration configuration = BugReportConfiguration.Load();
+
+        Assert.Equal(EventIdempotencyStoreKind.Memory, configuration.IdempotencyStore);
+    }
+
     private static TestEnvironmentVariableScope NewScope()
     {
         TestEnvironmentVariableScope scope = new();
@@ -105,6 +138,10 @@ public class BugReportConfigurationTests
         scope.Set("HONUA_DEVOPS_GITHUB_API_BASE_URL", null);
         scope.Set("HONUA_DEVOPS_GITHUB_TOKEN", null);
         scope.Set("HONUA_DEVOPS_BUGREPORT_ALLOWED_HOSTS", null);
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_STORE", null);
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_PATH", null);
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_RETENTION_SECONDS", null);
+        scope.Set("HONUA_DEVOPS_BUGREPORT_IDEMPOTENCY_MAX_ENTRIES", null);
         return scope;
     }
 }
