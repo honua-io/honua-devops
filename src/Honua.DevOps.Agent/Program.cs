@@ -1,9 +1,12 @@
 using System.Net.Http;
 using System.Text.Json;
 using Honua.DevOps.Agent.Configuration;
+using Honua.DevOps.Agent.Mcp;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Audit;
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.WorkIntake;
 using Honua.DevOps.Agent.Prompts;
 using Honua.DevOps.Agent.Providers;
 using Microsoft.Agents.AI;
@@ -78,6 +81,27 @@ try
         return;
     }
 
+    if (options.AwaitApproval is not null)
+    {
+        ApprovalWaiter waiter = new(backendGateway, policy);
+        Console.WriteLine(
+            $"Waiting for deploy-control operation `{options.AwaitApproval}` to leave AwaitingApproval "
+            + $"(approval={policy.ApprovalMode.ToConfigValue()}, timeout={waiter.Timeout.TotalSeconds:0}s).");
+
+        ApprovalWaitResult waitResult = await waiter.WaitAsync(options.AwaitApproval, cancellationTokenSource.Token);
+
+        Console.WriteLine(waitResult.Summary);
+        if (waitResult.FinalStatus is not null)
+        {
+            Console.WriteLine($"Final status: {waitResult.FinalStatus} (polls={waitResult.Polls}).");
+        }
+
+        // Resolved == the operation left AwaitingApproval (approved or, under direct-allowed,
+        // submitted by the waiter). Timeout/not-found/error are non-zero so callers/CI can gate on it.
+        Environment.ExitCode = waitResult.Outcome == ApprovalWaitOutcome.Resolved ? 0 : 1;
+        return;
+    }
+
     if (options.Listen)
     {
         WebhookListenerConfiguration listenerConfiguration = WebhookListenerConfiguration.Load();
@@ -91,9 +115,56 @@ try
         return;
     }
 
+    if (options.IntakeListen)
+    {
+        WorkIntakeConfiguration intakeConfiguration = WorkIntakeConfiguration.Load();
+        if (!intakeConfiguration.IsEnabled)
+        {
+            Console.Error.WriteLine(
+                "intake-disabled: set HONUA_DEVOPS_INTAKE_PROVIDER=jira (and HONUA_DEVOPS_INTAKE_WEBHOOK_SECRET) to enable the work-intake listener.");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        // Founder decision: the intake capability is Enterprise. Detect the edition
+        // from the connected server and refuse to bind below Enterprise.
+        string intakeEdition = await EditionDetector.DetectAsync(backendGateway, cancellationTokenSource.Token);
+        if (!WorkIntakeEditionGate.IsAllowed(intakeEdition))
+        {
+            OperationResponse refusal = WorkIntakeEditionGate.BuildRefusal(intakeEdition);
+            Console.Error.WriteLine($"{refusal.Status}: {refusal.Summary}");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        IIntakeSignatureVerifier intakeVerifier = new JiraCloudSignatureVerifier(intakeConfiguration.WebhookSecret);
+        using JiraConnector jiraConnector = new(intakeConfiguration, sharedHttpClient);
+        WorkIntakeReporter intakeReporter = new(jiraConnector);
+        WorkIntakeWebhookHandler intakeHandler = new(
+            intakeVerifier,
+            provider: WorkItem.JiraProvider,
+            projectFilter: intakeConfiguration.ProjectFilter,
+            onAccepted: (workItem, token) => intakeReporter.ReportAsync(workItem, token));
+        await using WorkIntakeWebhookListener intakeListener = new(intakeConfiguration, intakeHandler);
+        await intakeListener.RunAsync(cancellationTokenSource.Token);
+        return;
+    }
+
+    if (options.Mcp)
+    {
+        Environment.ExitCode = await McpStdioServerHost.RunAsync(
+            runtime,
+            policy,
+            backendConfiguration,
+            backendGateway,
+            supportGateway,
+            cancellationTokenSource.Token);
+        return;
+    }
+
     auditSink = AuditSinkFactory.Create(policy.AuditHookTarget);
 
-    string detectedEdition = await DetectEditionAsync(backendGateway, cancellationTokenSource.Token);
+    string detectedEdition = await EditionDetector.DetectAsync(backendGateway, cancellationTokenSource.Token);
 
     IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition);
     ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
@@ -170,32 +241,6 @@ finally
     }
 }
 
-static async Task<string> DetectEditionAsync(BackendGateway gateway, CancellationToken cancellationToken)
-{
-    try
-    {
-        using BackendJsonResult capabilities = await gateway.GetCapabilitySnapshotAsync(cancellationToken);
-        if (capabilities.CallResult.IsSuccess && capabilities.Payload is not null)
-        {
-            string? detected = BackendGateway.ExtractEditionFromCapabilities(capabilities.Payload);
-            if (!string.IsNullOrWhiteSpace(detected))
-            {
-                return detected!.Trim().ToLowerInvariant();
-            }
-        }
-    }
-    catch (OperationCanceledException)
-    {
-        throw;
-    }
-    catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
-    {
-        Console.Error.WriteLine($"warn: capability probe failed ({exception.GetType().Name}): {exception.Message}");
-    }
-
-    return "community";
-}
-
 static async Task StreamResponseAsync(
     AIAgent agent,
     AgentSession session,
@@ -237,7 +282,7 @@ static async Task StreamResponseAsync(
 
                     if (pendingCalls.Remove(callId, out ToolCallRecord? record))
                     {
-                        await EmitAuditAsync(auditContext, record, result.Result, cancellationToken);
+                        await ToolCallAuditor.EmitAsync(auditContext, record, result.Result, cancellationToken);
                     }
                 }
             }
@@ -307,119 +352,3 @@ static string ExtractStatus(object? toolResult)
     return raw.Length > 120 ? raw[..120] + "..." : raw;
 }
 
-static async Task EmitAuditAsync(
-    AuditContext context,
-    ToolCallRecord call,
-    object? toolResult,
-    CancellationToken cancellationToken)
-{
-    if (context.Sink is NullAuditSink)
-    {
-        return;
-    }
-
-    string operationId = Guid.NewGuid().ToString("n");
-    Dictionary<string, string> arguments = new(StringComparer.Ordinal);
-    if (call.Arguments is not null)
-    {
-        foreach (KeyValuePair<string, object?> kvp in call.Arguments)
-        {
-            string raw = kvp.Value?.ToString() ?? "null";
-            arguments[kvp.Key] = Redaction.Scrub(raw);
-        }
-    }
-
-    string status = "unknown";
-    string summary = string.Empty;
-    bool mutated = false;
-    IReadOnlyList<OperationBackendStep>? backendSteps = null;
-    OperationEvidence? evidence = null;
-
-    if (toolResult is OperationResponse response)
-    {
-        status = response.Status;
-        summary = Redaction.Scrub(response.Summary);
-        evidence = response.Evidence;
-        if (response.BackendSteps is { } steps)
-        {
-            List<OperationBackendStep> scrubbedSteps = new(steps.Count);
-            foreach (OperationBackendStep step in steps)
-            {
-                scrubbedSteps.Add(step with
-                {
-                    Detail = Redaction.Scrub(step.Detail),
-                    PayloadPreview = Redaction.Scrub(step.PayloadPreview)
-                });
-                if (step.MutatesState)
-                {
-                    mutated = true;
-                }
-            }
-            backendSteps = scrubbedSteps;
-        }
-    }
-    else if (toolResult is not null)
-    {
-        try
-        {
-            string json = toolResult is string s ? s : JsonSerializer.Serialize(toolResult);
-            using JsonDocument document = JsonDocument.Parse(json);
-            JsonElement root = document.RootElement;
-            if (root.ValueKind == JsonValueKind.Object)
-            {
-                if (root.TryGetProperty("Status", out JsonElement statusElement) && statusElement.ValueKind == JsonValueKind.String)
-                {
-                    status = statusElement.GetString() ?? status;
-                }
-
-                if (root.TryGetProperty("Summary", out JsonElement summaryElement) && summaryElement.ValueKind == JsonValueKind.String)
-                {
-                    summary = Redaction.Scrub(summaryElement.GetString() ?? string.Empty);
-                }
-            }
-        }
-        catch (JsonException)
-        {
-            // leave defaults
-        }
-    }
-
-    AuditRecord record = new(
-        Timestamp: DateTimeOffset.UtcNow,
-        SessionId: context.SessionId,
-        OperationId: operationId,
-        ToolName: call.ToolName,
-        Arguments: arguments,
-        Status: status,
-        Summary: summary,
-        Mutated: mutated,
-        ExecutionMode: context.ExecutionMode,
-        ExecutionTier: context.ExecutionTier,
-        ApprovalMode: context.ApprovalMode,
-        Provider: context.Provider,
-        BackendSteps: backendSteps,
-        Evidence: evidence);
-
-    try
-    {
-        await context.Sink.WriteAsync(record, cancellationToken);
-    }
-    catch (OperationCanceledException)
-    {
-        throw;
-    }
-    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-    {
-        Console.Error.WriteLine($"warn: audit sink write failed: {exception.Message}");
-    }
-}
-
-internal sealed record AuditContext(
-    string SessionId,
-    string ExecutionMode,
-    string ExecutionTier,
-    string ApprovalMode,
-    string Provider,
-    IAuditSink Sink);
-
-internal sealed record ToolCallRecord(string ToolName, IDictionary<string, object?>? Arguments);

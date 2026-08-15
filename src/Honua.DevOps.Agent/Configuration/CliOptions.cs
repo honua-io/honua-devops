@@ -11,7 +11,10 @@ internal sealed record CliOptions(
     bool ListOperations,
     string? ShowOperation,
     int OperationLimit,
-    bool Listen)
+    bool Listen,
+    bool IntakeListen,
+    bool Mcp,
+    string? AwaitApproval)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
@@ -23,6 +26,9 @@ internal sealed record CliOptions(
     private const string ShowOperationFlag = "--show-operation";
     private const string LimitFlag = "--limit";
     private const string ListenFlag = "--listen";
+    private const string IntakeListenFlag = "--intake-listen";
+    private const string McpFlag = "--mcp";
+    private const string AwaitApprovalFlag = "--await-approval";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
 
     internal const string HelpText = """
@@ -31,9 +37,10 @@ honua-devops — AI operator for Honua
 Usage: honua-devops [options]
 
 Options:
-  --provider <codex|claude|local-llama>
+  --provider <codex|claude|local-llama|bedrock>
                               Pick the model provider. Defaults to HONUA_DEVOPS_PROVIDER or codex.
                               local-llama covers NVIDIA NIM and other OpenAI-compatible local endpoints.
+                              bedrock runs Claude on Amazon Bedrock (Converse API, AWS IAM credential chain).
   --prompt <text>             Single-shot prompt; agent runs once, prints, and exits.
   --preflight                 Validate config and backends without launching the agent.
   --list-tools                Print the operator tool catalogue and exit.
@@ -41,6 +48,16 @@ Options:
   --show-operation <id>       Print a single operation record by operation id.
   --limit <n>                 Limit --list-operations to the n most recent records (default 20).
   --listen                    Run the escalation webhook receiver. Requires HONUA_DEVOPS_WEBHOOK_SECRET.
+  --intake-listen             Run the work-intake webhook receiver (Jira). Enterprise edition only.
+                              Requires HONUA_DEVOPS_INTAKE_PROVIDER=jira and HONUA_DEVOPS_INTAKE_WEBHOOK_SECRET.
+  --mcp                       Run the operator toolset as an MCP stdio server (for Claude Code, Codex,
+                              and other MCP clients). No model provider key is required; gates and
+                              audit follow the same HONUA_DEVOPS_* runtime controls. See docs/QUICKSTART-MCP.md.
+  --await-approval <id>       Wait for a paused deploy-control operation to leave AwaitingApproval.
+                              Polls the honua-server deploy-control operation until an operator approves
+                              it in Console (Submitted/terminal) or HONUA_DEVOPS_APPROVAL_TIMEOUT_SECONDS
+                              (default 3600) elapses. pr-first/break-glass-only wait read-only; direct-allowed
+                              may submit per policy. Reports the final status and exits non-zero on timeout/error.
   -h, --help                  Show this help and exit.
 
 Environment (--listen):
@@ -49,6 +66,18 @@ Environment (--listen):
   HONUA_DEVOPS_WEBHOOK_PATH         Optional. URL path to accept POSTs on (default /escalations).
   HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE  Optional. When true (default), auto-triage on receive.
 
+Environment (--intake-listen, Enterprise only):
+  HONUA_DEVOPS_INTAKE_PROVIDER        Required. `jira` (or `none`, the default = intake disabled).
+  HONUA_DEVOPS_INTAKE_WEBHOOK_SECRET  Required for jira. Shared HMAC-SHA256 webhook secret.
+  HONUA_DEVOPS_INTAKE_PORT            Optional. TCP port to bind (default 8091).
+  HONUA_DEVOPS_INTAKE_PATH            Optional. URL path to accept POSTs on (default /intake).
+  HONUA_DEVOPS_INTAKE_ALLOWED_HOSTS   Comma-separated hosts allowed for Jira write-back.
+  HONUA_DEVOPS_INTAKE_AUTO_DRAFT      Optional. Reserved; draft generation is not implemented yet.
+  HONUA_DEVOPS_JIRA_BASE_URL          Jira Cloud base URL for issue read + provenance write-back.
+  HONUA_DEVOPS_JIRA_API_TOKEN         Jira Cloud API token (Basic auth password).
+  HONUA_DEVOPS_JIRA_USER_EMAIL        Jira Cloud account email (Basic auth username).
+  HONUA_DEVOPS_JIRA_PROJECT_FILTER    Optional. Only accept issues from this project key.
+
 Examples:
   honua-devops --preflight
   honua-devops --provider codex --prompt "describe the environment"
@@ -56,6 +85,9 @@ Examples:
   honua-devops --list-operations --limit 50
   honua-devops --show-operation 7d2b9f...
   honua-devops --listen
+  honua-devops --intake-listen
+  honua-devops --mcp
+  honua-devops --await-approval 7d2b9f...
 """;
 
     internal static CliOptions Parse(string[] args)
@@ -69,6 +101,9 @@ Examples:
         string? showOperation = null;
         int operationLimit = 20;
         bool listen = false;
+        bool intakeListen = false;
+        bool mcp = false;
+        string? awaitApproval = null;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -77,7 +112,7 @@ Examples:
             {
                 if (index + 1 >= args.Length)
                 {
-                    throw new InvalidOperationException($"{ProviderFlag} requires a value: codex, claude, or local-llama.");
+                    throw new InvalidOperationException($"{ProviderFlag} requires a value: codex, claude, local-llama, or bedrock.");
                 }
 
                 providerValue = args[++index];
@@ -137,6 +172,29 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(IntakeListenFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                intakeListen = true;
+                continue;
+            }
+
+            if (argument.Equals(McpFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                mcp = true;
+                continue;
+            }
+
+            if (argument.Equals(AwaitApprovalFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 >= args.Length)
+                {
+                    throw new InvalidOperationException($"{AwaitApprovalFlag} requires a deploy-control operation id.");
+                }
+
+                awaitApproval = args[++index];
+                continue;
+            }
+
             if (argument.Equals(LimitFlag, StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 >= args.Length || !int.TryParse(args[index + 1], out int parsedLimit) || parsedLimit < 1)
@@ -150,10 +208,10 @@ Examples:
             }
 
             throw new InvalidOperationException(
-                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, or {HelpFlag}.");
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {McpFlag}, {AwaitApprovalFlag}, or {HelpFlag}.");
         }
 
-        if (help || listTools || listOperations || showOperation is not null)
+        if (help || listTools || listOperations || showOperation is not null || mcp)
         {
             return new CliOptions(
                 ProviderKind.Codex,
@@ -164,7 +222,10 @@ Examples:
                 listOperations,
                 showOperation,
                 operationLimit,
-                listen);
+                listen,
+                intakeListen,
+                mcp,
+                awaitApproval);
         }
 
         string selectedProvider = providerValue ??
@@ -174,7 +235,7 @@ Examples:
         if (!ProviderKindExtensions.TryParse(selectedProvider, out ProviderKind provider))
         {
             throw new InvalidOperationException(
-                $"Invalid provider `{selectedProvider}`. Supported values: codex, claude, local-llama.");
+                $"Invalid provider `{selectedProvider}`. Supported values: codex, claude, local-llama, bedrock.");
         }
 
         return new CliOptions(
@@ -186,6 +247,9 @@ Examples:
             listOperations,
             showOperation,
             operationLimit,
-            listen);
+            listen,
+            intakeListen,
+            mcp,
+            awaitApproval);
     }
 }

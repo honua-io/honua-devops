@@ -101,9 +101,16 @@ public class FaultInjectionTests
     public void ScriptBasedFaultInjector_MapsScenarioIdToCorrectScriptPaths(
         string scenarioId, string action, string expectedFileName)
     {
-        ScriptBasedFaultInjector injector = new(scenarioId, "aws", "/scripts/fault-injection");
+        const string scriptsBasePath = "/scripts/fault-injection";
+        ScriptBasedFaultInjector injector = new(scenarioId, "aws", scriptsBasePath);
         string scriptPath = injector.GetScriptPath(action);
-        Assert.Equal($"/scripts/fault-injection/{expectedFileName}", scriptPath);
+
+        // The injector normalizes the scripts base path via Path.GetFullPath (the traversal
+        // guard), so the resolved path uses the platform's absolute-path + separator rules:
+        // `/scripts/fault-injection/...` on POSIX, `C:\scripts\fault-injection\...` on Windows.
+        // Build the expectation the same way so the assertion is separator-agnostic.
+        string expected = Path.GetFullPath(Path.Combine(scriptsBasePath, expectedFileName));
+        Assert.Equal(expected, scriptPath);
     }
 
     [Theory]

@@ -29,6 +29,52 @@ evidence (and prove it came from a real external target). Both are default-safe
 an evidence bundle; they never deploy, submit, promote, or roll back. The
 manifest-driven validator is documented first, then the per-repo gate.
 
+## One-dispatch orchestrator (`compat-train-rc-validation.yml` + `compat-train-rc-aggregate.sh`)
+
+The pieces above each answer one question and historically ran as separate
+workflows that an operator had to wire together by hand (dispatch the conformance
+gate, download its evidence, feed it to the release gate, separately validate the
+manifest, separately probe). The **RC validation orchestrator** chains them in a
+single repeatable dispatch and folds their outputs into **one** machine-readable
+release-candidate evidence bundle with a single overall verdict and a single
+de-duplicated list of owning follow-up issues:
+
+```
+conformance-gate ─evidence─▶ release-gate ┐
+release-validation (manifest) ────────────┼─▶ rc-aggregate ─▶ rc-validation-bundle.json
+live-probe (re-verify) ───────────────────┘        (#41)        (attached to the run)
+```
+
+The aggregator (`scripts/compat-train-rc-aggregate.sh`) **reuses** the four
+layers' bundles; it re-implements no check. It computes a `releasable` /
+`blocked` verdict that requires `conformance`, `release-gate`, and
+`release-validation` to be green (the `live-probe` layer is advisory by default —
+most of its surfaces are BLOCKED on un-provisioned infra — and becomes required
+with `COMPAT_TRAIN_RC_REQUIRE_PROBE=true`). A required layer that was not run is
+`missing`, which is **blocking** (a not-run layer is never a silent pass).
+
+The workflow `.github/workflows/compat-train-rc-validation.yml` runs this on
+`workflow_dispatch` with `candidate_image` (or `candidate_version`),
+`fixtures_version` (a pinned `geospatial-grpc` fixtures version — required), an
+optional `manifest_url`, and a `mode` (`advisory` default, or `live` to fail the
+dispatch on any blocking layer). It uploads `rc-validation-bundle.json` plus the
+per-layer artifacts as `compat-train-rc-validation-<run_id>` and appends the
+RC release-notes to the run's step summary — the evidence that can be linked from
+the Honua Roadmap Project. On PR/push it runs only the offline self-test
+(`bash -n` + `scripts/smoke-compat-train-rc-aggregate.sh`, which exercises the
+releasable path and every block path).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `COMPAT_TRAIN_CONFORMANCE_EVIDENCE` | _(none)_ | conformance-gate evidence JSON (`repos.<repo>`) |
+| `COMPAT_TRAIN_RELEASE_GATE_RESULT` | _(none)_ | `pass`/`fail` — the release-gate exit verdict |
+| `COMPAT_TRAIN_VALIDATION_BUNDLE` | _(none)_ | manifest validation bundle |
+| `COMPAT_TRAIN_PROBE_BUNDLE` | _(none)_ | live-probe bundle (optional) |
+| `COMPAT_TRAIN_RC_REQUIRE_PROBE` | `false` | Require the live-probe layer to be green |
+| `COMPAT_TRAIN_RC_MODE` | `live` | `live` fails on any blocking layer; `advisory` exits 0 |
+| `COMPAT_TRAIN_RC_BUNDLE_OUTPUT` | `rc-validation-bundle.json` | Aggregated RC evidence bundle |
+| `COMPAT_TRAIN_RC_NOTES_OUTPUT` | _(none)_ | Optional RC release-notes output file |
+
 ## Manifest-driven validation (`compat-train-release-validation.sh`)
 
 This is the operator-side release-candidate validation **surface** for
@@ -91,6 +137,112 @@ The paired self-test `scripts/smoke-compat-train-release-validation.sh` exercise
 the success path and every blocking path (blocked gate, uncovered surface,
 waiver accept/reject, advisory mode, failing scoreboard, bundle shape). It runs
 in CI via `.github/workflows/compat-train-release-validation.yml`.
+
+### Attaching the evidence bundle to the release gate
+
+The same workflow has a `workflow_dispatch` lane (`release-validation-dispatch`)
+that runs the **real** validator and **attaches the evidence bundle to the run**,
+satisfying the `honua-devops#41` criterion "evidence bundle output is attached to
+the release gate". Trigger it with a `manifest_url` (the canonical
+`honua-server/release/honua-<id>.json`) and a `mode` (`advisory`, the default, or
+`live`). With no `manifest_url` it re-derives an advisory bundle from the
+committed 2026-05 Preview example
+(`compatibility/scoreboard/release-validation-2026-05-preview.json`) so the
+dispatch is self-contained. The lane writes `release-validation-bundle.json` and
+`release-validation-notes.md`, appends the release-notes block to the run's step
+summary, and uploads both as the `compat-train-release-validation-<run_id>`
+artifact — the machine-readable evidence that can be linked from the Honua
+Roadmap Project. This mirrors the conformance gate's dispatch lane, which
+uploads its `compat-train-conformance-<run_id>` evidence the same way.
+
+## Active live-probe re-verification (`compat-train-live-probe.sh`)
+
+The manifest-driven validator above is a *transcriber*: it trusts the
+`evidenceState` each signal records in the manifest. honua-devops#41 also asks
+the pipeline to **execute smoke checks across the named surfaces** — to
+independently re-verify, not just re-read. `compat-train-live-probe.sh` is that
+active layer. Given the same release-train manifest it runs a set of **pluggable,
+honest probes**, each of which runs only what the environment can actually reach:
+
+| Probe | Verifies | When BLOCKED (documented missing dependency) |
+| --- | --- | --- |
+| `github-run` | re-fetches the conclusion of every GitHub Actions run URL the manifest cites and confirms it is still `success` | no `gh` auth and no `GITHUB_TOKEN` -> `needs gh auth login OR GITHUB_TOKEN` |
+| `candidate-image` | the candidate image tag+digest are published | manifest `candidate.image.tag/digest` still null -> `needs a published RC image tag+digest` |
+| `server-health` | HTTP smoke (`/healthz/ready`, `/healthz/live`) against a live candidate | no `HONUA_PROBE_BASE_URL` -> `needs a real external staging target` (the honua-sdk-python#53 / #41 staging-URL gap) |
+| `helm-metadata` | the chart `appVersion` points at the candidate, not a placeholder | no `HONUA_PROBE_HELM_CHART` / chart unversioned -> `needs a versioned chart (honua-helm#1)` |
+| `terraform-plan` | a candidate IaC plan applies against the seeded demo | no live target/creds -> `needs honua-iac#30 + cloud creds` |
+
+**Correctness rule (the #41 contract):** a probe that cannot truly run reports
+state `blocked` with a `missing` dependency. It **never emits a green it did not
+verify**. A probe state is one of `passed` (actively re-verified green), `failed`
+(actively re-verified and *not* green — a real regression the manifest may have
+under-reported), or `blocked` (a documented gap). A surface rolls up to
+`verified` only with >=1 `passed` and zero `failed` probes; a surface with only
+blocked probes is `blocked`, never silently green.
+
+Default-safe and read-only (per `AGENTS.md`): the probe performs only GET
+requests and read-only status lookups; it never deploys, promotes, submits, or
+rolls back. In the default `advisory` mode it always exits 0 (so it can be folded
+into the evaluator's bundle and run on a still-gapped preview). In
+`HONUA_PROBE_MODE=live` it exits non-zero only when a probe that *actually ran*
+came back `failed` — blocked-on-missing-dependency probes are gaps, not
+regressions, and never fail the run.
+
+```bash
+# Active re-verification against the canonical manifest (re-checks every cited
+# GitHub run; server/helm/terraform stay BLOCKED until their infra is wired).
+GITHUB_TOKEN=... \
+HONUA_PROBE_BUNDLE_OUTPUT=live-probe-bundle.json \
+  ./scripts/compat-train-live-probe.sh \
+  ../honua-server/release/honua-2026-05-preview.json
+
+# Activate the creds-gated probes once the infra exists:
+HONUA_PROBE_BASE_URL=https://staging.honua.example \
+HONUA_PROBE_HELM_CHART=path/to/Chart.yaml \
+  ./scripts/compat-train-live-probe.sh ../honua-server/release/honua-2026-05-preview.json
+```
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HONUA_PROBE_MANIFEST` / arg / `HONUA_PROBE_MANIFEST_URL` | _(required)_ | Release-train manifest path or URL |
+| `HONUA_PROBE_MODE` | `advisory` | `live` exits non-zero on a real failed probe; `advisory` always exits 0 |
+| `HONUA_PROBE_BASE_URL` | _(none)_ | Live candidate base URL for the `server-health` probe |
+| `HONUA_PROBE_HELM_CHART` | _(none)_ | Path/dir of a `Chart.yaml` for the `helm-metadata` probe |
+| `HONUA_PROBE_BUNDLE_OUTPUT` | `live-probe-bundle.json` | Where to write the probe bundle |
+| `HONUA_PROBE_MAX_RUNS` | `40` | Cap on cited GitHub runs to re-verify |
+| `GITHUB_TOKEN` | _(none)_ | Enables the `github-run` probe when `gh` is not authed |
+
+Against the live 2026-05 Preview manifest this probe re-verifies all seven cited
+GitHub runs (five still green; `server-security-nightly` and
+`sdk-python-staging-integration` confirmed *failing*, matching their manifest
+blockers) and reports the image, server-health, Helm, and Terraform surfaces as
+BLOCKED on their named dependencies. The `release-validation-dispatch` workflow
+lane runs this probe with the runner's `GITHUB_TOKEN` and folds the
+`live-probe-bundle.json` into the uploaded evidence artifact. Its self-test
+`scripts/smoke-compat-train-live-probe.sh` proves the BLOCKED-not-faked contract
+fully offline and runs in CI.
+
+### Probe-bundle schema (`compat-train-live-probe`)
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "kind": "compat-train-live-probe",
+  "generatedFrom": "<manifest path/url>",
+  "releaseId": "...", "channel": "...", "candidateRef": "...", "mode": "advisory",
+  "summary": { "probes": N, "passed": N, "failed": N, "blocked": N },
+  "surfaceProbeCoverage": [
+    { "surface": "server", "passed": N, "failed": N, "blocked": N,
+      "status": "verified | failed | blocked" }
+  ],
+  "probes": [
+    { "id": "github-run:<signal>", "surface": "server", "state": "passed | failed | blocked",
+      "detail": "...", "missing": null /* or the missing dependency string */ }
+  ],
+  "references": { "manifest": "...", "ownedBy": ".../issues/41",
+                  "evaluator": "scripts/compat-train-release-validation.sh" }
+}
+```
 
 ## Per-repo live-evidence gate (`compat-train-release-gate.sh`)
 

@@ -30,6 +30,11 @@ internal sealed class JsonlAuditSink : IAuditSink
         return new JsonlAuditSink(Console.Out, ownsWriter: false, target: "stdout-evidence");
     }
 
+    internal static JsonlAuditSink ForStderr()
+    {
+        return new JsonlAuditSink(Console.Error, ownsWriter: false, target: "stderr-evidence");
+    }
+
     internal static JsonlAuditSink ForFile(string path)
     {
         string fullPath = Path.GetFullPath(path);

@@ -42,6 +42,11 @@ public class ProviderConfigurationTests
     [InlineData("LocalLlama", (int)ProviderKind.LocalLlama)]
     [InlineData("localllama", (int)ProviderKind.LocalLlama)]
     [InlineData("  local-llama  ", (int)ProviderKind.LocalLlama)]
+    [InlineData("bedrock", (int)ProviderKind.Bedrock)]
+    [InlineData("Bedrock", (int)ProviderKind.Bedrock)]
+    [InlineData("BEDROCK", (int)ProviderKind.Bedrock)]
+    [InlineData("aws-bedrock", (int)ProviderKind.Bedrock)]
+    [InlineData("  bedrock  ", (int)ProviderKind.Bedrock)]
     public void TryParse_AcceptsAllSupportedForms(string value, int expectedProvider)
     {
         bool parsed = ProviderKindExtensions.TryParse(value, out ProviderKind provider);
@@ -79,6 +84,7 @@ public class ProviderConfigurationTests
     [InlineData((int)ProviderKind.Codex, "HONUA_DEVOPS_CODEX")]
     [InlineData((int)ProviderKind.Claude, "HONUA_DEVOPS_CLAUDE")]
     [InlineData((int)ProviderKind.LocalLlama, "HONUA_DEVOPS_LOCAL_LLAMA")]
+    [InlineData((int)ProviderKind.Bedrock, "HONUA_DEVOPS_BEDROCK")]
     public void ToPrefix_MapsProviderToEnvironmentVariablePrefix(int providerValue, string expected)
     {
         ProviderKind provider = (ProviderKind)providerValue;
@@ -89,6 +95,7 @@ public class ProviderConfigurationTests
     [InlineData((int)ProviderKind.Codex, "codex")]
     [InlineData((int)ProviderKind.Claude, "claude")]
     [InlineData((int)ProviderKind.LocalLlama, "local-llama")]
+    [InlineData((int)ProviderKind.Bedrock, "bedrock")]
     public void ToConfigValue_ReturnsKebabCanonicalForm(int providerValue, string expected)
     {
         ProviderKind provider = (ProviderKind)providerValue;
@@ -150,6 +157,65 @@ public class ProviderConfigurationTests
             () => ProviderConfiguration.Load(ProviderKind.LocalLlama));
 
         Assert.Contains("HONUA_DEVOPS_LOCAL_LLAMA_MODEL", exception.Message);
+    }
+
+    [Fact]
+    public void Load_Bedrock_ReadsModelRegionAndApiKey()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        environment.Set("HONUA_DEVOPS_BEDROCK_MODEL", "anthropic.claude-sonnet-4-20250514-v1:0");
+        environment.Set("HONUA_DEVOPS_BEDROCK_REGION", "eu-west-1");
+        environment.Set("HONUA_DEVOPS_BEDROCK_API_KEY", "bedrock-bearer-key");
+
+        ProviderConfiguration configuration = ProviderConfiguration.Load(ProviderKind.Bedrock);
+
+        Assert.Equal("bedrock", configuration.Name);
+        Assert.Equal("anthropic.claude-sonnet-4-20250514-v1:0", configuration.Model);
+        Assert.Equal("eu-west-1", configuration.Region);
+        Assert.Equal("bedrock-bearer-key", configuration.ApiKey);
+        Assert.Null(configuration.Endpoint);
+    }
+
+    [Fact]
+    public void Load_Bedrock_DefaultsRegionToUsWest2_WhenUnset()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        environment.Set("HONUA_DEVOPS_BEDROCK_MODEL", "anthropic.claude-sonnet-4-20250514-v1:0");
+        environment.Set("HONUA_DEVOPS_BEDROCK_REGION", null);
+        environment.Set("HONUA_DEVOPS_BEDROCK_API_KEY", null);
+
+        ProviderConfiguration configuration = ProviderConfiguration.Load(ProviderKind.Bedrock);
+
+        Assert.Equal("us-west-2", configuration.Region);
+    }
+
+    [Fact]
+    public void Load_Bedrock_AllowsMissingApiKey_ForIamCredentialChain()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        environment.Set("HONUA_DEVOPS_BEDROCK_MODEL", "anthropic.claude-sonnet-4-20250514-v1:0");
+        environment.Set("HONUA_DEVOPS_BEDROCK_REGION", "us-east-1");
+        environment.Set("HONUA_DEVOPS_BEDROCK_API_KEY", null);
+
+        ProviderConfiguration configuration = ProviderConfiguration.Load(ProviderKind.Bedrock);
+
+        // An empty ApiKey signals "use the AWS credential chain (IAM)".
+        Assert.Equal(string.Empty, configuration.ApiKey);
+        Assert.Equal("us-east-1", configuration.Region);
+    }
+
+    [Fact]
+    public void Load_Bedrock_RaisesOnMissingModel()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        environment.Set("HONUA_DEVOPS_BEDROCK_MODEL", null);
+        environment.Set("HONUA_DEVOPS_BEDROCK_REGION", null);
+        environment.Set("HONUA_DEVOPS_BEDROCK_API_KEY", null);
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => ProviderConfiguration.Load(ProviderKind.Bedrock));
+
+        Assert.Contains("HONUA_DEVOPS_BEDROCK_MODEL", exception.Message);
     }
 
     private static void SetProviderDefaults(TestEnvironmentVariableScope environment)

@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
+using Honua.DevOps.Agent.Operations.Deliverable;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -441,7 +443,9 @@ internal sealed class HonuaOperationsToolkit(
             backendResult.CapabilitiesPayload,
             backendResult.CapabilitiesResult.PayloadPreview,
             backendResult.ExportPayload,
-            backendResult.ExportResult.PayloadPreview);
+            backendResult.ExportResult.PayloadPreview,
+            adapterWorkflows,
+            normalizedRevision);
         GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
             normalizedService,
             targetEnvironments,
@@ -453,6 +457,20 @@ internal sealed class HonuaOperationsToolkit(
             backendResult,
             releaseOrchestration,
             serviceBundleReconciliation);
+
+        // Phase 1 actuation spine: for the mutating actions (sync/apply/promote) actuate
+        // THROUGH the server deploy-control endpoints via the GitOps executors. The executor
+        // re-derives the safety decision from EXECUTION_MODE + approval mode + the per-request
+        // dry-run verdict, so with the default plan posture this returns plan-only and touches
+        // nothing. Read-only actions (plan/dry-run) and dryRun authorizations skip actuation.
+        GitOpsExecutionResult? execution = await MaybeActuateGitOpsAsync(
+            normalizedService,
+            targetEnvironments,
+            normalizedRevision,
+            normalizedAction,
+            normalizedChangeSummary,
+            authorization,
+            cancellationToken);
 
         List<string> actionsList =
         [
@@ -470,34 +488,53 @@ internal sealed class HonuaOperationsToolkit(
         actionsList.AddRange(BuildServiceBundleReconciliationActions(serviceBundleReconciliation));
         actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
 
+        List<string> deployFindings =
+        [
+            $"Honua API endpoint: {backendResult.CombinedResult.Endpoint}",
+            $"Backend result: {backendResult.CombinedResult.Detail}",
+            $"Response excerpt: {backendResult.CombinedResult.PayloadPreview}",
+            $"Change summary: {normalizedChangeSummary}.",
+            $"Runtime adapter families: {string.Join(", ", adapterCapabilities.Select(capability => $"{capability.Target}={capability.Family}"))}.",
+            $"Release strategy: {releaseOrchestration.Strategy}.",
+            $"Migration mode: {releaseOrchestration.MigrationMode}.",
+            $"Promotion gate: {releaseOrchestration.PromotionPolicy.Gate}.",
+            $"Rollback fallback mode: {releaseOrchestration.RollbackPolicy.FallbackMode}.",
+            $"ServiceBundle reconciliation strategy: {serviceBundleReconciliation.Strategy}.",
+            $"ServiceBundle export mode: {serviceBundleReconciliation.ExportMode}.",
+            $"ServiceBundle current state: {serviceBundleReconciliation.CurrentStateSummary}.",
+            $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
+            $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
+            $"GitOps actual state source: {gitOpsPlan.ActualStateSource}.",
+            $"Deploy-control target: {Normalize(runtime.DeployTargetId, "not configured")}.",
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+            $"Audit hook target: {EffectivePolicy.AuditHookTarget}.",
+            $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
+            $"Execution tier `{runtime.ExecutionTier.ToConfigValue()}` resolved to {(authorization.DryRun ? "dry-run" : "write-enabled")} behavior."
+        ];
+        if (execution is not null)
+        {
+            deployFindings.Add($"GitOps actuation status: {execution.Status} (mutated={execution.Mutated}).");
+            deployFindings.AddRange(execution.Findings.Select(finding => $"Actuation: {finding}"));
+        }
+
+        // The response Status reflects the actuation outcome when one ran; otherwise it keeps
+        // the prior plan-only / execute-enabled / backend-error contract.
+        string responseStatus = !backendResult.CombinedResult.IsSuccess
+            ? "backend-error"
+            : execution is not null
+                ? MapActuationStatus(execution.Status)
+                : runtime.ExecutionMode == ExecutionMode.Execute ? "execute-enabled" : "plan-only";
+
+        IReadOnlyList<OperationBackendStep> backendSteps = BuildGitOpsBackendSteps(backendResult, authorization.DryRun);
+        if (execution is not null && execution.BackendSteps.Count > 0)
+        {
+            backendSteps = [.. backendSteps, .. execution.BackendSteps];
+        }
+
         return new OperationResponse(
-            Status: backendResult.CombinedResult.IsSuccess
-                ? runtime.ExecutionMode == ExecutionMode.Execute ? "execute-enabled" : "plan-only"
-                : "backend-error",
+            Status: responseStatus,
             Summary: $"GitOps deployment plan for `{normalizedService}` across {string.Join(", ", targetEnvironments)}.",
-            Findings:
-            [
-                $"Honua API endpoint: {backendResult.CombinedResult.Endpoint}",
-                $"Backend result: {backendResult.CombinedResult.Detail}",
-                $"Response excerpt: {backendResult.CombinedResult.PayloadPreview}",
-                $"Change summary: {normalizedChangeSummary}.",
-                $"Runtime adapter families: {string.Join(", ", adapterCapabilities.Select(capability => $"{capability.Target}={capability.Family}"))}.",
-                $"Release strategy: {releaseOrchestration.Strategy}.",
-                $"Migration mode: {releaseOrchestration.MigrationMode}.",
-                $"Promotion gate: {releaseOrchestration.PromotionPolicy.Gate}.",
-                $"Rollback fallback mode: {releaseOrchestration.RollbackPolicy.FallbackMode}.",
-                $"ServiceBundle reconciliation strategy: {serviceBundleReconciliation.Strategy}.",
-                $"ServiceBundle export mode: {serviceBundleReconciliation.ExportMode}.",
-                $"ServiceBundle current state: {serviceBundleReconciliation.CurrentStateSummary}.",
-                $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
-                $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
-                $"GitOps actual state source: {gitOpsPlan.ActualStateSource}.",
-                $"Deploy-control target: {Normalize(runtime.DeployTargetId, "not configured")}.",
-                $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
-                $"Audit hook target: {EffectivePolicy.AuditHookTarget}.",
-                $"Support session access: {EffectivePolicy.SupportSession.Access.ToConfigValue()} ({EffectivePolicy.SupportSession.TtlMinutes}m TTL).",
-                $"Execution tier `{runtime.ExecutionTier.ToConfigValue()}` resolved to {(authorization.DryRun ? "dry-run" : "write-enabled")} behavior."
-            ],
+            Findings: deployFindings,
             Actions: actionsList,
             ValidationChecks:
             [
@@ -533,7 +570,279 @@ internal sealed class HonuaOperationsToolkit(
             GitOpsPlan: gitOpsPlan,
             ReleaseOrchestration: releaseOrchestration,
             ServiceBundleReconciliation: serviceBundleReconciliation,
-            BackendSteps: BuildGitOpsBackendSteps(backendResult, authorization.DryRun));
+            BackendSteps: backendSteps);
+    }
+
+    // Decide whether this deploy request should actuate through the deploy-control executors,
+    // and run the matching executor when it should. Returns null when no actuation applies
+    // (read-only actions, or actions that are not yet wired to an executor); a non-null result
+    // always carries the actuation status + backend steps to fold into the response. The
+    // executors themselves stay default-safe: with EXECUTION_MODE=plan they return plan-only
+    // and never touch the backend, so this is a no-op mutation-wise in the default posture.
+    private async Task<GitOpsExecutionResult?> MaybeActuateGitOpsAsync(
+        string service,
+        IReadOnlyList<string> environments,
+        string revision,
+        string action,
+        string reason,
+        DeploymentAuthorization authorization,
+        CancellationToken cancellationToken)
+    {
+        // Only sync/apply and promote create-and-submit through the executor here. Rollback is
+        // surfaced through the dedicated RollbackGitOpsOperationAsync tool because it operates
+        // on an existing operationId. plan/dry-run never actuate.
+        bool isPromote = action.Equals("promote", StringComparison.OrdinalIgnoreCase);
+        bool isSync = action is "sync" or "apply";
+        if (!isPromote && !isSync)
+        {
+            return null;
+        }
+
+        string idempotencyKey = ConsoleOperationBridge.BuildProposalIdempotencyKey(
+            Normalize(runtime.DeployTargetId, "unconfigured"),
+            service,
+            environments,
+            revision,
+            action);
+        string correlationId = $"honua-devops:{action}:{service}";
+        bool targetsProd = environments.Contains("prod", StringComparer.OrdinalIgnoreCase);
+        string priority = targetsProd ? "high" : "normal";
+        Dictionary<string, string> parameters = new(StringComparer.Ordinal)
+        {
+            ["service"] = service,
+            ["environments"] = string.Join(",", environments),
+            ["action"] = action,
+            ["source"] = $"honua-devops:{action}"
+        };
+
+        if (isPromote)
+        {
+            PromotionExecutor promotionExecutor = new(runtime, gateway, EffectivePolicy);
+            return await promotionExecutor.ExecutePromotionAsync(
+                revision,
+                currentRevision: null,
+                reason,
+                idempotencyKey,
+                correlationId,
+                priority,
+                parameters,
+                authorization.DryRun,
+                authorization.PolicyGate,
+                cancellationToken);
+        }
+
+        GitOpsExecutor executor = new(runtime, gateway, EffectivePolicy);
+        return await executor.ExecuteSyncAsync(
+            revision,
+            currentRevision: null,
+            reason,
+            idempotencyKey,
+            correlationId,
+            priority,
+            parameters,
+            authorization.DryRun,
+            authorization.PolicyGate,
+            cancellationToken);
+    }
+
+    // Maps the executor's actuation status onto the tool's response Status vocabulary.
+    private static string MapActuationStatus(string actuationStatus)
+        => actuationStatus switch
+        {
+            GitOpsExecutionStatus.PlanOnly => "plan-only",
+            GitOpsExecutionStatus.AwaitingApproval => "awaiting-approval",
+            GitOpsExecutionStatus.Succeeded => "execute-succeeded",
+            GitOpsExecutionStatus.RolledBack => "rolled-back",
+            GitOpsExecutionStatus.Failed => "execute-failed",
+            GitOpsExecutionStatus.ApprovalRequired => "approval-required",
+            GitOpsExecutionStatus.ContractUnavailable => "contract-unavailable",
+            _ => "execute-enabled"
+        };
+
+    [Description("Roll back a durable honua-server deploy-control operation to its prior known-good revision by operationId. Safety-gated: with EXECUTION_MODE=plan (default) nothing is issued; a data-affecting rollback (rollbackPlan.IsDataAffecting / non-MetadataOnly class, or an unknown classification) ALWAYS requires explicit governed approval and is refused here rather than auto-issued; only a non-data-affecting rollback under a direct-allowed/break-glass approval mode is issued, and even then the server's OperatorApprovalGate is honored (a 403 surfaces as approval-required). Emits backend steps and the rollback classification as evidence.")]
+    public async Task<OperationResponse> RollbackGitOpsOperationAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedOperationId = DeploymentInputs.Normalize(operationId, string.Empty);
+        if (normalizedOperationId.Length is < 1 or > 200 ||
+            normalizedOperationId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
+        {
+            throw new InvalidOperationException("Operation id must be 1-200 characters with no whitespace or control characters.");
+        }
+
+        string normalizedReason = SanitizeFreeText(reason, "not provided");
+        // Rollback authorization mirrors a destructive action: never treated as plan/dry-run by
+        // request shape; the executor folds EXECUTION_MODE + approval mode + tier into its decision.
+        DeploymentAuthorization authorization = AuthorizeDeployment(["prod"], "rollback");
+
+        RollbackExecutor rollbackExecutor = new(runtime, gateway, EffectivePolicy);
+        GitOpsExecutionResult execution = await rollbackExecutor.ExecuteRollbackAsync(
+            normalizedOperationId,
+            normalizedReason,
+            authorization.DryRun,
+            authorization.PolicyGate,
+            cancellationToken);
+
+        List<string> findings =
+        [
+            $"Rollback target operation: {normalizedOperationId}.",
+            $"Actuation status: {execution.Status} (mutated={execution.Mutated}).",
+            ..execution.Findings,
+            $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}.",
+            $"Audit hook target: {EffectivePolicy.AuditHookTarget}."
+        ];
+
+        return new OperationResponse(
+            Status: MapActuationStatus(execution.Status),
+            Summary: $"GitOps rollback for deploy-control operation `{normalizedOperationId}` ({execution.Status}).",
+            Findings: findings,
+            Actions:
+            [
+                "Rollback actuates through the deploy-control rollback endpoint; the agent never bypasses the OperatorApprovalGate.",
+                execution.Status == GitOpsExecutionStatus.ApprovalRequired
+                    ? "Surface the operationId and rollback classification for governed approval before retrying."
+                    : "Verify post-rollback health and capture rollback evidence.",
+                .. execution.BlockingReasons.Select(reasonText => $"Blocking: {reasonText}.")
+            ],
+            ValidationChecks:
+            [
+                "rollback-actuates-through-deploy-control",
+                "data-affecting-rollback-requires-explicit-approval",
+                "plan-mode-issues-no-rollback",
+                "operator-approval-gate-never-bypassed"
+            ],
+            Risks:
+            [
+                "A data-affecting rollback can lose or rewrite data; only governed, evidenced approval should authorize it.",
+                "Rolling back after long reconcile windows can diverge from the last known-good revision."
+            ],
+            BackendSteps: execution.BackendSteps);
+    }
+
+    [Description("Detect and diagnose the outcome of an additive metadata-release layer-evolution operation by package id (honua-server metadata-release lifecycle). Read-only: it reads the durable server operation, reports whether the post-publish Smoke health gate ran, whether the deploy was rolled back (metadata reactivation + reversible down-script, i.e. DB-inclusive), the rollback class, the failing phase/error, and the smoke evidence. Use this after submitting a layer change to confirm the safe-rollback closed loop fired, then propose a human-approved resolve. It never mutates server state.")]
+    public async Task<OperationResponse> InspectMetadataReleaseAsync(
+        string packageId,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedPackageId = DeploymentInputs.Normalize(packageId, string.Empty);
+        if (normalizedPackageId.Length is < 1 or > 200 ||
+            normalizedPackageId.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
+        {
+            throw new InvalidOperationException("Package id must be 1-200 characters with no whitespace or control characters.");
+        }
+
+        using BackendJsonResult result = await gateway.GetMetadataReleaseOperationByPackageJsonAsync(
+            normalizedPackageId,
+            cancellationToken);
+
+        if (!result.CallResult.IsSuccess || result.Payload is null)
+        {
+            return new OperationResponse(
+                Status: "metadata-release-not-found",
+                Summary: $"No metadata-release operation could be read for package `{normalizedPackageId}` ({result.CallResult.Detail}).",
+                Findings:
+                [
+                    $"Honua API endpoint: {result.CallResult.Endpoint}",
+                    $"Backend result: {result.CallResult.Detail}",
+                    "The metadata-release lifecycle requires Redis-backed durable op storage; a 404/503 here may mean the operation was never submitted or durable storage is unavailable."
+                ],
+                Actions:
+                [
+                    "Confirm the layer change was submitted via POST /api/v1/admin/metadata/releases/operations.",
+                    "Confirm the server has Redis-backed durable workflow-operation storage configured."
+                ],
+                ValidationChecks: ["metadata-release-operation-readable"],
+                Risks: ["Without the durable operation record the safe-rollback loop cannot be observed or diagnosed."],
+                Evidence: BuildPlannerEvidence(
+                    $"ai-devops:metadata-release:{normalizedPackageId}",
+                    "inspect_metadata_release",
+                    [],
+                    null,
+                    "read-only-detect",
+                    "metadata-release-not-found",
+                    result.CallResult.PayloadPreview,
+                    result.CallResult.Endpoint,
+                    result.CallResult.Detail));
+        }
+
+        JsonElement root = result.Payload.RootElement;
+        string? operationId = DeployOperationReader.ReadOperationId(root);
+        string? status = DeployOperationReader.ReadStatus(root);
+        string? stage = DeployOperationReader.ReadMetadataReleaseStage(root);
+        string? phase = DeployOperationReader.ReadCurrentPhase(root);
+        string? error = DeployOperationReader.ReadErrorMessage(root);
+        string rollbackClass = DeployOperationReader.ReadRollbackClass(root) ?? "unclassified";
+        bool dataAffecting = DeployOperationReader.ReadRollbackIsDataAffecting(root);
+        bool hasSmokeEvidence = DeployOperationReader.HasSmokeEvidence(root);
+        bool rolledBack = DeployOperationReader.IsRolledBack(status);
+        bool manualIntervention = DeployOperationReader.IsManualInterventionRequired(status);
+        bool succeeded = DeployOperationReader.IsSuccess(status);
+
+        // Detect-loop classification: the AI uses this to decide whether to propose a resolve.
+        string detectStatus = rolledBack
+            ? "rolled-back-detected"
+            : succeeded
+                ? "release-succeeded"
+                : manualIntervention
+                    ? "manual-intervention-required"
+                    : "in-progress";
+
+        List<string> findings =
+        [
+            $"Metadata-release operation: {operationId ?? "unknown"} (package `{normalizedPackageId}`).",
+            $"Server status: {status ?? "unknown"}; stage: {stage ?? "unknown"}.",
+            $"Health gate (post-publish Smoke): {(hasSmokeEvidence ? "ran — smoke evidence recorded" : "no smoke evidence recorded yet")}.",
+            $"Current phase: {phase ?? "(none)"}.",
+            $"Error/failure message: {error ?? "(none)"}.",
+            $"Rollback classification: class={rollbackClass}; dataAffecting={dataAffecting}.",
+            rolledBack
+                ? "Deploy was ROLLED BACK: the reconciler reactivated the prior Metadata v2 revision and executed the reversible down-script (drop-added-column). This is the metadata + DB-inclusive revert."
+                : succeeded
+                    ? "Release completed: the additive field is live and the smoke check passed."
+                    : manualIntervention
+                        ? "Operation parked at ManualInterventionRequired (e.g. snapshot-required rollback is deferred); operator action needed."
+                        : "Operation is still advancing through the additive lifecycle."
+        ];
+
+        return new OperationResponse(
+            Status: detectStatus,
+            Summary: $"Metadata-release `{normalizedPackageId}` is `{status ?? "unknown"}` at stage `{stage ?? "unknown"}`"
+                + (rolledBack ? " — safe rollback (metadata + DB) confirmed." : "."),
+            Findings: findings,
+            Actions:
+            [
+                rolledBack
+                    ? "Diagnose the smoke failure from the recorded phase/error, then propose a human-approved resolve (fix the layer change or its ETL and re-submit)."
+                    : succeeded
+                        ? "No remediation needed; capture the success evidence."
+                        : "Re-inspect until the operation reaches a terminal state before proposing remediation.",
+                "Resolve proposals are advisory; re-submission of a corrected metadata release goes through the governed create path and is human-approved.",
+                .. DeployOperationReader.ReadBlockingReasons(root).Select(reasonText => $"Blocking: {reasonText}.")
+            ],
+            ValidationChecks:
+            [
+                "metadata-release-operation-readable",
+                "smoke-health-gate-evidence-present",
+                "rollback-reverts-metadata-and-db-downscript",
+                "resolve-proposal-is-human-approved"
+            ],
+            Risks:
+            [
+                "A rolled-back release means the attempted layer change is NOT live; downstream consumers still see the prior schema.",
+                "Snapshot-required (data-affecting, non-reversible) releases are refused by the server and need operator-managed recovery."
+            ],
+            Evidence: BuildPlannerEvidence(
+                $"ai-devops:metadata-release:{normalizedPackageId}",
+                "inspect_metadata_release",
+                [],
+                operationId,
+                "read-only-detect",
+                detectStatus,
+                result.CallResult.PayloadPreview,
+                result.CallResult.Endpoint,
+                result.CallResult.Detail));
     }
 
     [Description("Plan the internal honua-gitops engine state transitions, diff, and drift without applying desired state.")]
@@ -595,7 +904,9 @@ internal sealed class HonuaOperationsToolkit(
             backendResult.CapabilitiesPayload,
             backendResult.CapabilitiesResult.PayloadPreview,
             backendResult.ExportPayload,
-            backendResult.ExportResult.PayloadPreview);
+            backendResult.ExportResult.PayloadPreview,
+            adapterWorkflows,
+            normalizedRevision);
         GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
             normalizedService,
             targetEnvironments,
@@ -760,6 +1071,249 @@ internal sealed class HonuaOperationsToolkit(
                     ? "Rollback is classified irreversible; only a forward fix can recover this release."
                     : "Acting on the change set still requires the governed approval/submit path."
             ],
+            MetadataReleaseChangeSet: changeSet));
+    }
+
+    [Description(
+        "Summarize and explain the proposed metadata-release GitOps PR operation from a validated metadata release package " +
+        "(issue #57, AI DevOps explanation). Input is the same server-supplied release-package JSON consumed by " +
+        "generate_metadata_release_changeset. Returns a read-only, human-readable summary plus structured sections that explain " +
+        "WHAT the proposed PR would do: the target branch and files grouped by kind (manifests, overlays, scripts, evidence, " +
+        "rollback policy), the semantic Honua resources that change, the server compatibility/coverage verdict, the rollback " +
+        "posture (classification, known-good revision, approval-gated rollback commands), and an overall readiness of " +
+        "ready/warning/blocked/unknown. Strictly read-only: it interprets the supplied evidence and renders an explanation " +
+        "in-process; it never writes Git, opens a PR, applies manifests, calls the backend, or creates a server operation. " +
+        "Returns an unknown explanation when the document cannot be parsed.")]
+    public Task<OperationResponse> ExplainMetadataReleaseChangeSetAsync(
+        string releasePackageJson,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        if (!MetadataReleaseChangeSetBuilder.TryBuild(releasePackageJson, out MetadataReleaseChangeSet changeSet, out string? error))
+        {
+            return Task.FromResult(new OperationResponse(
+                Status: MetadataChangeSetReadiness.Unknown,
+                Summary: "Proposed metadata release operation could not be explained: the supplied document was empty or malformed.",
+                Findings:
+                [
+                    $"Parse error: {error ?? "unknown"}",
+                    "No proposed PR operation could be derived; nothing was interpreted."
+                ],
+                Actions:
+                [
+                    "Supply a valid metadata release-package JSON document (server compatibility report, semantic resources, environments, rollback policy).",
+                    "Explanation is read-only; no Git artifacts were produced and no backend call was made."
+                ],
+                ValidationChecks:
+                [
+                    "release-package-json-required",
+                    "changeset-explanation-read-only-no-mutation"
+                ],
+                Risks:
+                [
+                    "Readiness is unknown because no release-package evidence could be interpreted."
+                ]));
+        }
+
+        MetadataChangeSetExplanation explanation = MetadataReleaseChangeSetBuilder.Explain(changeSet);
+
+        List<string> findings =
+        [
+            $"Release package: {explanation.ReleasePackageId} ({explanation.Service} -> {string.Join(", ", explanation.TargetEnvironments)} @ {explanation.DesiredRevision})",
+            $"Readiness: {explanation.Readiness}",
+            $"Proposed branch: {explanation.BranchName}",
+            $"Rollback classification: {explanation.RollbackClassification}; known-good revision: {explanation.KnownGoodRevision ?? "unknown"}",
+            $"Evidence references: {explanation.EvidenceLinks.Count}",
+            .. explanation.Sections.Select(section => $"Section `{section.Section}`: {section.Status} — {section.Detail}")
+        ];
+        findings.AddRange(explanation.BlockingReasons.Select(reason => $"Blocking: {reason}"));
+
+        List<string> actions =
+        [
+            "Explanation is read-only; honua-devops interprets the supplied evidence and never writes Git, opens a PR, applies manifests, calls the backend, or creates a server operation.",
+            explanation.Readiness == MetadataChangeSetReadiness.Blocked
+                ? $"Do not open a PR on branch `{explanation.BranchName}` until the blocking compatibility evidence is resolved."
+                : $"If approved, open or update branch `{explanation.BranchName}`, then route merge/reconcile through the governed GitOps/approval path.",
+            .. explanation.Warnings.Select(warning => $"Warning: {warning}"),
+            .. explanation.RollbackCommands.Count > 0
+                ? new[] { $"Rollback commands prepared ({explanation.RollbackCommands.Count}); they require explicit governed approval before running." }
+                : Array.Empty<string>()
+        ];
+
+        return Task.FromResult(new OperationResponse(
+            Status: explanation.Readiness,
+            Summary: explanation.Summary,
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "changeset-explanation-read-only-no-mutation",
+                "proposed-pr-operation-interpreted-not-executed",
+                "compatibility-report-interpreted-not-computed",
+                "rollback-posture-derived-from-classification"
+            ],
+            Risks:
+            [
+                explanation.Readiness == MetadataChangeSetReadiness.Blocked
+                    ? "Proposed operation is blocked by the supplied compatibility report; do not open a PR until the breaking change is resolved."
+                    : "Explanation reflects the supplied release-package evidence and can drift before the PR is opened or merged.",
+                explanation.RollbackClassification == MetadataRollbackClass.Irreversible
+                    ? "Rollback is classified irreversible; only a forward fix can recover this release."
+                    : "Acting on this explanation still requires the governed approval/submit path."
+            ],
+            MetadataReleaseChangeSet: changeSet));
+    }
+
+    [Description(
+        "Plan a metadata-release-aware honua-gitops run from a validated metadata release package (issue #57 fast-follow). " +
+        "Input is the same server-supplied release-package JSON consumed by generate_metadata_release_changeset. Fuses the " +
+        "PR-ready change set with the honua-gitops planner so a single read-only output carries BOTH the desired-state change " +
+        "set AND a metadata-release-aware gitops plan: per-environment diff/drift/state transitions tagged in-scope vs " +
+        "not-targeted, plus a metadata-release summary (semantic resources, compatibility verdict, breaking-change count, " +
+        "script coverage, rollback classification, known-good revision, blocking reasons). Default-safe and deterministic: it " +
+        "never calls the backend, submits, rolls back, or mutates state; merge/reconcile runs through the governed " +
+        "GitOps/approval path. Returns a blocked plan (surfacing blocking reasons) when compatibility flags breaking changes, " +
+        "and a graceful unknown response when the release-package document cannot be parsed.")]
+    public Task<OperationResponse> PlanMetadataReleaseGitOpsAsync(
+        string releasePackageJson,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        if (!MetadataReleaseChangeSetBuilder.TryBuild(releasePackageJson, out MetadataReleaseChangeSet changeSet, out string? error))
+        {
+            return Task.FromResult(new OperationResponse(
+                Status: MetadataChangeSetReadiness.Unknown,
+                Summary: "Metadata release package could not be turned into a gitops plan: the supplied document was empty or malformed.",
+                Findings:
+                [
+                    $"Parse error: {error ?? "unknown"}",
+                    "No change set and no gitops plan were produced."
+                ],
+                Actions:
+                [
+                    "Supply a valid metadata release-package JSON document (server compatibility report, semantic resources, environments, rollback policy).",
+                    "No Git artifacts were produced and no backend call was made; nothing was written."
+                ],
+                ValidationChecks:
+                [
+                    "release-package-json-required",
+                    "metadata-release-gitops-plan-read-only-no-backend-call"
+                ],
+                Risks:
+                [
+                    "Readiness is unknown because no release-package evidence could be interpreted."
+                ]));
+        }
+
+        // Project the change set's service / target environments / desired revision onto the
+        // existing honua-gitops planner. This is read-only and backend-free: an offline backend
+        // result (no manifest export, no capability probe) feeds the planner so the plan is fully
+        // derived from the supplied release package and deterministic for a given input.
+        string normalizedGitOpsTool = ValidateGitOpsTool(runtime.GitOpsTool);
+        string planService = ValidateServiceName(changeSet.Service);
+        string planRevision = ValidateRevision(changeSet.DesiredRevision, "desired revision");
+        IReadOnlyList<string> planEnvironments = changeSet.TargetEnvironments;
+        const string policyGate = "metadata-release-gitops-plan";
+
+        using GitOpsDeployBackendResult backendResult = BuildOfflineGitOpsBackendResult();
+
+        RuntimeAdapterRequest adapterRequest = new(
+            Service: planService,
+            Environments: planEnvironments,
+            Revision: planRevision,
+            Action: "plan",
+            ChangeSummary: $"metadata release {changeSet.ReleasePackageId}",
+            GitOpsTool: normalizedGitOpsTool,
+            TerraformRepository: SanitizePayloadValue(runtime.TerraformRepository, "terraform repository"),
+            TerraformRef: ValidateRevision(runtime.TerraformRef, "terraform ref"),
+            TerraformLocalPath: runtime.TerraformLocalPath,
+            DryRun: true,
+            ExecutionMode: runtime.ExecutionMode,
+            ExecutionTier: runtime.ExecutionTier);
+        IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry
+            .ResolveMany(ValidateDeploymentTargets(runtime.TerraformDeploymentTargets))
+            .Select(adapter => adapter.BuildWorkflow(adapterRequest))
+            .ToArray();
+
+        ReleaseOrchestrationPlan releaseOrchestration = ReleaseOrchestrationPlanner.Build(
+            adapterWorkflows,
+            planEnvironments,
+            requestedAction: "plan",
+            dryRun: true,
+            policyGate);
+        ServiceBundleReconciliationPlan serviceBundleReconciliation = ServiceBundleReconciliationPlanner.Build(
+            planService,
+            planEnvironments,
+            gateway.Configuration,
+            backendResult.CapabilitiesPayload,
+            backendResult.CapabilitiesResult.PayloadPreview,
+            backendResult.ExportPayload,
+            backendResult.ExportResult.PayloadPreview);
+        GitOpsPlan gitOpsPlan = GitOpsPlanner.Build(
+            planService,
+            planEnvironments,
+            planRevision,
+            requestedAction: "plan",
+            normalizedGitOpsTool,
+            dryRun: true,
+            policyGate,
+            backendResult,
+            releaseOrchestration,
+            serviceBundleReconciliation);
+        gitOpsPlan = GitOpsPlanner.AttachMetadataRelease(gitOpsPlan, changeSet);
+        GitOpsMetadataReleaseSummary metadataRelease = gitOpsPlan.MetadataRelease!;
+
+        List<string> findings =
+        [
+            $"Release package: {changeSet.ReleasePackageId} ({changeSet.Service} -> {string.Join(", ", changeSet.TargetEnvironments)} @ {changeSet.DesiredRevision})",
+            $"Readiness: {changeSet.Readiness}",
+            $"Semantic resources: {metadataRelease.SemanticResources.Count}",
+            $"Compatibility: {metadataRelease.CompatibilityStatus} (breaking={metadataRelease.BreakingChanges}, warnings={metadataRelease.Warnings}).",
+            $"Script coverage: {metadataRelease.ScriptCoverage}.",
+            $"Rollback classification: {metadataRelease.RollbackClassification}; known-good revision: {metadataRelease.KnownGoodRevision ?? "unknown"}.",
+            $"GitOps diff summary: {gitOpsPlan.DiffSummary}.",
+            $"GitOps drift summary: {gitOpsPlan.DriftSummary}.",
+            $"GitOps actual state source: {gitOpsPlan.ActualStateSource}."
+        ];
+        findings.AddRange(changeSet.BlockingReasons.Select(reason => $"Blocking: {reason}"));
+
+        List<string> actions =
+        [
+            "Metadata-release gitops plan is read-only; honua-devops fuses the change set with the planner in-process and never writes Git, opens a PR, applies manifests, calls the backend, or creates a server operation.",
+            $"Review the metadata-release-aware plan, then route merge/reconcile for branch `{changeSet.BranchName}` through the governed GitOps/approval path."
+        ];
+        actions.AddRange(BuildMetadataReleasePlanActions(metadataRelease));
+        actions.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
+
+        return Task.FromResult(new OperationResponse(
+            Status: changeSet.Readiness,
+            Summary: $"Metadata-release gitops plan for `{changeSet.Service}` {changeSet.DesiredRevision} -> {string.Join(", ", changeSet.TargetEnvironments)} ({changeSet.Readiness}; compatibility {metadataRelease.CompatibilityStatus}).",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "metadata-release-gitops-plan-read-only-no-backend-call",
+                "plan-derived-from-release-package-deterministic",
+                "compatibility-report-interpreted-not-computed",
+                "metadata-target-status-tagged-per-environment",
+                ..gitOpsPlan.RequiredEvidence,
+                "Review state transitions before approving any write-capable GitOps path."
+            ],
+            Risks:
+            [
+                changeSet.Readiness == MetadataChangeSetReadiness.Blocked
+                    ? "Plan is blocked by the supplied compatibility report; do not reconcile until the breaking change is resolved."
+                    : "Plan reflects the supplied release-package evidence and can drift before merge.",
+                metadataRelease.RollbackClassification == MetadataRollbackClass.Irreversible
+                    ? "Rollback is classified irreversible; only a forward fix can recover this release."
+                    : "Acting on the plan still requires the governed approval/submit path.",
+                "Snapshot-only planning can drift from reality if actual state changes before apply."
+            ],
+            GitOpsPlan: gitOpsPlan,
+            ReleaseOrchestration: releaseOrchestration,
+            ServiceBundleReconciliation: serviceBundleReconciliation,
             MetadataReleaseChangeSet: changeSet));
     }
 
@@ -1258,6 +1812,175 @@ internal sealed class HonuaOperationsToolkit(
             BackendSteps: remediationResult is null
                 ? null
                 : [ToBackendStep("auto-remediation", remediationResult, mutatesState: !string.IsNullOrWhiteSpace(operationId))]);
+    }
+
+    [Description(
+        "Plan a deliverable's draft->preview->approved->published lifecycle (issue #77) bound to environments. " +
+        "Read-only planner: it produces the lifecycle plan (ordered transitions, per-step target environment, gate, " +
+        "required evidence, edition requirement, and the governed Console approval action) and does NOT generate the " +
+        "deliverable artifact, execute promotion, or mutate state. Inputs: workItemId + kind identify the deliverable; " +
+        "currentState (draft/preview/approved/published, default draft) is where the lifecycle starts; lowerEnvironment " +
+        "is the preview/approval target; publishEnvironment (default prod) is the cross-environment promotion target. " +
+        "Edition gating: single-environment draft->preview->approved is Pro; cross-environment approved->published " +
+        "(prod through deploy-control gated-promotion) is Enterprise — below the required edition the corresponding " +
+        "step is surfaced as edition-gated rather than executed. The Preview->Approved gate is emitted as a governed " +
+        "SuggestedAction with requiresApproval=true via the Console approval surface; Approved->Published reuses the " +
+        "release-orchestration gated-promotion engine (approval-record + lower-env-evidence + smoke-contract + " +
+        "slo-gate-evidence). dryRun is always true.")]
+    public Task<OperationResponse> PlanDeliverableLifecycleAsync(
+        string workItemId,
+        string kind,
+        string currentState,
+        string lowerEnvironment,
+        string publishEnvironment,
+        string previewUrl,
+        string edition,
+        CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+
+        string normalizedWorkItemId = SanitizePayloadValue(workItemId, "work item ID");
+        string normalizedKind = Normalize(kind, "deliverable").Trim().ToLowerInvariant();
+        DeliverableLifecycleState currentLifecycleState = DeliverableLifecycleStateExtensions.ParseOrDraft(currentState);
+        string normalizedEdition = NormalizeEdition(edition);
+
+        // Pro is the floor for the single-environment lifecycle (draft->preview->approved).
+        if (!EditionAtLeast(normalizedEdition, "pro"))
+        {
+            return Task.FromResult(BuildEditionGateResponse("plan_deliverable_lifecycle", normalizedEdition, "pro"));
+        }
+
+        // Resolve the lower (preview/approval) and publish (promotion) environments against
+        // the allowed set; never plan against an environment the runtime does not permit.
+        string normalizedLowerEnvironment = ParseEnvironments(lowerEnvironment).First();
+        string normalizedPublishEnvironment = ParseEnvironments(Normalize(publishEnvironment, "prod")).First();
+        string? normalizedPreviewUrl = string.IsNullOrWhiteSpace(previewUrl)
+            ? null
+            : SanitizePayloadValue(previewUrl, "preview URL");
+
+        string deliverableId = $"{normalizedWorkItemId}:{normalizedKind}";
+        string approvalOperationId = $"deliverable-lifecycle:{deliverableId}";
+
+        bool enterpriseUnlocked = EditionAtLeast(normalizedEdition, "enterprise");
+
+        // Reuse the release-orchestration gated-promotion engine for Approved->Published
+        // rather than writing a new promotion engine. Only build it when the cross-env step
+        // is both planned (from Approved or earlier) and unlocked at Enterprise; below
+        // Enterprise the step is surfaced as edition-gated with no executable plan.
+        bool crossEnvPlanned = currentLifecycleState <= DeliverableLifecycleState.Approved;
+        ReleaseOrchestrationPlan? promotionPlan = null;
+        if (crossEnvPlanned && enterpriseUnlocked)
+        {
+            string[] promotionEnvironments = new[] { normalizedLowerEnvironment, normalizedPublishEnvironment }
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            RuntimeAdapterRequest adapterRequest = new(
+                Service: deliverableId,
+                Environments: promotionEnvironments,
+                Revision: "deliverable-artifact",
+                Action: "promote",
+                ChangeSummary: $"publish deliverable `{deliverableId}` from `{normalizedLowerEnvironment}` to `{normalizedPublishEnvironment}`",
+                GitOpsTool: ValidateGitOpsTool(runtime.GitOpsTool),
+                TerraformRepository: SanitizePayloadValue(runtime.TerraformRepository, "terraform repository"),
+                TerraformRef: ValidateRevision(runtime.TerraformRef, "terraform ref"),
+                TerraformLocalPath: runtime.TerraformLocalPath,
+                DryRun: true,
+                ExecutionMode: runtime.ExecutionMode,
+                ExecutionTier: runtime.ExecutionTier);
+            IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry
+                .ResolveMany(ValidateDeploymentTargets(runtime.TerraformDeploymentTargets))
+                .Select(adapter => adapter.BuildWorkflow(adapterRequest))
+                .ToArray();
+            promotionPlan = ReleaseOrchestrationPlanner.Build(
+                adapterWorkflows,
+                promotionEnvironments,
+                "promote",
+                dryRun: true,
+                "deliverable-publish-gated-promotion");
+        }
+
+        Operations.Deliverable.Deliverable deliverable = new(
+            DeliverableId: deliverableId,
+            WorkItemId: normalizedWorkItemId,
+            Kind: normalizedKind,
+            State: currentLifecycleState,
+            Environment: normalizedLowerEnvironment,
+            PreviewUrl: normalizedPreviewUrl,
+            Provenance:
+            [
+                new EvidenceRef(
+                    Type: "work-item",
+                    Source: "work-intake",
+                    RawRef: normalizedWorkItemId,
+                    Url: null,
+                    Summary: $"Deliverable `{deliverableId}` references work item `{normalizedWorkItemId}`.",
+                    CapturedAt: "planner",
+                    Sensitivity: EvidenceSensitivity.Internal)
+            ]);
+
+        IDeliverableApprovalTrigger approvalTrigger = new ConsoleApprovalTrigger();
+        DeliverableLifecyclePlan lifecyclePlan = DeliverableLifecyclePlanner.Build(
+            deliverable,
+            normalizedLowerEnvironment,
+            normalizedPublishEnvironment,
+            normalizedEdition,
+            approvalTrigger,
+            promotionPlan,
+            approvalOperationId);
+        DeliverableProjection projection = DeliverableProjection.From(lifecyclePlan, deliverable);
+        SuggestedAction? approvalAction = DeliverableLifecyclePlanner.FindApprovalAction(lifecyclePlan);
+
+        List<string> findings =
+        [
+            $"Deliverable: {deliverableId} (kind={normalizedKind}, work item={normalizedWorkItemId}).",
+            $"Current state: {currentLifecycleState.ToConfigValue()}; lower env={normalizedLowerEnvironment}; publish env={normalizedPublishEnvironment}.",
+            $"Caller edition: {normalizedEdition}; cross-env promotion planned={crossEnvPlanned}, unlocked={enterpriseUnlocked}.",
+            $"Preview link available: {!string.IsNullOrWhiteSpace(normalizedPreviewUrl)} (never fabricated)."
+        ];
+        findings.AddRange(lifecyclePlan.Transitions.Select(transition =>
+            $"Transition {transition.FromState.ToConfigValue()} -> {transition.ToState.ToConfigValue()}: " +
+            $"env={transition.TargetEnvironment}, gate={transition.Gate}, edition={transition.RequiredEdition}, " +
+            $"evidence=[{string.Join(", ", transition.RequiredEvidence)}]."));
+
+        List<string> actions =
+        [
+            "Lifecycle is plan-only: honua-devops does not generate the artifact, execute promotion, or mutate deliverable state here.",
+            $"Draft -> Preview renders in lower environment `{normalizedLowerEnvironment}` (Pro); write the preview link and provenance card back to the work item.",
+            "Preview -> Approved routes the governed Console approval action through the approval surface; honua-devops never approves on its own."
+        ];
+        if (approvalAction is not null)
+        {
+            actions.Add($"Approval action `{approvalAction.Id}` (requiresApproval={approvalAction.RequiresApproval}, source={projection.Transitions.First(t => t.ToState == "approved").ApprovalSource}).");
+        }
+        if (crossEnvPlanned && enterpriseUnlocked)
+        {
+            actions.Add($"Approved -> Published promotes to `{normalizedPublishEnvironment}` via the gated-promotion engine (Enterprise); requires {string.Join(" + ", DeliverableLifecyclePlanner.PublishEvidence)}.");
+        }
+        else if (crossEnvPlanned)
+        {
+            actions.Add($"Approved -> Published is edition-gated: cross-environment promotion to `{normalizedPublishEnvironment}` requires Enterprise (current edition `{normalizedEdition}`).");
+        }
+
+        return Task.FromResult(new OperationResponse(
+            Status: "deliverable-lifecycle-plan",
+            Summary: $"Deliverable lifecycle plan for `{deliverableId}` ({currentLifecycleState.ToConfigValue()} -> published) across `{normalizedLowerEnvironment}` -> `{normalizedPublishEnvironment}`.",
+            Findings: findings,
+            Actions: actions,
+            ValidationChecks:
+            [
+                "deliverable-lifecycle-read-only-no-artifact-generation",
+                "deliverable-lifecycle-no-promotion-execution",
+                "preview-link-not-fabricated",
+                "preview-to-approved-requires-governed-approval",
+                .. DeliverableLifecyclePlanner.FlattenEvidenceRequirements(lifecyclePlan)
+            ],
+            Risks:
+            [
+                "Plan reflects the supplied work item and environments and can drift before the artifact is built.",
+                "Cross-environment promotion to prod must remain Enterprise-gated and routed through the governed deploy-control path.",
+                "Preview -> Approved must clear the Console approval surface; never auto-advance the lifecycle."
+            ],
+            DeliverableLifecycle: projection));
     }
 
     [Description("Triage a support ticket with read-only diagnosis, guided-fix commands, or operator-scoped escalation.")]
@@ -2456,6 +3179,56 @@ internal sealed class HonuaOperationsToolkit(
             yield return $"ServiceBundle reconcile `{operation.Surface}` ({operation.Availability}): read `{operation.ReadSource}` -> write `{operation.WriteTarget}`";
             yield return $"ServiceBundle diff `{operation.Surface}`: {operation.DiffSummary}";
         }
+    }
+
+    // Surface the metadata-release projection as plan action lines so an agent/Console reading the
+    // response sees the compatibility verdict, semantic resources, script coverage, rollback posture,
+    // and any blocking reasons alongside the gitops diff/drift/transition lines.
+    private static IEnumerable<string> BuildMetadataReleasePlanActions(GitOpsMetadataReleaseSummary summary)
+    {
+        yield return $"Metadata release `{summary.ReleasePackageId}` readiness: {summary.Readiness}; compatibility: {summary.CompatibilityStatus} (breaking={summary.BreakingChanges}, warnings={summary.Warnings}).";
+        yield return $"Metadata release script coverage: {summary.ScriptCoverage}.";
+        yield return $"Metadata release rollback classification: {summary.RollbackClassification}; known-good revision: {summary.KnownGoodRevision ?? "unknown"}.";
+
+        foreach (MetadataResourceSummary resource in summary.SemanticResources)
+        {
+            yield return $"Metadata semantic resource `{resource.Kind}/{resource.Name}`: {resource.Action}.";
+        }
+
+        foreach (string reason in summary.BlockingReasons)
+        {
+            yield return $"Metadata release blocking reason: {reason}";
+        }
+    }
+
+    // Build an offline gitops backend result for the metadata-release plan path: no manifest export,
+    // no capability probe, no network. The planner treats the absent payloads as actual-state-pending
+    // so the plan is derived solely from the supplied release package and is deterministic.
+    private GitOpsDeployBackendResult BuildOfflineGitOpsBackendResult()
+    {
+        BackendCallResult exportSkipped = new(
+            IsSuccess: false,
+            Endpoint: BackendGateway.BuildEndpoint(gateway.Configuration.HonuaApiBaseUri, gateway.Configuration.HonuaManifestExportPath).ToString(),
+            Detail: "metadata-release plan: manifest export skipped (read-only, no backend call)",
+            PayloadPreview: "export not requested");
+        BackendCallResult capabilitiesSkipped = new(
+            IsSuccess: false,
+            Endpoint: BackendGateway.BuildEndpoint(gateway.Configuration.HonuaApiBaseUri, gateway.Configuration.HonuaAdminCapabilitiesPath).ToString(),
+            Detail: "metadata-release plan: capability probe skipped (read-only, no backend call)",
+            PayloadPreview: "capabilities not requested");
+        BackendCallResult applySkipped = new(
+            IsSuccess: true,
+            Endpoint: BackendGateway.BuildEndpoint(gateway.Configuration.HonuaApiBaseUri, gateway.Configuration.HonuaManifestApplyPath).ToString(),
+            Detail: "metadata-release plan: manifest apply skipped (read-only)",
+            PayloadPreview: "apply not requested");
+
+        return new GitOpsDeployBackendResult(
+            ApplyResult: applySkipped,
+            ExportResult: exportSkipped,
+            CapabilitiesResult: capabilitiesSkipped,
+            CombinedResult: exportSkipped,
+            ExportPayload: null,
+            CapabilitiesPayload: null);
     }
 
     private static IEnumerable<string> BuildGitOpsPlanActions(GitOpsPlan plan)

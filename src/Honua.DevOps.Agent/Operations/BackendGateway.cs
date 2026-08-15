@@ -208,28 +208,11 @@ internal sealed class BackendGateway : IDisposable
             requestBody,
             cancellationToken);
 
-        if (!dryRun && !string.IsNullOrWhiteSpace(deployTargetId))
-        {
-            deployOperationResult = await CreateDeployOperationAsync(
-                deployTargetId,
-                revision,
-                currentRevision: null,
-                reason: changeSummary,
-                submitImmediately: true,
-                idempotencyKey: $"honua-devops:{service}:{string.Join("-", environments)}:{revision}:{action}",
-                correlationId: $"honua-devops:{NormalizeResourceToken(service, "service")}",
-                priority: environments.Any(environment => environment.Equals("prod", StringComparison.OrdinalIgnoreCase))
-                    ? "high"
-                    : "normal",
-                parameters: new Dictionary<string, string>
-                {
-                    ["service"] = service,
-                    ["environments"] = string.Join(",", environments),
-                    ["action"] = action,
-                    ["manifestApply"] = applyResult.IsSuccess ? "success" : "failed"
-                },
-                cancellationToken);
-        }
+        // Deploy-control operation creation/submission is owned by the GitOps actuation
+        // executors (GitOpsExecutor / PromotionExecutor), which create the operation with
+        // submitImmediately=false and only submit when EXECUTION_MODE=execute AND the approval
+        // gate is satisfied. This combined backend path no longer creates an operation here,
+        // so it never issues the old unguarded submitImmediately=true create.
 
         List<BackendCallResult> combinedCalls =
         [
@@ -435,6 +418,20 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
+    // JSON-returning submit variant used by the GitOps executors: after a submit the
+    // orchestrator must read the post-submit workflow status (and any blockingReasons)
+    // from the durable server operation, not just a truncated payload preview.
+    internal Task<BackendJsonResult> SubmitDeployOperationJsonAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        return PostJsonToHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/submit",
+            new { reason },
+            cancellationToken);
+    }
+
     internal Task<BackendCallResult> RollbackDeployOperationAsync(
         string operationId,
         string reason,
@@ -443,6 +440,70 @@ internal sealed class BackendGateway : IDisposable
         return PostToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
             new { reason },
+            cancellationToken);
+    }
+
+    // JSON-returning rollback variant: the executor needs the server's resulting status
+    // and, when the OperatorApprovalGate denies a data-affecting rollback, the structured
+    // 403 body so it can surface the approval requirement instead of inventing one.
+    internal Task<BackendJsonResult> RollbackDeployOperationJsonAsync(
+        string operationId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        return PostJsonToHonuaAsync(
+            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
+            new { reason },
+            cancellationToken);
+    }
+
+    // ---- Additive metadata-release layer-evolution lifecycle (Demo B safe-rollback) ----
+    // The server's metadata-release lifecycle (honua-server #1738/#1739) health-gates a layer
+    // change on a post-publish Smoke check and, on failure, rolls back metadata AND the
+    // operational schema (reactivate prior revision + run the down-script). These methods let the
+    // DevOps AI loop submit the change and then DETECT the rolled-back state + smoke evidence so it
+    // can diagnose. The metadata-release operation is a WorkflowOperationKind.MetadataRelease
+    // record, so its id resolves through the shared deploy operations read/rollback endpoints.
+
+    internal Task<BackendJsonResult> CreateMetadataReleaseOperationJsonAsync(
+        string packageId,
+        string targetEnvironment,
+        string resourceSemanticId,
+        string newFieldName,
+        string? newFieldType,
+        string? dataPopulateWorkloadId,
+        string reason,
+        string idempotencyKey,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        return PostJsonToHonuaAsync(
+            configuration.HonuaMetadataReleaseOperationsPath,
+            new
+            {
+                packageId,
+                targetEnvironment,
+                resourceSemanticId,
+                newFieldName,
+                newFieldType,
+                dataPopulateWorkloadId,
+                reason,
+                idempotencyKey,
+                correlationId
+            },
+            cancellationToken);
+    }
+
+    // Detect seam: read the most recent metadata-release operation for a package. The server
+    // reconciles in-flight operations on read, so a poll here surfaces the terminal status
+    // (RolledBack / Succeeded / ManualInterventionRequired), the failing CurrentPhase/errorMessage
+    // (the injected smoke failure), the rollback plan class, and the smoke evidence ref.
+    internal Task<BackendJsonResult> GetMetadataReleaseOperationByPackageJsonAsync(
+        string packageId,
+        CancellationToken cancellationToken)
+    {
+        return GetJsonFromHonuaAsync(
+            $"{configuration.HonuaMetadataReleaseByPackagePath}/{Uri.EscapeDataString(packageId)}/operation",
             cancellationToken);
     }
 

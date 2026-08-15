@@ -8,7 +8,7 @@ using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.Operato
 
 namespace Honua.DevOps.Agent.Tests;
 
-public class ConsoleOperationBridgeTests
+public partial class ConsoleOperationBridgeTests
 {
     [Fact]
     public void BuildProposalIdempotencyKey_IsDeterministicAndOrderInsensitive()
@@ -361,6 +361,189 @@ public class ConsoleOperationBridgeTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => bridge.GetDevOpsOperationStatusAsync("has spaces"));
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Issue #78: OperationProposal contract alignment (lifecycle, plan, decision audit).
+    // ----------------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("Planned", false, "Planned")]
+    [InlineData("AwaitingApproval", false, "AwaitingApproval")]
+    [InlineData("Submitted", false, "Submitted")]
+    [InlineData("Reconciling", false, "Reconciling")]
+    [InlineData("Succeeded", false, "Succeeded")]
+    [InlineData("Failed", false, "Failed")]
+    [InlineData("RollbackRequested", false, "RollbackRequested")]
+    [InlineData("RolledBack", false, "RolledBack")]
+    [InlineData("ManualInterventionRequired", false, "ManualInterventionRequired")]
+    // Hyphenated and lower-case server casings map identically.
+    [InlineData("awaiting-approval", false, "AwaitingApproval")]
+    [InlineData("rolled-back", false, "RolledBack")]
+    // Unreadable status falls back to the safe default driven by approvalRequired.
+    [InlineData("", true, "AwaitingApproval")]
+    [InlineData("", false, "Planned")]
+    [InlineData("garbage", true, "AwaitingApproval")]
+    public void MapProposalLifecycle_MapsServerStatusToCanonicalLifecycle(
+        string serverStatus,
+        bool approvalRequired,
+        string expected)
+    {
+        Assert.Equal(expected, ConsoleOperationBridge.MapProposalLifecycle(serverStatus, approvalRequired));
+    }
+
+    [Fact]
+    public async Task CreateGitOpsProposalAsync_PopulatesCanonicalContractFields()
+    {
+        TestHttpMessageHandler handler = new(request =>
+            request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/deploy/operations", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "AwaitingApproval" })
+                : TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
+
+        OperationResponse response = await bridge.CreateGitOpsProposalAsync(
+            "roads-api", "prod", "release/2026.03", "sync", "ship roads-api", "soleil");
+
+        GitOpsProposalBridge proposal = AssertProposal(response);
+        // Canonical OperationProposal fields the console aggregates field-for-field.
+        Assert.Equal("gitops-deploy", proposal.Kind);
+        Assert.Equal("soleil", proposal.Requester);
+        Assert.Equal("honua-devops", proposal.Agent);
+        // Server returned AwaitingApproval -> canonical lifecycle value, 1:1 with the enum.
+        Assert.Equal("AwaitingApproval", proposal.ProposalStatus);
+        // Bridge-local projection status is preserved for back-compat.
+        Assert.Equal("proposed", proposal.Status);
+
+        // Plan: diff + dry-run + risk + blocking reasons.
+        Assert.NotNull(proposal.Plan);
+        Assert.True(proposal.Plan.DryRun);
+        Assert.True(proposal.Plan.RequiresApproval);
+        Assert.Equal("elevated", proposal.Plan.Risk); // prod-targeting sync
+        Assert.Contains("sync roads-api", proposal.Plan.DiffSummary, StringComparison.Ordinal);
+        Assert.Empty(proposal.Plan.BlockingReasons);
+
+        // No decision recorded on create.
+        Assert.Null(proposal.Decision);
+    }
+
+    [Fact]
+    public async Task CreateGitOpsProposalAsync_BlockedTargetStaysPlannedWithBlockingReason()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: null);
+
+        OperationResponse response = await bridge.CreateGitOpsProposalAsync(
+            "roads-api", "dev", "main", "sync", "ship", "soleil");
+
+        GitOpsProposalBridge proposal = AssertProposal(response);
+        Assert.Equal("target-unconfigured", proposal.Status);
+        Assert.Equal("Planned", proposal.ProposalStatus);
+        Assert.NotEmpty(proposal.Plan.BlockingReasons);
+        Assert.Contains(
+            proposal.Plan.BlockingReasons,
+            reason => reason.Contains("HONUA_DEVOPS_DEPLOY_TARGET_ID", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RecordProposalDecisionAsync_ApproveCapturesActorReasonAndAuthorizesSubmit()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new
+        {
+            operationId = "op-7f3",
+            status = "AwaitingApproval",
+            target = new
+            {
+                targetId = "prod-api",
+                desiredRevision = "release/2026.03",
+                parameters = new { service = "roads-api", environments = "prod", action = "sync", owner = "soleil" }
+            }
+        }));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
+
+        OperationResponse response = await bridge.RecordProposalDecisionAsync(
+            "op-7f3", "approve", actor: "nadia", reason: "Compatibility clean, approvals met.");
+
+        GitOpsProposalBridge proposal = AssertProposal(response);
+        Assert.NotNull(proposal.Decision);
+        Assert.Equal("approve", proposal.Decision!.Decision);
+        Assert.Equal("nadia", proposal.Decision.Actor);
+        Assert.Equal("Compatibility clean, approvals met.", proposal.Decision.Reason);
+        Assert.False(string.IsNullOrWhiteSpace(proposal.Decision.DecidedAt));
+        // Approve moves the canonical lifecycle toward Submitted and authorizes governed submit.
+        Assert.Equal("Submitted", proposal.Decision.ResultingStatus);
+        Assert.Equal("Submitted", proposal.ProposalStatus);
+        Assert.Equal("submit", proposal.Decision.GovernedAction);
+        Assert.Contains(proposal.SuggestedActions, action => action.Kind == "governed-submit");
+
+        // Records only — the bridge never submits, executes, or rolls back.
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.Contains("/submit", StringComparison.Ordinal));
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.Contains("/rollback", StringComparison.Ordinal));
+        Assert.Contains("decision-audit-actor-and-reason", response.ValidationChecks);
+        OperationBackendStep step = Assert.Single(response.BackendSteps!);
+        Assert.False(step.MutatesState);
+    }
+
+    [Fact]
+    public async Task RecordProposalDecisionAsync_RejectIsTerminalAndSurfacesNoMutatingAction()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new
+        {
+            operationId = "op-7f3",
+            status = "AwaitingApproval",
+            target = new
+            {
+                targetId = "prod-api",
+                desiredRevision = "release/2026.03",
+                parameters = new { service = "roads-api", environments = "prod", action = "sync", owner = "soleil" }
+            }
+        }));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
+
+        OperationResponse response = await bridge.RecordProposalDecisionAsync(
+            "op-7f3", "reject", actor: "nadia", reason: "Residual risk too high for this window.");
+
+        GitOpsProposalBridge proposal = AssertProposal(response);
+        Assert.NotNull(proposal.Decision);
+        Assert.Equal("reject", proposal.Decision!.Decision);
+        Assert.Equal("nadia", proposal.Decision.Actor);
+        Assert.Equal("Rejected", proposal.Decision.ResultingStatus);
+        Assert.Equal("Rejected", proposal.ProposalStatus);
+        Assert.Equal("none", proposal.Decision.GovernedAction);
+        // A reject decision never advertises a mutating action.
+        Assert.DoesNotContain(proposal.SuggestedActions, action => action.MutatesState);
+        Assert.DoesNotContain(
+            proposal.SuggestedActions,
+            action => action.Kind is "governed-submit" or "governed-rollback");
+    }
+
+    [Fact]
+    public async Task RecordProposalDecisionAsync_RejectsUnknownDecisionVerb()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => bridge.RecordProposalDecisionAsync("op-7f3", "maybe", "nadia", "unsure"));
+    }
+
+    [Fact]
+    public async Task RecordProposalDecisionAsync_StaysBlockedWhenOperationMissing()
+    {
+        TestHttpMessageHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
+
+        OperationResponse response = await bridge.RecordProposalDecisionAsync(
+            "op-missing", "approve", "nadia", "ship it");
+
+        GitOpsProposalBridge proposal = AssertProposal(response);
+        Assert.Equal("contract-unavailable", proposal.Status);
+        Assert.Null(proposal.OperationId);
+        Assert.Equal("unknown", proposal.ProposalStatus);
+        // The decision is still recorded for audit, but no mutating action is surfaced against
+        // an operation that cannot be read.
+        Assert.NotNull(proposal.Decision);
+        Assert.Equal("nadia", proposal.Decision!.Actor);
+        Assert.DoesNotContain(proposal.SuggestedActions, action => action.MutatesState);
     }
 
     private static GitOpsProposalBridge AssertProposal(OperationResponse response)

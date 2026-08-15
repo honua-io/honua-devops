@@ -65,10 +65,30 @@ internal static class CapabilityToolset
                 "generate_metadata_release_changeset",
                 "Generate a PR-ready desired-state change set from a validated metadata release package: deterministic branch name, commit message, PR title/body with evidence links, repo-relative file path -> content map (metadata manifests, environment overlays, optional data-script coverage, validation evidence, rollback policy), rollback commands derived from the rollback classification and known-good revision, and an overall ready/warning/blocked/unknown readiness. Read-only: renders Git artifacts in-process and never writes Git, opens a PR, applies manifests, or creates a server operation; merge/reconcile runs through the governed GitOps/approval path. Blocked when compatibility flags breaking changes."),
             CreateTool(
+                (string releasePackageJson)
+                    => toolkit.ExplainMetadataReleaseChangeSetAsync(releasePackageJson),
+                "explain_metadata_release_changeset",
+                "Summarize and explain the proposed metadata-release GitOps PR operation from a validated metadata release package without mutating state. Input is the same server-supplied release-package JSON consumed by generate_metadata_release_changeset. Returns a read-only, human-readable summary plus structured sections that explain WHAT the proposed PR would do: the target branch and files grouped by kind (manifests, overlays, scripts, evidence, rollback policy), the semantic Honua resources that change, the server compatibility/coverage verdict, and the rollback posture (classification, known-good revision, approval-gated rollback commands), with overall readiness of ready/warning/blocked/unknown. Strictly read-only: it never writes Git, opens a PR, applies manifests, calls the backend, or creates a server operation. Use this to brief an operator on a proposed change set before any governed PR/approval step."),
+            CreateTool(
+                (string releasePackageJson)
+                    => toolkit.PlanMetadataReleaseGitOpsAsync(releasePackageJson),
+                "plan_metadata_release_gitops",
+                "Plan a metadata-release-aware honua-gitops run from a validated metadata release package. Fuses the PR-ready change set with the honua-gitops planner so a single read-only output carries BOTH the desired-state change set AND a metadata-release-aware gitops plan: per-environment diff/drift/state transitions tagged in-scope vs not-targeted, plus a metadata-release summary (semantic resources, compatibility verdict, breaking-change count, script coverage, rollback classification, known-good revision, blocking reasons). Default-safe and deterministic: never calls the backend, submits, rolls back, or mutates state; merge/reconcile runs through the governed GitOps/approval path. Returns a blocked plan surfacing blocking reasons when compatibility flags breaking changes, and a graceful unknown response when the document cannot be parsed."),
+            CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary)
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),
                 "deploy_service_gitops",
-                "Generate GitOps deployment actions across environments."),
+                "Generate GitOps deployment actions across environments, and (only when EXECUTION_MODE=execute and the approval gate is satisfied) actuate sync/promote THROUGH the honua-server deploy-control endpoints: validate (preflight+plan), create a durable operation (submitImmediately=false), pause for external approval under pr-first or when the server requires approval, and only submit+poll to terminal when policy/approval allows. Default plan posture mutates nothing."),
+            CreateTool(
+                (string operationId, string reason)
+                    => toolkit.RollbackGitOpsOperationAsync(operationId, reason),
+                "rollback_gitops_operation",
+                "Roll back a durable honua-server deploy-control operation to its prior known-good revision by operationId. Safety-gated: EXECUTION_MODE=plan (default) issues nothing; a data-affecting rollback (rollbackPlan.IsDataAffecting / non-MetadataOnly class, or unknown classification) ALWAYS requires explicit governed approval and is refused rather than auto-issued; only a non-data-affecting rollback under direct-allowed/break-glass actuates, and the server's OperatorApprovalGate is still honored (a 403 surfaces as approval-required). Never bypasses the approval gate."),
+            CreateTool(
+                (string packageId)
+                    => toolkit.InspectMetadataReleaseAsync(packageId),
+                "inspect_metadata_release",
+                "Detect and diagnose the outcome of an additive metadata-release layer-evolution operation by package id (honua-server safe-rollback lifecycle). Read-only: reads the durable server operation and reports whether the post-publish Smoke health gate ran, whether the deploy was rolled back (prior-revision reactivation + reversible down-script — the metadata + DB-inclusive revert), the rollback class, the failing phase/error, and the smoke evidence. Use after submitting a layer change to confirm the closed loop fired, then propose a human-approved resolve. Never mutates server state."),
             CreateTool(
                 (string customerRequirements, string scaleProfile, string complianceNeeds, string budgetProfile, string preferredCloud)
                     => toolkit.AnalyzeCustomerRequirementsAsync(customerRequirements, scaleProfile, complianceNeeds, budgetProfile, preferredCloud),
@@ -114,15 +134,35 @@ internal static class CapabilityToolset
                 "honua_auto_remediation_plan",
                 "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls."),
             CreateTool(
+                (string workItemId, string kind, string currentState, string lowerEnvironment, string publishEnvironment, string previewUrl, string edition)
+                    => toolkit.PlanDeliverableLifecycleAsync(workItemId, kind, currentState, lowerEnvironment, publishEnvironment, previewUrl, edition),
+                "plan_deliverable_lifecycle",
+                "Plan a deliverable's draft->preview->approved->published lifecycle (issue #77) bound to environments. Read-only planner: produces the lifecycle plan (ordered transitions, per-step target environment, gate, required evidence, edition requirement, and the governed Console approval action) and never generates the artifact, executes promotion, or mutates state. Single-environment draft->preview->approved is Pro; cross-environment approved->published (prod through deploy-control gated-promotion) is Enterprise — below the required edition the step is surfaced as edition-gated. Preview->Approved is emitted as a governed SuggestedAction (requiresApproval=true) via the Console approval surface; Approved->Published reuses the release-orchestration gated-promotion engine (approval-record + lower-env-evidence + smoke-contract + slo-gate-evidence). dryRun is always true."),
+            CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary, string owner)
                     => consoleBridge.CreateGitOpsProposalAsync(service, environmentsCsv, revision, action, changeSummary, owner),
                 "create_gitops_proposal",
                 "Create a Console-facing GitOps deployment proposal as a stable, evidence-linked projection. Records a durable honua-server deploy-control operation with submitImmediately=false (advisory; never executes) and returns the proposal with server operationId, deterministic idempotency key, raw backend evidence, workflow deep links, and governed submit/rollback suggestions. Stays blocked if no deploy target is configured."),
             CreateTool(
+                (string service, string environmentsCsv, string architecture, string image, int maxVcpus, bool createWorkerGdalRepo, string tiersCsv, string owner)
+                    => consoleBridge.PlanGpSubstrateAsync(service, environmentsCsv, architecture, image, maxVcpus, createWorkerGdalRepo, tiersCsv, owner),
+                "plan_gp_substrate",
+                "Plan provisioning/updating the durable PER-ENVIRONMENT geoprocessing (GP) substrate (AWS Batch compute-env Fargate-Spot, job queue, IAM, ECR, and a POOL of job-definition ephemeral-storage tiers s/m/l/xl = 20/50/100/200 GiB), recording a PLAN-FIRST, advisory deploy-control proposal (submitImmediately=false; never executes). Provisioned RARELY (when GP capability is added/updated in an env), NOT per job. Per-env config: architecture (x86_64|arm64, shared by the whole tier pool), image (empty=reuse Lambda image), maxVcpus (compute-env ceiling; 0=>256), createWorkerGdalRepo, tiersCsv (subset of s,m,l,xl; empty=all four). Binds to substrate OUTPUTS the server consumes (gp_job_queue_arn, gp_job_definition_arns map, gp_compute_environment_arn, gp_job_role_arn, gp_execution_role_arn, gp_worker_gdal_repository_url) — never input-variable names. Per-job sizing (vCPU/memory/timeout/retry + tier selection) is a SubmitJob-time runtime concern with zero infra change; use plan_gp_job_sizing for that. The real terraform apply stays behind the agent's execution/approval gates exactly like the other runtime adapters."),
+            CreateTool(
+                (int vcpus, int memoryMib, int timeoutSeconds, int retryAttempts, int ephemeralStorageGib, int gpuCount)
+                    => consoleBridge.PlanGpJobSizingAsync(vcpus, memoryMib, timeoutSeconds, retryAttempts, ephemeralStorageGib, gpuCount),
+                "plan_gp_job_sizing",
+                "Compute the runtime SIZING HINT for a single geoprocessing (GP) job: select the durable job-definition tier (s/m/l/xl from ephemeralStorageGib <=20/<=50/<=100/<=200) from the per-env substrate's pre-provisioned pool and produce the AWS Batch SubmitJob overrides (loose batch.* params batch.vcpus/batch.memoryMib/batch.timeoutSeconds/batch.retryAttempts) the server applies at runtime. PURE PLANNING AID: NO terraform, NO infra, NO deploy-control operation recorded — per-job sizing is a SubmitJob-time concern with zero infra change. ephemeralStorageGib above 200 exceeds the Fargate ceiling / tier pool and is an error; gpuCount>0 is an advisory note (the default Fargate-Spot substrate has no GPU tiers), not a hard reject. Returns the selected tier token, the gp_job_definition_arns.<tier> output path the server resolves, and the SubmitJob override map."),
+            CreateTool(
                 (string operationId)
                     => consoleBridge.GetGitOpsProposalAsync(operationId),
                 "get_gitops_proposal",
                 "View an existing GitOps proposal by stable operationId as a projection over the honua-server deploy-control operation, with raw evidence references and governed suggestions. Never scrapes Git or CI."),
+            CreateTool(
+                (string operationId, string decision, string actor, string reason)
+                    => consoleBridge.RecordProposalDecisionAsync(operationId, decision, actor, reason),
+                "record_gitops_proposal_decision",
+                "Record an auditable approve or reject decision against a GitOps proposal by stable operationId, capturing the deciding actor and a reason consistent with the honua-server decision audit. Moves the proposal's canonical lifecycle toward Submitted (approve) or Rejected (reject). Records only; never submits, executes, or rolls back. Approval surfaces the governed submit suggestion that still requires an explicit governed submit."),
             CreateTool(
                 (string operationId)
                     => consoleBridge.GetDevOpsOperationStatusAsync(operationId),

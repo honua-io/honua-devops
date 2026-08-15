@@ -68,6 +68,9 @@ internal static class GitOpsPlanner
                         ? "in-sync"
                         : "revision-diff";
 
+                ServiceBundleReconciliation.ServiceBundleDriftScope? serviceStateScope = serviceBundleReconciliation.DriftScopes
+                    .FirstOrDefault(scope => scope.Scope.Equals("service-state", StringComparison.OrdinalIgnoreCase));
+
                 GitOpsDriftStatus[] drift =
                 [
                     new(
@@ -80,12 +83,13 @@ internal static class GitOpsPlanner
                         Detail: actualRevision == "unknown"
                             ? "Manifest export did not expose a comparable current revision."
                             : $"Desired revision `{desiredRevision}` compared against exported revision `{actualRevision}`."),
+                    // Service-state drift now carries the REAL verdict computed by the
+                    // ServiceBundleReconciliationPlanner (drift-detected/no-drift/unreconcilable),
+                    // not the old exported/export-required stub.
                     new(
                         Scope: "service-state",
-                        Status: serviceStateKnown ? "exported" : "export-required",
-                        Detail: serviceStateKnown
-                            ? serviceBundleReconciliation.CurrentStateSummary
-                            : $"Evaluate {string.Join(", ", serviceBundleReconciliation.DriftScopes.Select(scope => scope.Scope))} drift from control-plane exports.")
+                        Status: serviceStateScope?.DriftVerdict ?? (serviceStateKnown ? "exported" : "export-required"),
+                        Detail: serviceStateScope?.DriftDetail ?? serviceBundleReconciliation.CurrentStateSummary)
                 ];
 
                 return new GitOpsEnvironmentPlan(
@@ -139,6 +143,119 @@ internal static class GitOpsPlanner
     internal static string BuildCurrentRevisionSummary(GitOpsPlan plan)
     {
         return string.Join(", ", plan.Environments.Select(environment => $"{environment.Environment}={environment.ActualRevision}"));
+    }
+
+    // Per-environment metadata target status used to flag, on each gitops environment plan, whether
+    // the metadata release change set actually targets that environment ("in-scope") or not
+    // ("not-targeted"). Kept here so the vocabulary lives next to the summarizer that emits it.
+    internal static class MetadataTargetStatus
+    {
+        internal const string InScope = "in-scope";
+        internal const string NotTargeted = "not-targeted";
+    }
+
+    // Project a metadata release change set onto an existing gitops plan (issue #57, AC#4). This is
+    // additive and read-only: it attaches a GitOpsMetadataReleaseSummary and tags each environment
+    // plan with a MetadataTargetStatus by intersecting the change set's target environments with the
+    // plan's environments. The deploy-tool path that builds the base plan is untouched.
+    internal static GitOpsPlan AttachMetadataRelease(GitOpsPlan plan, MetadataReleaseChangeSet changeSet)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(changeSet);
+
+        HashSet<string> targeted = new(changeSet.TargetEnvironments, StringComparer.OrdinalIgnoreCase);
+
+        GitOpsEnvironmentPlan[] environments = plan.Environments
+            .Select(environment => environment with
+            {
+                MetadataTargetStatus = targeted.Contains(environment.Environment)
+                    ? MetadataTargetStatus.InScope
+                    : MetadataTargetStatus.NotTargeted
+            })
+            .ToArray();
+
+        return plan with
+        {
+            Environments = environments,
+            MetadataRelease = SummarizeMetadataRelease(changeSet)
+        };
+    }
+
+    // Summarize a metadata release change set into the plan-facing projection. Compatibility status,
+    // breaking/warning counts, and script coverage are not stored verbatim on the change set; they
+    // are derived from the readiness verdict, the blocking reasons, and the warnings the builder
+    // recorded so the projection stays faithful without re-reading the release package.
+    internal static GitOpsMetadataReleaseSummary SummarizeMetadataRelease(MetadataReleaseChangeSet changeSet)
+    {
+        ArgumentNullException.ThrowIfNull(changeSet);
+
+        string compatibilityStatus = changeSet.Readiness switch
+        {
+            MetadataChangeSetReadiness.Blocked => "incompatible",
+            MetadataChangeSetReadiness.Warning => "compatible-with-warnings",
+            MetadataChangeSetReadiness.Ready => "compatible",
+            _ => "unknown"
+        };
+
+        int breakingChanges = CountBreakingChanges(changeSet.BlockingReasons);
+        string scriptCoverage = DeriveScriptCoverage(changeSet.Warnings);
+
+        return new GitOpsMetadataReleaseSummary(
+            ReleasePackageId: changeSet.ReleasePackageId,
+            Readiness: changeSet.Readiness,
+            SemanticResources: changeSet.SemanticResources,
+            CompatibilityStatus: compatibilityStatus,
+            BreakingChanges: breakingChanges,
+            Warnings: changeSet.Warnings.Count,
+            ScriptCoverage: scriptCoverage,
+            RollbackClassification: changeSet.RollbackClassification,
+            KnownGoodRevision: changeSet.KnownGoodRevision,
+            BlockingReasons: changeSet.BlockingReasons);
+    }
+
+    private static int CountBreakingChanges(IReadOnlyList<string> blockingReasons)
+    {
+        // The builder records breaking changes as "... flags N breaking change(s); ...". Recover the
+        // count when present; otherwise fall back to "1 if anything is blocking, else 0" so the
+        // projection never under-reports a blocked release.
+        foreach (string reason in blockingReasons)
+        {
+            int flagsIndex = reason.IndexOf("flags ", StringComparison.OrdinalIgnoreCase);
+            int breakingIndex = reason.IndexOf(" breaking", StringComparison.OrdinalIgnoreCase);
+            if (flagsIndex >= 0 && breakingIndex > flagsIndex)
+            {
+                string candidate = reason.Substring(flagsIndex + 6, breakingIndex - (flagsIndex + 6)).Trim();
+                if (int.TryParse(candidate, out int count))
+                {
+                    return count;
+                }
+            }
+        }
+
+        return blockingReasons.Count > 0 ? 1 : 0;
+    }
+
+    private static string DeriveScriptCoverage(IReadOnlyList<string> warnings)
+    {
+        // The builder records script-coverage gaps as "C/T data script(s) covered; ...". Surface the
+        // ratio when present; absence of a coverage warning means full (or no required) coverage, so
+        // report "covered".
+        foreach (string warning in warnings)
+        {
+            int coveredIndex = warning.IndexOf(" data script", StringComparison.OrdinalIgnoreCase);
+            if (coveredIndex <= 0)
+            {
+                continue;
+            }
+
+            string prefix = warning.Substring(0, coveredIndex).Trim();
+            if (prefix.Contains('/') && prefix.All(character => char.IsDigit(character) || character == '/'))
+            {
+                return prefix;
+            }
+        }
+
+        return "covered";
     }
 
     private static IReadOnlyList<string> BuildRequiredEvidence(
