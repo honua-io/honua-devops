@@ -132,15 +132,15 @@
       "targets": [
         {
           "expr": "honua:slo:latency:p50_ms:5m",
-          "legendFormat": "p50 {{service}} {{environment}} {{protocol}}"
+          "legendFormat": "p50 {{service}} {{environment}} {{honua_protocol}}"
         },
         {
           "expr": "honua:slo:latency:p95_ms:5m",
-          "legendFormat": "p95 {{service}} {{environment}} {{protocol}}"
+          "legendFormat": "p95 {{service}} {{environment}} {{honua_protocol}}"
         },
         {
           "expr": "honua:slo:latency:p99_ms:5m",
-          "legendFormat": "p99 {{service}} {{environment}} {{protocol}}"
+          "legendFormat": "p99 {{service}} {{environment}} {{honua_protocol}}"
         }
       ],
       "fieldConfig": {
