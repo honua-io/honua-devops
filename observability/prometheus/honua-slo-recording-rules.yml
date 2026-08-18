@@ -1,30 +1,107 @@
+# Honua SLO recording rules.
+#
+# METRIC CONTRACT (honua-release#5). Every series and label named here must exist in honua-server's
+# observability/slo-metric-contract.json, which is generated from — and integration-tested against —
+# the server's real /metrics exposition. honua-release's gate-observability runs
+# tools/check_metric_contract.py over this file and fails if a name drifts.
+#
+# Why that guard exists: these rules used to divide by `honua_http_requests_total`, a metric
+# honua-server has never emitted, and take quantiles over `honua_request_duration_ms_bucket`, ditto.
+# An absent series is not an error in PromQL — rate() over it returns an empty vector, sum() of empty
+# is empty, clamp_min(empty, 0.001) is empty, and real / empty is empty. So every rule below produced
+# NO series, every alert built on them was permanently silent, and every dashboard panel was blank.
+# Nothing went red.
+#
+#   denominator  honua_serving_request_duration_ms_count
+#                the _count child of the serving-plane latency histogram: one sample per served
+#                request that classifies to a Honua protocol, EXCLUDING health probes and the
+#                metrics scrape (honua-server stopped recording those under
+#                Protocols.NonServingPlane). Requests that classify to no protocol are also
+#                excluded, so this is "classified serving-plane requests", not "all HTTP requests".
+#                It is NOT the only request-volume series available: OpenTelemetry's ASP.NET Core
+#                instrumentation also exports `http_server_request_duration_seconds_count` for every
+#                HTTP request. That one is deliberately not used here — it carries no Honua protocol
+#                label, so a protocol-scoped budget cannot be expressed with it.
+#
+# SCOPE. A ratio is only meaningful when its denominator covers the same population as its
+# numerator. `honua:slo:geoservices_error_rate` therefore scopes the denominator to the GeoServices
+# protocol family; the all-surface ratios leave it unscoped because their numerator is all-surface
+# too. Pairing the GeoServices-only numerator with an unscoped denominator understates the error
+# rate by orders of magnitude, which is how an error-budget signal ends up failing OPEN.
+#
+# NUMERATORS. The old `{status_code=~"5.."}` filter is gone: a transport-5xx-only numerator is
+# exactly the blindness honua-devops#113 was opened to fix, because GeoServices returns its errors
+# under HTTP 200 for Esri-client compatibility. But "every error envelope" is not the right
+# replacement for a *budgeted* signal either — that counts ordinary 4xx, and an Esri client probing
+# capabilities and collecting 404s would permanently breach a 99.0% availability target through no
+# fault of the platform. The budgeted numerator is therefore transport 5xx PLUS every in-band
+# (HTTP < 400 body-envelope) error:
+#
+#   sum(rate(honua_request_error_total{in_band="true"}[W]) or rate(honua_request_error_total{error_code=~"5.."}[W]))
+#
+# `or`, not `+`: PromQL binary arithmetic drops any group missing from either side, so `a + b` would
+# silently produce nothing at all whenever a candidate has in-band errors but no 5xx (or vice
+# versa) — the same empty-vector silence this file exists to fix. The two selectors are disjoint
+# (in_band is defined as error_code < 400), so their union is their sum.
+#
+# LIMITATION: an in-band error cannot currently be attributed to client vs server fault, so all of
+# them count against availability. That is deliberate — an in-band error storm is precisely what
+# devops#113 exists to catch — but it means this is not a true fault-attributed availability SLO.
+# A `fault` tag on the server's error counter is the prerequisite for that.
+#
+# LABELS. The histogram's protocol dimension is `honua_protocol` (the exporter sanitizes the
+# instrument's dotted `honua.protocol` tag key), NOT `protocol`. Grouping by the wrong label name
+# does not error either — it silently collapses every protocol into one series.
+#
+# The error counter is dimensioned by `service_type` while the duration histogram is dimensioned by
+# `honua_protocol`, and their value vocabularies only overlap on the GeoServices family, so the
+# error ratios below are deliberately not sliced per protocol. Per-protocol error budgets need the
+# server to align those two dimensions first.
 groups:
   - name: honua-slo-recording-rules
     interval: 30s
     rules:
+      # ── budgeted signal: transport 5xx + in-band 200-with-{error}, excluding ordinary 4xx ──────
+      - record: honua:slo:error_rate:ratio_5m
+        expr: |
+          sum by (service, environment) (
+            rate(honua_request_error_total{in_band="true"}[5m])
+            or
+            rate(honua_request_error_total{error_code=~"5.."}[5m])
+          )
+          /
+          clamp_min(
+            sum by (service, environment) (
+              rate(honua_serving_request_duration_ms_count[5m])
+            ),
+            0.001
+          )
       - record: honua:slo:availability:ratio_30d
         expr: |
           1 - (
             sum by (service, environment) (
-              rate(honua_http_requests_total{status_code=~"5.."}[30d])
+              rate(honua_request_error_total{in_band="true"}[30d])
+              or
+              rate(honua_request_error_total{error_code=~"5.."}[30d])
             )
             /
             clamp_min(
               sum by (service, environment) (
-                rate(honua_http_requests_total[30d])
+                rate(honua_serving_request_duration_ms_count[30d])
               ),
               0.001
             )
           )
-      - record: honua:slo:error_rate:ratio_5m
+      # ── visibility only: EVERY error envelope, including 4xx. Not budgeted, not alerted on. ────
+      - record: honua:slo:envelope_error_rate:ratio_5m
         expr: |
-          sum by (service, environment, protocol) (
-            rate(honua_http_requests_total{status_code=~"5.."}[5m])
+          sum by (service, environment) (
+            rate(honua_request_error_total[5m])
           )
           /
           clamp_min(
-            sum by (service, environment, protocol) (
-              rate(honua_http_requests_total[5m])
+            sum by (service, environment) (
+              rate(honua_serving_request_duration_ms_count[5m])
             ),
             0.001
           )
@@ -32,24 +109,24 @@ groups:
         expr: |
           histogram_quantile(
             0.50,
-            sum by (le, service, environment, protocol) (
-              rate(honua_request_duration_ms_bucket[5m])
+            sum by (le, service, environment, honua_protocol) (
+              rate(honua_serving_request_duration_ms_bucket[5m])
             )
           )
       - record: honua:slo:latency:p95_ms:5m
         expr: |
           histogram_quantile(
             0.95,
-            sum by (le, service, environment, protocol) (
-              rate(honua_request_duration_ms_bucket[5m])
+            sum by (le, service, environment, honua_protocol) (
+              rate(honua_serving_request_duration_ms_bucket[5m])
             )
           )
       - record: honua:slo:latency:p99_ms:5m
         expr: |
           histogram_quantile(
             0.99,
-            sum by (le, service, environment, protocol) (
-              rate(honua_request_duration_ms_bucket[5m])
+            sum by (le, service, environment, honua_protocol) (
+              rate(honua_serving_request_duration_ms_bucket[5m])
             )
           )
       - record: honua:slo:backup_success:ratio_24h
@@ -86,27 +163,18 @@ groups:
           )
       - record: honua:slo:burn_rate:5m
         expr: |
-          sum by (service, environment) (
-            rate(honua_http_requests_total{status_code=~"5.."}[5m])
-          )
-          /
-          clamp_min(
-            sum by (service, environment) (
-              rate(honua_http_requests_total[5m])
-            ),
-            0.001
-          )
-          /
-          0.010
+          honua:slo:error_rate:ratio_5m / 0.010
       - record: honua:slo:burn_rate:30m
         expr: |
           sum by (service, environment) (
-            rate(honua_http_requests_total{status_code=~"5.."}[30m])
+            rate(honua_request_error_total{in_band="true"}[30m])
+            or
+            rate(honua_request_error_total{error_code=~"5.."}[30m])
           )
           /
           clamp_min(
             sum by (service, environment) (
-              rate(honua_http_requests_total[30m])
+              rate(honua_serving_request_duration_ms_count[30m])
             ),
             0.001
           )
@@ -115,23 +183,23 @@ groups:
       - record: honua:slo:burn_rate:6h
         expr: |
           sum by (service, environment) (
-            rate(honua_http_requests_total{status_code=~"5.."}[6h])
+            rate(honua_request_error_total{in_band="true"}[6h])
+            or
+            rate(honua_request_error_total{error_code=~"5.."}[6h])
           )
           /
           clamp_min(
             sum by (service, environment) (
-              rate(honua_http_requests_total[6h])
+              rate(honua_serving_request_duration_ms_count[6h])
             ),
             0.001
           )
           /
           0.010
       # --- In-band / GeoServices error signal (audit S1, #113) ----------------
-      # honua_http_requests_total{status_code=~"5.."} is blind to a GeoServices
-      # 200+{error} envelope: the transport status reads 200 so it counts as a
-      # success. honua_request_error_total{in_band="true"} and
-      # honua_geoservices_error_total (server #2243) expose those errors so the
-      # SLO stack, alerts, dashboard, and release gate can see them.
+      # A GeoServices 200+{error} envelope reads as a success at the transport layer, so a 5xx-shaped
+      # numerator cannot see it. The budgeted rules above already include this class; these two
+      # isolate it so a GeoServices-specific regression stays visible when overall traffic is healthy.
       - record: honua:slo:inband_error_rate:ratio_5m
         expr: |
           sum by (service, environment) (
@@ -140,10 +208,15 @@ groups:
           /
           clamp_min(
             sum by (service, environment) (
-              rate(honua_http_requests_total[5m])
+              rate(honua_serving_request_duration_ms_count[5m])
             ),
             0.001
           )
+      # Scope-matched: honua_geoservices_error_total counts GeoServices surfaces only, so the
+      # denominator is narrowed to the GeoServices protocol family. Without that matcher this ratio
+      # divides GeoServices errors by all serving-plane traffic and understates the rate.
+      # The family list is honua-server's HonuaTelemetry.Protocols.GeoServicesFamily, published as
+      # `selectors.geoservices_protocols` in slo-metric-contract.json.
       - record: honua:slo:geoservices_error_rate:ratio_5m
         expr: |
           sum by (service, environment) (
@@ -152,27 +225,7 @@ groups:
           /
           clamp_min(
             sum by (service, environment) (
-              rate(honua_http_requests_total[5m])
-            ),
-            0.001
-          )
-      # Effective error rate = transport 5xx PLUS in-band {error} envelopes. This
-      # is the release-gating error signal; a 200-error storm now surfaces here.
-      - record: honua:slo:effective_error_rate:ratio_5m
-        expr: |
-          (
-            sum by (service, environment) (
-              rate(honua_http_requests_total{status_code=~"5.."}[5m])
-            )
-            +
-            sum by (service, environment) (
-              rate(honua_request_error_total{in_band="true"}[5m])
-            )
-          )
-          /
-          clamp_min(
-            sum by (service, environment) (
-              rate(honua_http_requests_total[5m])
+              rate(honua_serving_request_duration_ms_count{honua_protocol=~"FeatureServer|MapServer|ImageServer|VectorTileServer|GPServer|NAServer|GeometryService|PrintingTools|StaticMap"}[5m])
             ),
             0.001
           )
@@ -185,49 +238,25 @@ groups:
             ),
             0
           )
+      # The "effective" family predates honua-release#5, when the headline rules were transport-5xx
+      # only and a separate combined signal was needed to see in-band errors. The headline rules now
+      # include that class by definition, so effective_* is the same number. They are kept as
+      # one-line aliases — same series names, one definition of the arithmetic — so dashboards that
+      # reference them keep resolving instead of silently rendering nothing. The DUPLICATE
+      # HonuaEffectiveSlo*Burn alerts were removed in honua-slo-alert-rules.yml: with identical
+      # expressions and identical pagerduty-critical routing they paged twice for one incident.
+      - record: honua:slo:effective_error_rate:ratio_5m
+        expr: |
+          honua:slo:error_rate:ratio_5m
       - record: honua:slo:effective_burn_rate:5m
         expr: |
-          honua:slo:effective_error_rate:ratio_5m / 0.010
+          honua:slo:burn_rate:5m
       - record: honua:slo:effective_burn_rate:30m
         expr: |
-          (
-            sum by (service, environment) (
-              rate(honua_http_requests_total{status_code=~"5.."}[30m])
-            )
-            +
-            sum by (service, environment) (
-              rate(honua_request_error_total{in_band="true"}[30m])
-            )
-          )
-          /
-          clamp_min(
-            sum by (service, environment) (
-              rate(honua_http_requests_total[30m])
-            ),
-            0.001
-          )
-          /
-          0.010
+          honua:slo:burn_rate:30m
       - record: honua:slo:effective_burn_rate:6h
         expr: |
-          (
-            sum by (service, environment) (
-              rate(honua_http_requests_total{status_code=~"5.."}[6h])
-            )
-            +
-            sum by (service, environment) (
-              rate(honua_request_error_total{in_band="true"}[6h])
-            )
-          )
-          /
-          clamp_min(
-            sum by (service, environment) (
-              rate(honua_http_requests_total[6h])
-            ),
-            0.001
-          )
-          /
-          0.010
+          honua:slo:burn_rate:6h
       - record: honua:maintenance_window:active
         expr: |
           max by (service, environment) (
