@@ -68,6 +68,7 @@ BenchmarkDotNet.Artifacts/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+.honua/
 
 # Tye
 .tye/

@@ -116,9 +116,9 @@ public class HonuaOperatorReadinessTests
             ExecutionTier.Plan,
             "honua-gitops",
             AllowedEnvironments: ["dev", "staging", "prod"],
-            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRepository: "https://github.com/honua-io/honua-iac",
             TerraformRef: "main",
-            TerraformLocalPath: "/tmp/honua-terraform",
+            TerraformLocalPath: "/tmp/honua-iac",
             TerraformDeploymentTargets: ["eks", "aks"]);
     }
 

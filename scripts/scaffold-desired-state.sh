@@ -13,8 +13,8 @@ SERVICE=""
 RUNTIME_TARGET=""
 REVISION="release/2026.03"
 GITOPS_TOOL="honua-gitops"
-TERRAFORM_REPOSITORY="https://github.com/honua-io/honua-terraform"
-TERRAFORM_REF="main"
+TERRAFORM_REPOSITORY="https://github.com/honua-io/honua-iac"
+TERRAFORM_REF="trunk"
 ENVIRONMENTS_CSV="dev,staging,prod"
 OUTPUT_ROOT="$REPO_ROOT/desired-state"
 FORCE="false"
@@ -30,7 +30,7 @@ Options:
   --runtime-target <target>           Required. Allowed values come from desired-state/conventions.env
   --revision <value>                  Default: release/2026.03
   --gitops-tool <name>                Default: honua-gitops
-  --terraform-repository <url>        Default: https://github.com/honua-io/honua-terraform
+  --terraform-repository <url>        Default: https://github.com/honua-io/honua-iac
   --terraform-ref <ref>               Default: main
   --environments <csv>                Default: dev,staging,prod
   --output-root <path>                Default: desired-state under the repo root

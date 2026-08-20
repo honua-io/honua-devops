@@ -12,8 +12,8 @@ PROVIDER="codex"
 REVISION="release/2026.03"
 ENVIRONMENTS="dev,staging,prod"
 GITOPS_TOOL="honua-gitops"
-TERRAFORM_REPOSITORY="https://github.com/honua-io/honua-terraform"
-TERRAFORM_REF="main"
+TERRAFORM_REPOSITORY="https://github.com/honua-io/honua-iac"
+TERRAFORM_REF="trunk"
 TERRAFORM_LOCAL_PATH=""
 CI_WORKFLOW_NAME="Honua Operator Validation"
 PREFLIGHT_WORKFLOW_NAME="Honua Operator Preflight"
@@ -49,9 +49,9 @@ Options:
   --revision <value>                  Default: release/2026.03
   --environments <csv>                Default: dev,staging,prod
   --gitops-tool <name>                Default: honua-gitops
-  --terraform-repository <url>        Default: https://github.com/honua-io/honua-terraform
+  --terraform-repository <url>        Default: https://github.com/honua-io/honua-iac
   --terraform-ref <ref>               Default: main
-  --terraform-local-path <path>       Default: <customer-root>/../honua-terraform
+  --terraform-local-path <path>       Default: <customer-root>/../honua-iac
   --ci-workflow-name <value>          Default: Honua Operator Validation
   --preflight-workflow-name <value>   Default: Honua Operator Preflight
   --honua-devops-repository <org/repo> Default: honua-io/honua-devops
@@ -281,7 +281,7 @@ mkdir -p "$CUSTOMER_ROOT"
 CUSTOMER_ROOT="$(cd "$CUSTOMER_ROOT" && pwd)"
 
 if [[ -z "$TERRAFORM_LOCAL_PATH" ]]; then
-  TERRAFORM_LOCAL_PATH="$CUSTOMER_ROOT/../honua-terraform"
+  TERRAFORM_LOCAL_PATH="$CUSTOMER_ROOT/../honua-iac"
 fi
 
 ENV_FILE="$CUSTOMER_ROOT/.env.local"

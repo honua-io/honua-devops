@@ -202,7 +202,7 @@ public class SupportGatewayTests
             CurrentRevision: null,
             DesiredRevision: null,
             GitOpsTool: "honua-gitops",
-            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRepository: "https://github.com/honua-io/honua-iac",
             TerraformRef: "main",
             DeploymentTargets: ["aks"],
             PolicyGate: "guided-fix",
@@ -919,9 +919,9 @@ public class SupportGatewayTests
             executionTier,
             "honua-gitops",
             AllowedEnvironments: ["dev", "staging", "prod"],
-            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRepository: "https://github.com/honua-io/honua-iac",
             TerraformRef: "main",
-            TerraformLocalPath: "/tmp/honua-terraform",
+            TerraformLocalPath: "/tmp/honua-iac",
             TerraformDeploymentTargets: ["eks", "aks"]);
     }
 

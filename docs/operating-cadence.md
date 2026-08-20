@@ -52,4 +52,4 @@ Add `--dry-run` to preview the comment without posting it.
 
 - Close an issue only after code/docs/scripts and verification all match the issue bar.
 - If acceptance is met in-repo but live environment evidence is still missing, leave the issue open and comment with the exact remaining external validation step.
-- Use the weekly review comment to note any cross-repo blocker that should be escalated into `honua-server` or `honua-terraform`.
+- Use the weekly review comment to note any cross-repo blocker that should be escalated into `honua-server` or `honua-iac`.

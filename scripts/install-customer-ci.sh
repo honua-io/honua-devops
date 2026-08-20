@@ -14,8 +14,8 @@ OPERATOR_CHECKOUT_PATH=".tooling/honua-devops"
 DOTNET_VERSION="10.0.x"
 PROVIDER="codex"
 GITOPS_TOOL="honua-gitops"
-TERRAFORM_REPOSITORY="https://github.com/honua-io/honua-terraform"
-TERRAFORM_REF="main"
+TERRAFORM_REPOSITORY="https://github.com/honua-io/honua-iac"
+TERRAFORM_REF="trunk"
 TERRAFORM_TARGETS=""
 HONUA_API_BASE_URL="http://localhost:8080"
 OTEL_BASE_URL="http://localhost:4318"
@@ -41,7 +41,7 @@ Options:
   --dotnet-version <value>              Default: 10.0.x
   --provider <codex|claude>             Default: codex
   --gitops-tool <name>                  Default: honua-gitops
-  --terraform-repository <url>          Default: https://github.com/honua-io/honua-terraform
+  --terraform-repository <url>          Default: https://github.com/honua-io/honua-iac
   --terraform-ref <ref>                 Default: main
   --terraform-targets <csv>             Default: empty; caller should provide initial target set
   --honua-api-base-url <url>            Default: http://localhost:8080
@@ -281,7 +281,7 @@ jobs:
       HONUA_DEVOPS_TERRAFORM_REPO: \${{ vars.HONUA_DEVOPS_TERRAFORM_REPO }}
       HONUA_DEVOPS_TERRAFORM_REF: \${{ vars.HONUA_DEVOPS_TERRAFORM_REF }}
       HONUA_DEVOPS_TERRAFORM_TARGETS: \${{ vars.HONUA_DEVOPS_TERRAFORM_TARGETS }}
-      HONUA_DEVOPS_TERRAFORM_LOCAL_PATH: \${{ github.workspace }}/.tooling/honua-terraform
+      HONUA_DEVOPS_TERRAFORM_LOCAL_PATH: \${{ github.workspace }}/.tooling/honua-iac
       HONUA_DEVOPS_HONUA_API_BASE_URL: \${{ vars.HONUA_DEVOPS_HONUA_API_BASE_URL }}
       HONUA_DEVOPS_OTEL_BASE_URL: \${{ vars.HONUA_DEVOPS_OTEL_BASE_URL }}
       HONUA_DEVOPS_HONUA_API_KEY: \${{ secrets.HONUA_DEVOPS_HONUA_API_KEY }}
@@ -310,7 +310,7 @@ jobs:
         with:
           dotnet-version: '$DOTNET_VERSION'
 
-      - name: Clone honua-terraform
+      - name: Clone honua-iac
         shell: bash
         run: |
           set -euo pipefail

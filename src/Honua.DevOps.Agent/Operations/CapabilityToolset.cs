@@ -200,6 +200,16 @@ internal static class CapabilityToolset
                 "build_ai_devops_brief",
                 "Build an advisory AI DevOps brief with affected resources, raw evidence references, suggested actions (with requiresApproval/mutatesState flags), confidence, owner, status, and workflow links. Advisory only with auto-apply disabled; mutating suggestions require an explicit governed submit/rollback."),
             CreateTool(
+                (string stack, string size, string action, string variablesJson, bool confirmed, string confirmation)
+                    => toolkit.ProvisionInfrastructureAsync(stack, size, action, variablesJson, confirmed, confirmation),
+                "provision_infrastructure",
+                "Provision a Honua cloud cell from the allowlisted honua-iac Terraform roots. 2026.1 supports stack=aws-ecs (the deployable examples/aws root) and size=small. action=plan runs init+plan only and returns a tokenized confirmation challenge. A later action=apply validates and applies that exact unexpired, hash-checked saved plan; it requires execute mode, execute-lower-env or break-glass tier, direct-allowed approval, a non-production environment, confirmed=true, and the exact challenge. action=destroy is break-glass only and uses the same two-call saved-plan gate. variablesJson accepts only non-secret allowlisted Terraform values; provide required secrets out-of-band through a gitignored terraform.tfvars or TF_VAR_* environment variables."),
+            CreateTool(
+                (string stack, string baseUrl, string adminKeySecretRef, string outputDirectory, bool overwrite)
+                    => toolkit.InstallHandoffAsync(stack, baseUrl, adminKeySecretRef, outputDirectory, overwrite),
+                "install_handoff",
+                "Write a secretless CLI and honua-mcp-proxy handoff after provisioning. Returns HONUA_BASE_URL plus the secret reference for HONUA_ADMIN_KEY; records a fail-closed MCP tools/list contract for the admin family, analysis profile, and esri-gp profile; writes a versioned proxy configuration containing HONUA_MCP_REMOTE_URL; and never reads, writes, or returns the admin-key material. Leave baseUrl empty to read only the honua_url Terraform output. Existing files are preserved unless overwrite=true."),
+            CreateTool(
                 (string releasePackageJson, string mode, string correlationId)
                     => releaseExplainer.ExplainReleasePackageAsync(releasePackageJson, mode, correlationId),
                 "explain_release_package",
