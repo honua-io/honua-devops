@@ -89,6 +89,28 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    @staticmethod
+    def model_action_id(lane: str, role: str, family: str | None) -> str:
+        return f"model-{lane}-{family or 'global'}-{role}"
+
+    @staticmethod
+    def model_rosters() -> dict[str, set[tuple[str, str | None, str, str]]]:
+        rosters = {lane: set(values) for lane, values in arc.REAL_MODEL_ROSTER.items()}
+        rosters["esriGp"] = {
+            (role, family, kind, name.format(esriMcpJobId="esri-mcp-job-1"))
+            for role, family, kind, name in rosters["esriGp"]
+        }
+        rosters["nativeAnalysis"] = {
+            (role, family, kind, name.format(directAnalysisJobId="native-job-1"))
+            for role, family, kind, name in rosters["nativeAnalysis"]
+        }
+        rosters["studioPublication"] = {
+            (role, family, "mcp", tool)
+            for family in ("map", "app", "dashboard")
+            for role, tool in arc.STUDIO_REAL_MODEL_ROLES
+        }
+        return rosters
+
     def test_handoff_and_provision_binding_join_exact_candidate(self) -> None:
         _, base_url, _, secret_ref = arc.validate_handoff(self.handoff_path)
         binding = arc.validate_provision_binding(
@@ -211,6 +233,21 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "appPublicationContentHash": "app-publication-hash-1",
             "dashboardPublicationContentHash": "dashboard-publication-hash-1",
         }
+        model_actions = []
+        for lane, roster in self.model_rosters().items():
+            for role, family, kind, _ in sorted(
+                roster, key=lambda value: tuple("" if item is None else item for item in value)
+            ):
+                model_actions.append(
+                    {
+                        "id": self.model_action_id(lane, role, family),
+                        "kind": kind,
+                        "status": "passed",
+                        "startedAt": "2026-08-20T12:00:00.000Z",
+                        "finishedAt": "2026-08-20T12:00:01.000Z",
+                        "captures": {},
+                    }
+                )
         checkpoint = {
             "schemaVersion": arc.CHECKPOINT_SCHEMA,
             "state": "paused",
@@ -227,7 +264,13 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "resume": {
                 "startedAt": "2026-08-20T12:00:00.000Z",
                 "capturedVariables": captures,
-                "completedStages": [],
+                "completedStages": [
+                    {
+                        "id": "real-model-evidence",
+                        "number": 4,
+                        "actions": model_actions,
+                    }
+                ],
                 "resumeAt": {"stageId": "console", "actionId": "console-approval"},
             },
             "consoleReceiptRequest": {
@@ -317,7 +360,83 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "shareUrl": publications["app"]["publicUrl"],
         }
 
-    def real_model_receipt(self, checkpoint: dict, console: dict) -> tuple[dict, Path]:
+    def real_model_handoff(self, checkpoint: dict) -> Path:
+        handoff = {
+            "schemaVersion": "honua.studio.real-model-ai-arc-handoff/v1",
+            "status": "paused",
+            "target": "aws-ecs",
+            "candidateId": self.candidate_id,
+            "checkpointDigest": checkpoint["integrity"]["digest"],
+        }
+        handoff["integrity"] = {
+            "algorithm": "sha256",
+            "digest": arc.canonical_sha256(handoff),
+        }
+        return write_json(self.root / "real-model-handoff.json", handoff)
+
+    def console_evidence(
+        self,
+        checkpoint: dict,
+        console: dict,
+        console_path: Path,
+        handoff_path: Path,
+    ) -> Path:
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        recovery = {
+            "status": "passed",
+            "deliberateFailureJobId": "failed-job-1",
+            "resumedJobId": "resumed-job-1",
+            "actionableDiagnostics": True,
+        }
+        evidence = {
+            "schemaVersion": arc.CONSOLE_EVIDENCE_SCHEMA,
+            "status": "passed",
+            "target": "aws-ecs",
+            "candidate": {
+                "candidateId": self.candidate_id,
+                "releaseId": self.manifest["platformRelease"],
+            },
+            "endpointSha256": hashlib.sha256(self.endpoint.encode()).hexdigest(),
+            "components": {name: self.shas[name] for name in arc.ARC_COMPONENTS},
+            "handoffDigest": handoff["integrity"]["digest"],
+            "checkpointDigest": checkpoint["integrity"]["digest"],
+            "aggregateSha256": arc.sha256_file(console_path),
+            "runtime": {
+                "consoleCommit": self.shas["honua-console"],
+                "serverSourceRevision": self.shas["honua-server"],
+            },
+            "publications": {
+                family: {
+                    "proposalId": console["proposals"][family]["proposalId"],
+                    "executionOperationId": console["proposals"][family]["executionOperationId"],
+                    "publicationId": console["publications"][family]["publicationId"],
+                    "publicUrl": console["publications"][family]["publicUrl"],
+                    "auditCorrelationId": console["audit"][family]["correlationId"],
+                    "recovery": recovery,
+                }
+                for family in ("map", "app", "dashboard")
+            },
+            "checks": {
+                "browser": "passed",
+                "approval": "passed",
+                "publication": "passed",
+                "audit": "passed",
+                "recovery": "passed",
+            },
+        }
+        evidence["integrity"] = {
+            "algorithm": "sha256",
+            "digest": arc.canonical_sha256(evidence),
+        }
+        return write_json(self.root / "console-evidence.json", evidence)
+
+    def real_model_receipt(
+        self,
+        checkpoint: dict,
+        console: dict,
+        console_path: Path,
+        console_evidence_path: Path,
+    ) -> tuple[dict, Path]:
         joins = arc.scalar_captures(checkpoint["resume"]["capturedVariables"])
         for family in ("map", "app", "dashboard"):
             proposal = console["proposals"][family]
@@ -357,20 +476,8 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                 "dashboardPublicationVersionId": "dashboard-publication-version-1",
             },
         }
-        rosters = {lane: set(values) for lane, values in arc.REAL_MODEL_ROSTER.items()}
-        rosters["esriGp"] = {
-            (role, family, kind, name.format(esriMcpJobId="esri-mcp-job-1"))
-            for role, family, kind, name in rosters["esriGp"]
-        }
-        rosters["nativeAnalysis"] = {
-            (role, family, kind, name.format(directAnalysisJobId="native-job-1"))
-            for role, family, kind, name in rosters["nativeAnalysis"]
-        }
-        rosters["studioPublication"] = {
-            (role, family, "mcp", tool)
-            for family in ("map", "app", "dashboard")
-            for role, tool in arc.STUDIO_REAL_MODEL_ROLES
-        }
+        rosters = self.model_rosters()
+        action_digests = arc.checkpoint_action_receipt_digests(checkpoint)
         lanes = {}
         for index, lane_name in enumerate(arc.REAL_MODEL_LANES, start=1):
             calls = []
@@ -379,6 +486,10 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             ):
                 calls.append(
                     {
+                        "actionId": self.model_action_id(lane_name, role, family),
+                        "actionReceiptSha256": action_digests[
+                            self.model_action_id(lane_name, role, family)
+                        ],
                         "role": role,
                         **({"family": family} if family is not None else {}),
                         "kind": kind,
@@ -417,6 +528,8 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                 "target": "aws-ecs",
                 "provisionReceiptSha256": checkpoint["provisionReceiptSha256"],
                 "checkpointDigest": checkpoint["integrity"]["digest"],
+                "consoleAggregateSha256": arc.sha256_file(console_path),
+                "consoleEvidenceSha256": arc.sha256_file(console_evidence_path),
             },
             "lanes": lanes,
             "joins": joins,
@@ -439,6 +552,8 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "target": "aws-ecs",
             "provisionReceiptSha256": checkpoint["provisionReceiptSha256"],
             "checkpointDigest": checkpoint["integrity"]["digest"],
+            "consoleAggregateSha256": arc.sha256_file(console_path),
+            "consoleEvidenceSha256": arc.sha256_file(console_evidence_path),
             "lanes": lanes,
             "joins": joins,
         }
@@ -505,7 +620,23 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         console = self.console_receipt()
         console_path = write_json(self.root / "console.json", console)
         arc.validate_console_receipt(console_path, self.manifest, self.candidate_id, checkpoint)
-        receipt, evidence_path = self.real_model_receipt(checkpoint, console)
+        handoff_path = self.real_model_handoff(checkpoint)
+        console_evidence_path = self.console_evidence(
+            checkpoint, console, console_path, handoff_path
+        )
+        arc.validate_console_evidence(
+            console_evidence_path,
+            aggregate_path=console_path,
+            real_model_handoff_path=handoff_path,
+            console=console,
+            manifest=self.manifest,
+            expected_candidate_id=self.candidate_id,
+            base_url=self.endpoint,
+            checkpoint=checkpoint,
+        )
+        receipt, evidence_path = self.real_model_receipt(
+            checkpoint, console, console_path, console_evidence_path
+        )
         receipt_path = write_json(self.root / "real-model.json", receipt)
         arc.validate_real_model_receipt(
             receipt_path,
@@ -514,6 +645,8 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             expected_candidate_id=self.candidate_id,
             base_url=self.endpoint,
             checkpoint=checkpoint,
+            console_receipt_path=console_path,
+            console_evidence_path=console_evidence_path,
             console=console,
         )
 
@@ -527,13 +660,22 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                 expected_candidate_id=self.candidate_id,
                 base_url=self.endpoint,
                 checkpoint=checkpoint,
+                console_receipt_path=console_path,
+                console_evidence_path=console_evidence_path,
                 console=console,
             )
 
     def test_real_model_receipt_rejects_secret_shaped_serialization(self) -> None:
         checkpoint = self.checkpoint()
         console = self.console_receipt()
-        receipt, evidence_path = self.real_model_receipt(checkpoint, console)
+        console_path = write_json(self.root / "console.json", console)
+        handoff_path = self.real_model_handoff(checkpoint)
+        console_evidence_path = self.console_evidence(
+            checkpoint, console, console_path, handoff_path
+        )
+        receipt, evidence_path = self.real_model_receipt(
+            checkpoint, console, console_path, console_evidence_path
+        )
         receipt["model"]["modelId"] = "secretstring-must-not-be-serialized"
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
         evidence["model"] = receipt["model"]
@@ -547,7 +689,14 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
     def test_real_model_receipt_rejects_missing_required_call_evidence(self) -> None:
         checkpoint = self.checkpoint()
         console = self.console_receipt()
-        receipt, evidence_path = self.real_model_receipt(checkpoint, console)
+        console_path = write_json(self.root / "console.json", console)
+        handoff_path = self.real_model_handoff(checkpoint)
+        console_evidence_path = self.console_evidence(
+            checkpoint, console, console_path, handoff_path
+        )
+        receipt, evidence_path = self.real_model_receipt(
+            checkpoint, console, console_path, console_evidence_path
+        )
         receipt["lanes"]["admin"]["calls"] = [
             call
             for call in receipt["lanes"]["admin"]["calls"]
@@ -562,8 +711,70 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                 expected_candidate_id=self.candidate_id,
                 base_url=self.endpoint,
                 checkpoint=checkpoint,
+                console_receipt_path=console_path,
+                console_evidence_path=console_evidence_path,
                 console=console,
             )
+
+    def test_real_model_receipt_rejects_unbound_sdk_action_receipt(self) -> None:
+        checkpoint = self.checkpoint()
+        console = self.console_receipt()
+        console_path = write_json(self.root / "console.json", console)
+        handoff_path = self.real_model_handoff(checkpoint)
+        console_evidence_path = self.console_evidence(
+            checkpoint, console, console_path, handoff_path
+        )
+        receipt, evidence_path = self.real_model_receipt(
+            checkpoint, console, console_path, console_evidence_path
+        )
+        receipt["lanes"]["admin"]["calls"][0]["actionReceiptSha256"] = "f" * 64
+        receipt_path = write_json(self.root / "real-model.json", receipt)
+        with self.assertRaisesRegex(arc.ArcError, "not bound to SDK action receipt"):
+            arc.validate_real_model_receipt(
+                receipt_path,
+                evidence_path=evidence_path,
+                manifest=self.manifest,
+                expected_candidate_id=self.candidate_id,
+                base_url=self.endpoint,
+                checkpoint=checkpoint,
+                console_receipt_path=console_path,
+                console_evidence_path=console_evidence_path,
+                console=console,
+            )
+
+    def test_privileged_audit_reread_requires_exact_operations_and_verified_chain(self) -> None:
+        console = self.console_receipt()
+        observed_console = self.console_receipt()
+
+        def fetch(_base_url: str, path: str, _secret: str, _label: str) -> dict:
+            if path.endswith("/verify"):
+                return {"verified": True, "rowsChecked": 3}
+            family = next(
+                name
+                for name in ("map", "app", "dashboard")
+                if observed_console["proposals"][name]["proposalId"] in path
+            )
+            proposal = observed_console["proposals"][family]
+            audit = observed_console["audit"][family]
+            return {
+                "items": [
+                    {
+                        "resourceId": proposal["proposalId"],
+                        "action": "operation.applied",
+                        "outcome": "Success",
+                        "correlationId": audit["correlationId"],
+                        "executionOperationId": proposal["executionOperationId"],
+                    }
+                ]
+            }
+
+        with mock.patch.object(arc, "fetch_admin_json", side_effect=fetch):
+            arc.verify_privileged_console_audit(self.endpoint, console, "scoped-secret")
+
+        console["audit"]["map"]["correlationId"] = "wrong-correlation"
+        with mock.patch.object(arc, "fetch_admin_json", side_effect=fetch):
+            with self.assertRaisesRegex(arc.ArcError, "map audit identities"):
+                arc.verify_privileged_console_audit(self.endpoint, console, "scoped-secret")
 
     def test_finalize_emits_both_exact_release_receipts_after_teardown(self) -> None:
         pre_path = write_json(

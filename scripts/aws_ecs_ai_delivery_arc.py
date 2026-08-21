@@ -21,7 +21,9 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 try:
     import yaml
@@ -42,6 +44,7 @@ CHECKPOINT_SCHEMA = "honua.zero-to-map.checkpoint/v1"
 JOURNEY_RECEIPT_SCHEMA = "honua.zero-to-map.receipt/v1"
 REAL_MODEL_RECEIPT_SCHEMA = "honua.aws-ecs.real-model-ai-arc/v1"
 REAL_MODEL_EVIDENCE_SCHEMA = "honua.aws-ecs.real-model-ai-arc-evidence/v1"
+CONSOLE_EVIDENCE_SCHEMA = "honua.console.ai-arc-evidence/v1"
 JOURNEY_ID = "2026.1-zero-to-map"
 RELEASE_CONTRACT = "honua-release#123/D9.3"
 
@@ -144,6 +147,13 @@ def read_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ArcError(f"{label} must be a JSON object: {path}")
     return value
+
+
+def canonical_sha256(value: Any) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def reject_forbidden_serialization(value: Any, tokens: tuple[str, ...], message: str) -> None:
@@ -325,14 +335,32 @@ def receipt_captures(receipt: dict[str, Any]) -> dict[str, str | int | float | b
     return captures
 
 
+def checkpoint_action_receipt_digests(checkpoint: dict[str, Any]) -> dict[str, str]:
+    digests: dict[str, str] = {}
+    resume = checkpoint.get("resume")
+    for stage in (resume.get("completedStages") if isinstance(resume, dict) else None) or []:
+        if not isinstance(stage, dict):
+            continue
+        for action in stage.get("actions") or []:
+            if not isinstance(action, dict) or not isinstance(action.get("id"), str):
+                continue
+            action_id = action["id"]
+            if action_id in digests:
+                raise ArcError(f"SDK checkpoint duplicates action receipt {action_id}")
+            digests[action_id] = canonical_sha256(action)
+    return digests
+
+
 def validate_real_model_lanes(
     lanes: Any,
     joins: dict[str, Any],
+    action_receipt_digests: dict[str, str],
 ) -> None:
     if not isinstance(lanes, dict) or set(lanes) != set(REAL_MODEL_LANES):
         raise ArcError("AWS ECS real-model receipt does not cover the four required natural-language lanes")
     observed: dict[str, set[tuple[str, str | None, str, str]]] = {}
     identity_keys: dict[str, set[str]] = {}
+    observed_action_ids: set[str] = set()
     for lane_name in REAL_MODEL_LANES:
         lane = lanes[lane_name]
         if not isinstance(lane, dict):
@@ -351,23 +379,40 @@ def validate_real_model_lanes(
         for call in calls:
             if not isinstance(call, dict) or call.get("status") != "passed":
                 raise ArcError(f"AWS ECS real-model lane {lane_name} contains a non-passing call")
-            allowed_call_fields = {"role", "kind", "name", "status", "responseSha256", "result"}
+            allowed_call_fields = {
+                "actionId", "actionReceiptSha256", "role", "kind", "name",
+                "status", "responseSha256", "result",
+            }
             if call.get("family") is not None:
                 allowed_call_fields.add("family")
             if set(call) != allowed_call_fields:
                 raise ArcError(f"AWS ECS real-model lane {lane_name} contains unexpected call fields")
             role = call.get("role")
+            action_id = call.get("actionId")
             family = call.get("family")
             kind = call.get("kind")
             name = call.get("name")
             if (
                 not isinstance(role, str)
+                or not isinstance(action_id, str)
+                or not action_id
                 or family not in {None, "map", "app", "dashboard", "parcels", "zoning"}
                 or kind not in {"mcp", "mcp-resource"}
                 or not isinstance(name, str)
                 or not name
             ):
                 raise ArcError(f"AWS ECS real-model lane {lane_name} has malformed call identity")
+            if action_id in observed_action_ids:
+                raise ArcError(f"AWS ECS real-model evidence duplicates SDK action {action_id}")
+            observed_action_ids.add(action_id)
+            expected_action_digest = action_receipt_digests.get(action_id)
+            if (
+                expected_action_digest is None
+                or call.get("actionReceiptSha256") != expected_action_digest
+            ):
+                raise ArcError(
+                    f"AWS ECS real-model lane {lane_name} is not bound to SDK action receipt {action_id}"
+                )
             if not SHA256.fullmatch(str(call.get("responseSha256", ""))):
                 raise ArcError(f"AWS ECS real-model lane {lane_name} call {role} has no response hash")
             result = call.get("result")
@@ -441,6 +486,8 @@ def validate_real_model_receipt(
     expected_candidate_id: str,
     base_url: str,
     checkpoint: dict[str, Any],
+    console_receipt_path: Path,
+    console_evidence_path: Path,
     journey: dict[str, Any] | None = None,
     console: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -483,11 +530,19 @@ def validate_real_model_receipt(
         raise ArcError("AWS ECS real-model receipt has no transcript SHA-256")
     deterministic = receipt.get("deterministic")
     checkpoint_digest = (checkpoint.get("integrity") or {}).get("digest")
+    console_aggregate_digest = sha256_file(console_receipt_path)
+    console_evidence_digest = sha256_file(console_evidence_path)
     if (
         not isinstance(deterministic, dict)
+        or set(deterministic) != {
+            "target", "provisionReceiptSha256", "checkpointDigest",
+            "consoleAggregateSha256", "consoleEvidenceSha256",
+        }
         or deterministic.get("checkpointDigest") != checkpoint_digest
         or deterministic.get("target") != "aws-ecs"
         or deterministic.get("provisionReceiptSha256") != checkpoint.get("provisionReceiptSha256")
+        or deterministic.get("consoleAggregateSha256") != console_aggregate_digest
+        or deterministic.get("consoleEvidenceSha256") != console_evidence_digest
     ):
         raise ArcError("AWS ECS real-model receipt is not joined to the deterministic checkpoint")
     checks = receipt.get("checks")
@@ -543,7 +598,9 @@ def validate_real_model_receipt(
             name = f"{family}{suffix}"
             if not isinstance(joins.get(name), str) or not joins[name]:
                 raise ArcError(f"AWS ECS real-model receipt is missing {name}")
-    validate_real_model_lanes(receipt.get("lanes"), joins)
+    validate_real_model_lanes(
+        receipt.get("lanes"), joins, checkpoint_action_receipt_digests(checkpoint)
+    )
     evidence = receipt.get("evidence")
     if not isinstance(evidence, dict) or not SHA256.fullmatch(str(evidence.get("sha256", ""))):
         raise ArcError("AWS ECS real-model receipt has no content-addressed evidence")
@@ -564,6 +621,8 @@ def validate_real_model_receipt(
         "target": "aws-ecs",
         "provisionReceiptSha256": checkpoint.get("provisionReceiptSha256"),
         "checkpointDigest": checkpoint_digest,
+        "consoleAggregateSha256": console_aggregate_digest,
+        "consoleEvidenceSha256": console_evidence_digest,
         "lanes": receipt["lanes"],
         "joins": joins,
     }
@@ -674,6 +733,217 @@ def validate_console_receipt(
             if left is MISSING or right is MISSING or left != right:
                 raise ArcError(f"Console receipt violates resolved equality {pair}")
     return {**receipt, "shareUrl": share_url}
+
+
+def validate_console_evidence(
+    path: Path,
+    *,
+    aggregate_path: Path,
+    real_model_handoff_path: Path,
+    console: dict[str, Any],
+    manifest: dict[str, Any],
+    expected_candidate_id: str,
+    base_url: str,
+    checkpoint: dict[str, Any],
+) -> dict[str, Any]:
+    evidence = read_json(path, "Console browser evidence sidecar")
+    expected_fields = {
+        "schemaVersion", "status", "target", "candidate", "endpointSha256",
+        "components", "handoffDigest", "checkpointDigest", "aggregateSha256",
+        "runtime", "publications", "checks", "integrity",
+    }
+    if set(evidence) != expected_fields:
+        raise ArcError("Console browser evidence has unexpected or missing fields")
+    if evidence.get("schemaVersion") != CONSOLE_EVIDENCE_SCHEMA or evidence.get("status") != "passed":
+        raise ArcError("Console browser evidence has the wrong schema or status")
+    if evidence.get("target") != "aws-ecs":
+        raise ArcError("Console browser evidence is not bound to AWS ECS")
+    if evidence.get("candidate") != {
+        "candidateId": expected_candidate_id,
+        "releaseId": manifest["platformRelease"],
+    }:
+        raise ArcError("Console browser evidence is not bound to the exact candidate")
+    if evidence.get("endpointSha256") != hashlib.sha256(base_url.encode("utf-8")).hexdigest():
+        raise ArcError("Console browser evidence was not observed against the provisioned endpoint")
+    if evidence.get("components") != exact_component_shas(manifest, ARC_COMPONENTS):
+        raise ArcError("Console browser evidence component identities differ from the manifest")
+    real_model_handoff = read_json(real_model_handoff_path, "immutable Studio model handoff")
+    handoff_integrity = real_model_handoff.get("integrity")
+    if (
+        not isinstance(handoff_integrity, dict)
+        or not SHA256.fullmatch(str(handoff_integrity.get("digest", "")))
+        or evidence.get("handoffDigest") != handoff_integrity.get("digest")
+    ):
+        raise ArcError("Console browser evidence is not joined to the immutable Studio handoff")
+    if evidence.get("checkpointDigest") != (checkpoint.get("integrity") or {}).get("digest"):
+        raise ArcError("Console browser evidence is not joined to the SDK checkpoint")
+    if evidence.get("aggregateSha256") != sha256_file(aggregate_path):
+        raise ArcError("Console browser evidence is not joined to the aggregate receipt bytes")
+
+    runtime = evidence.get("runtime")
+    if runtime != {
+        "consoleCommit": manifest["components"]["honua-console"]["sha"],
+        "serverSourceRevision": manifest["components"]["honua-server"]["sha"],
+    }:
+        raise ArcError("Console browser evidence did not observe the manifest-pinned runtime revisions")
+    checks = evidence.get("checks")
+    expected_checks = {
+        "browser": "passed", "approval": "passed", "publication": "passed",
+        "audit": "passed", "recovery": "passed",
+    }
+    if checks != expected_checks:
+        raise ArcError("Console browser evidence did not pass every required UI/governance check")
+    publications = evidence.get("publications")
+    if not isinstance(publications, dict) or set(publications) != {"map", "app", "dashboard"}:
+        raise ArcError("Console browser evidence lacks exact map/app/dashboard observations")
+    observed_recovery: dict[str, Any] | None = None
+    for family in ("map", "app", "dashboard"):
+        item = publications.get(family)
+        proposal = console["proposals"][family]
+        publication = console["publications"][family]
+        audit = console["audit"][family]
+        if not isinstance(item, dict) or set(item) != {
+            "proposalId", "executionOperationId", "publicationId", "publicUrl",
+            "auditCorrelationId", "recovery",
+        }:
+            raise ArcError(f"Console browser evidence has malformed {family} publication facts")
+        expected = {
+            "proposalId": proposal["proposalId"],
+            "executionOperationId": proposal["executionOperationId"],
+            "publicationId": publication["publicationId"],
+            "publicUrl": publication["publicUrl"],
+            "auditCorrelationId": audit["correlationId"],
+        }
+        for name, expected_value in expected.items():
+            if item.get(name) != expected_value:
+                raise ArcError(f"Console browser evidence {family} disagrees on {name}")
+        recovery = item.get("recovery")
+        if not isinstance(recovery, dict) or set(recovery) != {
+            "status", "deliberateFailureJobId", "resumedJobId", "actionableDiagnostics",
+        }:
+            raise ArcError(f"Console browser evidence has malformed {family} recovery proof")
+        if (
+            recovery.get("status") != "passed"
+            or recovery.get("actionableDiagnostics") is not True
+            or not isinstance(recovery.get("deliberateFailureJobId"), str)
+            or not recovery["deliberateFailureJobId"]
+            or not isinstance(recovery.get("resumedJobId"), str)
+            or not recovery["resumedJobId"]
+            or recovery["deliberateFailureJobId"] == recovery["resumedJobId"]
+        ):
+            raise ArcError(f"Console browser evidence did not prove {family} failure recovery")
+        if observed_recovery is not None and recovery != observed_recovery:
+            raise ArcError("Console browser evidence uses inconsistent recovery observations")
+        observed_recovery = recovery
+
+    integrity = evidence.get("integrity")
+    if (
+        not isinstance(integrity, dict)
+        or integrity.get("algorithm") != "sha256"
+        or not SHA256.fullmatch(str(integrity.get("digest", "")))
+    ):
+        raise ArcError("Console browser evidence has no canonical integrity digest")
+    unsigned = dict(evidence)
+    unsigned.pop("integrity", None)
+    if not hmac.compare_digest(str(integrity["digest"]), canonical_sha256(unsigned)):
+        raise ArcError("Console browser evidence canonical integrity digest does not match")
+    reject_forbidden_serialization(
+        evidence,
+        ("password", "authorization", "api_key", "apikey", "secretstring"),
+        "Console browser evidence contains forbidden credential material",
+    )
+    return evidence
+
+
+def fetch_admin_json(base_url: str, path: str, admin_secret: str, label: str) -> dict[str, Any]:
+    request = Request(
+        f"{base_url}{path}",
+        headers={"Accept": "application/json", "x-api-key": admin_secret},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            raw = response.read(1024 * 1024 + 1)
+    except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        raise ArcError(f"could not read {label} from the candidate") from exc
+    if len(raw) > 1024 * 1024:
+        raise ArcError(f"candidate {label} response exceeds the 1 MiB evidence limit")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ArcError(f"candidate {label} response is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ArcError(f"candidate {label} response must be a JSON object")
+    return value
+
+
+def audit_execution_operation_id(row: dict[str, Any]) -> str | None:
+    direct = row.get("executionOperationId")
+    if isinstance(direct, str) and direct:
+        return direct
+    details = row.get("details")
+    if not isinstance(details, str) or not details or len(details) > 16 * 1024:
+        return None
+    try:
+        parsed = json.loads(details)
+    except json.JSONDecodeError:
+        return None
+    value = parsed.get("executionOperationId") if isinstance(parsed, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
+def verify_privileged_console_audit(
+    base_url: str,
+    console: dict[str, Any],
+    admin_secret: str,
+) -> None:
+    for family in ("map", "app", "dashboard"):
+        proposal = console["proposals"][family]
+        audit = console["audit"][family]
+        proposal_id = proposal["proposalId"]
+        query = urlencode(
+            {
+                "resourceType": "operation_proposal",
+                "resourceId": proposal_id,
+                "action": "operation.applied",
+                "pageSize": "25",
+            }
+        )
+        response = fetch_admin_json(
+            base_url,
+            f"/api/v1/admin/observability/audit?{query}",
+            admin_secret,
+            f"{family} proposal audit",
+        )
+        items = response.get("items")
+        if not isinstance(items, list):
+            raise ArcError(f"candidate {family} proposal audit has no item roster")
+        matches = [
+            row
+            for row in items
+            if isinstance(row, dict)
+            and row.get("resourceId") == proposal_id
+            and row.get("action") == "operation.applied"
+            and str(row.get("outcome", "")).lower() == "success"
+        ]
+        if len(matches) != 1:
+            raise ArcError(f"candidate audit does not contain one exact {family} proposal application")
+        row = matches[0]
+        if (
+            audit_execution_operation_id(row) != proposal["executionOperationId"]
+            or row.get("correlationId") != audit["correlationId"]
+            or audit.get("operationId") != proposal["executionOperationId"]
+        ):
+            raise ArcError(f"candidate {family} audit identities differ from the Console receipt")
+
+    verification = fetch_admin_json(
+        base_url,
+        "/api/v1/admin/observability/audit/verify",
+        admin_secret,
+        "audit chain verification",
+    )
+    if verification.get("verified") is not True:
+        raise ArcError("candidate audit chain verification did not pass")
 
 
 def resolve_aws_secret(secret_ref: str, label: str = "admin secret") -> str:
@@ -1112,6 +1382,16 @@ def resume(args: argparse.Namespace) -> None:
         expected_candidate_id,
         checkpoint,
     )
+    validate_console_evidence(
+        args.console_evidence,
+        aggregate_path=args.console_receipt,
+        real_model_handoff_path=args.real_model_handoff,
+        console=console,
+        manifest=manifest,
+        expected_candidate_id=expected_candidate_id,
+        base_url=base_url,
+        checkpoint=checkpoint,
+    )
     validate_real_model_receipt(
         args.real_model_receipt,
         evidence_path=args.real_model_evidence,
@@ -1119,27 +1399,32 @@ def resume(args: argparse.Namespace) -> None:
         expected_candidate_id=expected_candidate_id,
         base_url=base_url,
         checkpoint=checkpoint,
+        console_receipt_path=args.console_receipt,
+        console_evidence_path=args.console_evidence,
         console=console,
     )
     admin_secret = resolve_aws_secret(admin_ref)
-    command = sdk_command(
-        args,
-        manifest=manifest,
-        expected_candidate_id=expected_candidate_id,
-        mcp_url=mcp_url,
-        console_receipt=args.sdk_console_receipt,
-    )
-    code = run_sdk(
-        command,
-        child_environment(
+    try:
+        verify_privileged_console_audit(base_url, console, admin_secret)
+        command = sdk_command(
             args,
-            admin_secret=admin_secret,
-            base_url=base_url,
+            manifest=manifest,
+            expected_candidate_id=expected_candidate_id,
             mcp_url=mcp_url,
-            sdk_source_sha=manifest["components"]["honua-sdk-js"]["sha"],
-        ),
-    )
-    admin_secret = ""
+            console_receipt=args.sdk_console_receipt,
+        )
+        code = run_sdk(
+            command,
+            child_environment(
+                args,
+                admin_secret=admin_secret,
+                base_url=base_url,
+                mcp_url=mcp_url,
+                sdk_source_sha=manifest["components"]["honua-sdk-js"]["sha"],
+            ),
+        )
+    finally:
+        admin_secret = ""
     if code != 0:
         detail = sdk_failure_attribution(args.sdk_receipt, args.sdk_root)
         raise ArcError(f"resumed SDK journey exited {code}; {detail}")
@@ -1151,6 +1436,8 @@ def resume(args: argparse.Namespace) -> None:
         expected_candidate_id=expected_candidate_id,
         base_url=base_url,
         checkpoint=checkpoint,
+        console_receipt_path=args.console_receipt,
+        console_evidence_path=args.console_evidence,
         journey=journey,
         console=console,
     )
@@ -1172,6 +1459,8 @@ def resume(args: argparse.Namespace) -> None:
             "sdkCheckpoint": checkpoint["integrity"]["digest"],
             "consoleReceipt": sha256_file(args.console_receipt),
             "sdkConsoleReceipt": sha256_file(args.sdk_console_receipt),
+            "consoleEvidence": sha256_file(args.console_evidence),
+            "studioRealModelHandoff": sha256_file(args.real_model_handoff),
             "awsEcsRealModelReceipt": sha256_file(args.real_model_receipt),
             "awsEcsRealModelEvidence": sha256_file(args.real_model_evidence),
         },
@@ -1323,6 +1612,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_run_args(resume_parser)
     resume_parser.add_argument("--console-receipt", required=True, type=Path)
     resume_parser.add_argument("--sdk-console-receipt", required=True, type=Path)
+    resume_parser.add_argument("--console-evidence", required=True, type=Path)
+    resume_parser.add_argument("--real-model-handoff", required=True, type=Path)
     resume_parser.add_argument("--real-model-receipt", required=True, type=Path)
     resume_parser.add_argument("--real-model-evidence", required=True, type=Path)
     resume_parser.add_argument("--pre-teardown-evidence", required=True, type=Path)

@@ -37,7 +37,12 @@ jobs:
           assert set(action['inputs']['phase']) == {'description', 'required'}
           assert 'console-receipt-path' in action['inputs']
           assert 'sdk-console-receipt-path' in action['inputs']
+          assert 'console-evidence-path' in action['inputs']
+          assert 'real-model-handoff-path' in action['inputs']
           producer = Path('scripts/aws_ecs_ai_delivery_arc.py').read_text()
           assert '"--sdk-console-receipt"' in producer
+          assert '"--console-evidence"' in producer
+          assert '"--real-model-handoff"' in producer
           assert '"sdkConsoleReceipt": sha256_file(args.sdk_console_receipt)' in producer
+          assert '"consoleEvidence": sha256_file(args.console_evidence)' in producer
           PY

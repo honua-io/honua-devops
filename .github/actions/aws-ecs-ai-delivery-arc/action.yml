@@ -32,6 +32,12 @@ inputs:
   sdk-console-receipt-path:
     description: Byte-identical SDK alias of the three-family Console receipt
     required: false
+  console-evidence-path:
+    description: Console-owned browser/runtime evidence sidecar
+    required: false
+  real-model-handoff-path:
+    description: Immutable paused Studio real-model handoff consumed by Console
+    required: false
   fixture-base-url:
     description: Public HTTPS origin serving the checked-in journey fixtures
     required: false
@@ -89,6 +95,10 @@ outputs:
     value: ${{ inputs.console-receipt-path }}
   sdk-console-receipt-path:
     value: ${{ inputs.sdk-console-receipt-path }}
+  console-evidence-path:
+    value: ${{ inputs.console-evidence-path }}
+  real-model-handoff-path:
+    value: ${{ inputs.real-model-handoff-path }}
   sdk-receipt-path:
     value: ${{ inputs.sdk-receipt-path }}
   pre-teardown-evidence-path:
@@ -134,6 +144,8 @@ runs:
         REAL_MODEL_EVIDENCE_PATH: ${{ inputs.real-model-evidence-path }}
         CONSOLE_RECEIPT_PATH: ${{ inputs.console-receipt-path }}
         SDK_CONSOLE_RECEIPT_PATH: ${{ inputs.sdk-console-receipt-path }}
+        CONSOLE_EVIDENCE_PATH: ${{ inputs.console-evidence-path }}
+        REAL_MODEL_HANDOFF_PATH: ${{ inputs.real-model-handoff-path }}
         FIXTURE_BASE_URL: ${{ inputs.fixture-base-url }}
         DB_HOST: ${{ inputs.db-host }}
         DB_PORT: ${{ inputs.db-port }}
@@ -177,6 +189,8 @@ runs:
               args+=(
                 --console-receipt "$CONSOLE_RECEIPT_PATH"
                 --sdk-console-receipt "$SDK_CONSOLE_RECEIPT_PATH"
+                --console-evidence "$CONSOLE_EVIDENCE_PATH"
+                --real-model-handoff "$REAL_MODEL_HANDOFF_PATH"
                 --real-model-receipt "$REAL_MODEL_RECEIPT_PATH"
                 --real-model-evidence "$REAL_MODEL_EVIDENCE_PATH"
                 --pre-teardown-evidence "$PRE_TEARDOWN_EVIDENCE_PATH"

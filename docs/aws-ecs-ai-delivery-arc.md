@@ -55,19 +55,24 @@ the same ECS lifetime, in this exact order:
    `npm run release:real-model-ai-arc -- prepare --execute --yes`. It consumes
    `HONUA_PLATFORM_MANIFEST`, `HONUA_AI_ARC_SDK_PLAN`,
    `HONUA_AI_ARC_CHECKPOINT`, `HONUA_AI_ARC_ENDPOINT`, and
-   `HONUA_AI_ARC_PROVISION_BINDING`; uses its own scoped model/Admin credential;
-   writes the sealed paused handoff to `HONUA_AI_ARC_REAL_MODEL_EVIDENCE`; and
+   `HONUA_AI_ARC_PROVISION_BINDING`; uses only the purpose-specific
+   `HONUA_AI_ARC_PREPARE_CREDENTIAL`; writes the sealed paused handoff to
+   `HONUA_AI_ARC_REAL_MODEL_HANDOFF`; and
    must exit 2 without writing `HONUA_AI_ARC_REAL_MODEL_RECEIPT`.
-2. From the Console `e2e/playwright` directory, run
-   `npm run receipt:console`. Its credential environment must contain only
+2. From the Console checkout root, run
+   `npm --prefix e2e/playwright run receipt:console`. Its credential environment must contain only
    `HONUA_AI_ARC_CONSOLE_TOKEN`, never `HONUA_ADMIN_KEY` or `HONUA_API_KEY`. It
-   consumes the checkpoint and paused Studio evidence and writes the single
+   consumes the checkpoint and immutable Studio handoff, drives the real
+   browser UI, and writes the single
    SDK-owned three-family aggregate to two distinct, byte-identical outputs:
-   `HONUA_AI_ARC_CONSOLE_RECEIPT` and `HONUA_AI_ARC_SDK_CONSOLE_RECEIPT`.
+   `HONUA_AI_ARC_CONSOLE_RECEIPT` and `HONUA_AI_ARC_SDK_CONSOLE_RECEIPT`. It
+   separately writes browser/runtime/audit/recovery evidence to
+   `HONUA_AI_ARC_CONSOLE_EVIDENCE`.
 3. Run Studio
    `npm run release:real-model-ai-arc -- resume --execute --yes` with the
-   aggregate Console receipt. It replaces the paused handoff with final
-   transcript-level evidence and writes the passed real-model receipt.
+   aggregate Console receipt and sidecar. Resume is credential-free, preserves
+   the immutable paused handoff, writes final transcript-level evidence, and
+   writes the passed real-model receipt.
 4. Invoke this action's `resume` phase. DevOps validates the aggregate against
    the checkpoint and real-model joins, requires the SDK alias to be
    byte-identical, and passes that alias to the deterministic SDK resume.
@@ -95,6 +100,8 @@ and final model artifacts:
     real-model-evidence-path: out/aws-ecs-real-model-ai-arc.evidence.json
     console-receipt-path: out/console-aggregate.json
     sdk-console-receipt-path: out/console-sdk-alias.json
+    console-evidence-path: out/console-evidence.json
+    real-model-handoff-path: out/studio-real-model-handoff.json
     fixture-base-url: https://<ephemeral-fixture-origin>
     db-host: <terraform-db-endpoint>
     db-connection-secret-ref: <terraform-install-contract-db-secret-arn>
@@ -106,8 +113,10 @@ and final model artifacts:
 Resume supplies `--checkpoint-digest` and only
 `sdk-console-receipt-path` to the SDK, which atomically claims the checkpoint,
 so replay or concurrent resume fails before adapter work. The aggregate and SDK
-alias paths must be distinct and byte-identical, and both exact file hashes are
-sealed into the pre-teardown evidence. Every
+alias paths must be distinct and byte-identical. DevOps independently rereads
+the privileged proposal audit rows and audit-chain verification, validates the
+Console sidecar against the exact Studio handoff/checkpoint/runtime/component
+identities, and seals all exact file hashes into the pre-teardown evidence. Every
 action must be `passed` with live evidence. Contract, skipped, queued,
 approval-required, pre-approval URL, missing map/app/dashboard publication
 evidence, model transcript without tool use, or a model receipt not joined to
@@ -143,8 +152,8 @@ with:
 The final two receipts use `honua.release.evidence-receipt/v1`, carry the exact
 component SHAs and manifest SHA-256 identity, and point to the uploaded final
 evidence bytes by SHA-256. Upload the evidence, SDK receipt, aggregate and SDK
-Console receipts, real-model receipt, and non-secret bindings as one restricted
-release artifact.
+Console receipts, Console sidecar, immutable Studio handoff, real-model receipt,
+and non-secret bindings as one restricted release artifact.
 Keep the full model transcript in a separate restricted artifact if retained.
 Do not upload the runner environment, Terraform state, Secrets Manager
 responses, or model credentials.
