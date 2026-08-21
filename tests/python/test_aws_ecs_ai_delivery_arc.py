@@ -810,6 +810,25 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                 with self.assertRaisesRegex(arc.ArcError, "canonical action"):
                     arc.validate_real_model_lanes(lanes, joins, action_digests)
 
+    def test_gpserver_action_requires_its_exact_job_identity(self) -> None:
+        checkpoint = self.checkpoint()
+        joins = arc.scalar_captures(checkpoint["resume"]["capturedVariables"])
+        joins.update({"candidateId": self.candidate_id, "releaseId": self.manifest["platformRelease"]})
+        lanes = self.model_lanes(checkpoint, joins)
+        gpserver = next(
+            call
+            for call in lanes["nativeAnalysis"]["calls"]
+            if call["actionId"] == "buffer-esri-gpserver"
+        )
+        gpserver["result"]["identities"].pop("gpServerJobId")
+
+        with self.assertRaisesRegex(arc.ArcError, "buffer-esri-gpserver omits gpServerJobId"):
+            arc.validate_real_model_lanes(
+                lanes,
+                joins,
+                arc.checkpoint_action_receipt_digests(checkpoint),
+            )
+
     def test_real_model_handoff_rejects_resealed_candidate_and_join_mutations(self) -> None:
         checkpoint = self.checkpoint()
         for name, mutate in {

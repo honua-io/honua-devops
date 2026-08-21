@@ -518,11 +518,15 @@ def validate_real_model_lanes(
                 raise ArcError(
                     f"AWS ECS real-model lane {lane_name} call {role} is not joined to a deterministic identity"
                 )
+            if action_id == "buffer-esri-gpserver" and "gpServerJobId" not in identities:
+                raise ArcError(
+                    "AWS ECS real-model action buffer-esri-gpserver omits gpServerJobId result evidence"
+                )
 
     required_join_results = {
         "admin": {"connectionId", "parcelsLayerId", "zoningLayerId", "serviceName"},
         "esriGp": {"esriMcpJobId"},
-        "nativeAnalysis": {"directAnalysisJobId"},
+        "nativeAnalysis": {"gpServerJobId", "directAnalysisJobId"},
         "studioPublication": {
             "mapProposalId", "appProposalId", "dashboardProposalId",
             "mapPublicationVersionId", "appPublicationVersionId", "dashboardPublicationVersionId",
