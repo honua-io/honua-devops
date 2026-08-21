@@ -1035,11 +1035,6 @@ def fetch_admin_json(base_url: str, path: str, admin_secret: str, label: str) ->
     return value
 
 
-def audit_execution_operation_id(row: dict[str, Any]) -> str | None:
-    direct = row.get("executionOperationId")
-    return direct if isinstance(direct, str) and direct else None
-
-
 def verify_privileged_console_audit(
     base_url: str,
     console: dict[str, Any],
@@ -1082,6 +1077,7 @@ def verify_privileged_console_audit(
             row
             for row in items
             if isinstance(row, dict)
+            and row.get("resourceType") == "operation_proposal"
             and row.get("resourceId") == proposal_id
             and row.get("action") == "operation.applied"
             and str(row.get("outcome", "")).lower() == "success"
@@ -1090,8 +1086,7 @@ def verify_privileged_console_audit(
             raise ArcError(f"candidate audit does not contain one exact {family} proposal application")
         row = matches[0]
         if (
-            audit_execution_operation_id(row) != proposal["executionOperationId"]
-            or row.get("correlationId") != audit["correlationId"]
+            row.get("correlationId") != audit["correlationId"]
             or audit.get("operationId") != proposal["executionOperationId"]
         ):
             raise ArcError(f"candidate {family} audit identities differ from the Console receipt")

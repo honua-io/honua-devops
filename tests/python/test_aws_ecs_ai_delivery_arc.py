@@ -889,11 +889,11 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             return {
                 "items": [
                     {
+                        "resourceType": "operation_proposal",
                         "resourceId": proposal["proposalId"],
                         "action": "operation.applied",
                         "outcome": "Success",
                         "correlationId": audit["correlationId"],
-                        "executionOperationId": proposal["executionOperationId"],
                     }
                 ]
             }
@@ -901,6 +901,14 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         with mock.patch.object(arc, "fetch_admin_json", side_effect=fetch):
             arc.verify_privileged_console_audit(self.endpoint, console, "scoped-secret")
 
+        console["proposals"]["map"]["executionOperationId"] = "wrong-operation"
+        with mock.patch.object(arc, "fetch_admin_json", side_effect=fetch):
+            with self.assertRaisesRegex(arc.ArcError, "map proposal is not durably applied"):
+                arc.verify_privileged_console_audit(self.endpoint, console, "scoped-secret")
+
+        console["proposals"]["map"]["executionOperationId"] = observed_console["proposals"]["map"][
+            "executionOperationId"
+        ]
         console["audit"]["map"]["correlationId"] = "wrong-correlation"
         with mock.patch.object(arc, "fetch_admin_json", side_effect=fetch):
             with self.assertRaisesRegex(arc.ArcError, "map audit identities"):
