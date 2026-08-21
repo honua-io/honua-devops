@@ -976,6 +976,13 @@ def validate_paused_receipt(path: Path) -> dict[str, Any]:
     return receipt
 
 
+def validate_split_console_receipt_paths(aggregate: Path, sdk_projection: Path) -> None:
+    if aggregate.resolve() == sdk_projection.resolve():
+        raise ArcError("aggregate and SDK Console receipts must be distinct files")
+    if not sdk_projection.is_file():
+        raise ArcError("SDK Console projection receipt does not exist")
+
+
 def validate_passed_journey(path: Path) -> dict[str, Any]:
     receipt = read_json(path, "completed SDK journey receipt")
     if receipt.get("schemaVersion") != JOURNEY_RECEIPT_SCHEMA or receipt.get("mode") != "live":
@@ -1094,6 +1101,7 @@ def resume(args: argparse.Namespace) -> None:
         args.provision_binding,
         args.sdk_root / "mcp" / "release" / "zero-to-map" / "journey.v1.json",
     )
+    validate_split_console_receipt_paths(args.console_receipt, args.sdk_console_receipt)
     console = validate_console_receipt(
         args.console_receipt,
         manifest,
@@ -1115,7 +1123,7 @@ def resume(args: argparse.Namespace) -> None:
         manifest=manifest,
         expected_candidate_id=expected_candidate_id,
         mcp_url=mcp_url,
-        console_receipt=args.console_receipt,
+        console_receipt=args.sdk_console_receipt,
     )
     code = run_sdk(
         command,
@@ -1159,6 +1167,7 @@ def resume(args: argparse.Namespace) -> None:
             "sdkJourneyReceipt": sha256_file(args.sdk_receipt),
             "sdkCheckpoint": checkpoint["integrity"]["digest"],
             "consoleReceipt": sha256_file(args.console_receipt),
+            "sdkConsoleReceipt": sha256_file(args.sdk_console_receipt),
             "awsEcsRealModelReceipt": sha256_file(args.real_model_receipt),
             "awsEcsRealModelEvidence": sha256_file(args.real_model_evidence),
         },
@@ -1309,6 +1318,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser = commands.add_parser("resume", help="resume from the exact approved Console receipt")
     add_run_args(resume_parser)
     resume_parser.add_argument("--console-receipt", required=True, type=Path)
+    resume_parser.add_argument("--sdk-console-receipt", required=True, type=Path)
     resume_parser.add_argument("--real-model-receipt", required=True, type=Path)
     resume_parser.add_argument("--real-model-evidence", required=True, type=Path)
     resume_parser.add_argument("--pre-teardown-evidence", required=True, type=Path)

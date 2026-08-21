@@ -132,6 +132,52 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         self.assertIn("--var-env dbPassword=TEST_DB_PASSWORD", rendered)
         self.assertNotIn("actual-db-password", rendered)
 
+    def test_sdk_resume_consumes_only_the_console_projection(self) -> None:
+        sdk = self.root / "sdk"
+        (sdk / "mcp").mkdir(parents=True)
+        (sdk / "mcp" / "package.json").write_text("{}", encoding="utf-8")
+        checkpoint_path = write_json(self.root / "checkpoint.json", self.checkpoint())
+        aggregate_receipt = self.root / "console-aggregate.json"
+        sdk_receipt = self.root / "console-sdk-projection.json"
+        args = SimpleNamespace(
+            sdk_root=sdk,
+            checkpoint=checkpoint_path,
+            provision_binding=self.provision_path,
+            fixture_base_url="https://fixtures.honua.example/2026.1",
+            db_host="db.example",
+            db_port=5432,
+            db_name="honua",
+            db_user="honua",
+            db_password_env="TEST_DB_PASSWORD",
+            sdk_receipt=self.root / "sdk-receipt.json",
+        )
+
+        command = arc.sdk_command(
+            args,
+            manifest=self.manifest,
+            expected_candidate_id=self.candidate_id,
+            mcp_url=self.endpoint + "/mcp",
+            console_receipt=sdk_receipt,
+        )
+
+        receipt_index = command.index("--console-receipt") + 1
+        self.assertEqual(str(sdk_receipt), command[receipt_index])
+        self.assertNotIn(str(aggregate_receipt), command)
+        self.assertIn("--checkpoint-digest", command)
+
+    def test_split_console_receipts_must_exist_at_distinct_paths(self) -> None:
+        aggregate_receipt = write_json(self.root / "console-aggregate.json", {})
+        sdk_receipt = write_json(self.root / "console-sdk-projection.json", {})
+
+        arc.validate_split_console_receipt_paths(aggregate_receipt, sdk_receipt)
+        with self.assertRaisesRegex(arc.ArcError, "distinct files"):
+            arc.validate_split_console_receipt_paths(aggregate_receipt, aggregate_receipt)
+        with self.assertRaisesRegex(arc.ArcError, "does not exist"):
+            arc.validate_split_console_receipt_paths(
+                aggregate_receipt,
+                self.root / "missing-sdk-projection.json",
+            )
+
     def checkpoint(self) -> dict:
         captures = {
             "candidateId": self.candidate_id,

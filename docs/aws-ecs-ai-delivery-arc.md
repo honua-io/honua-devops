@@ -48,21 +48,38 @@ non-IaC callers. The SDK checkpoint contains captured identifiers and a resolved
 Console receipt request, never the database password or authentication
 environment.
 
-The manifest-pinned Studio runner also drives a real model, with natural
-language, against this same endpoint and the captured runtime identifiers. It
-must cover Admin setup/configuration/publication, Esri GP, native analysis, and
-map/app/dashboard composition and publication. The Console candidate producer
-then consumes the checkpoint's `consoleReceiptRequest`, inspects and approves
-the exact map, app, and dashboard proposals, verifies audit/recovery, and writes
-the passed Console receipt. Seal the model transcript hashes and exact
-deterministic/Console identity joins as
-`honua.aws-ecs.real-model-ai-arc/v1`; do not serialize the transcript or model
-credential. The model operates on and verifies the IDs created by the
-deterministic pass; idempotent create/configure calls must reconcile to those
-same IDs, not create a second lookalike resource set. Its secret-free call
-evidence records every required tool/resource call, response hash, successful
-result status, and extracted deterministic IDs. Resume uses the same inputs
-plus both receipts:
+The caller next runs the manifest-pinned component executables, still inside
+the same ECS lifetime, in this exact order:
+
+1. From the Studio checkout, run
+   `npm run release:real-model-ai-arc -- prepare --execute --yes`. It consumes
+   `HONUA_PLATFORM_MANIFEST`, `HONUA_AI_ARC_SDK_PLAN`,
+   `HONUA_AI_ARC_CHECKPOINT`, `HONUA_AI_ARC_ENDPOINT`, and
+   `HONUA_AI_ARC_PROVISION_BINDING`; uses its own scoped model/Admin credential;
+   writes the sealed paused handoff to `HONUA_AI_ARC_REAL_MODEL_EVIDENCE`; and
+   must exit 2 without writing `HONUA_AI_ARC_REAL_MODEL_RECEIPT`.
+2. From the Console `e2e/playwright` directory, run
+   `npm run receipt:console`. Its credential environment must contain only
+   `HONUA_AI_ARC_CONSOLE_TOKEN`, never `HONUA_ADMIN_KEY` or `HONUA_API_KEY`. It
+   consumes the checkpoint and paused Studio evidence and writes two distinct
+   outputs: the three-family aggregate at `HONUA_AI_ARC_CONSOLE_RECEIPT` and the
+   app-gate SDK projection at `HONUA_AI_ARC_SDK_CONSOLE_RECEIPT`.
+3. Run Studio
+   `npm run release:real-model-ai-arc -- resume --execute --yes` with the
+   aggregate Console receipt. It replaces the paused handoff with final
+   transcript-level evidence and writes the passed real-model receipt.
+4. Invoke this action's `resume` phase. DevOps validates the aggregate against
+   the checkpoint and real-model joins, but passes only the SDK projection to
+   the deterministic SDK resume.
+
+The model must cover Admin setup/configuration/publication, Esri GP, native
+analysis, and map/app/dashboard composition and publication. It operates on and
+verifies the IDs created by the deterministic pass; idempotent
+create/configure calls must reconcile to those same IDs, not create a second
+lookalike resource set. Its secret-free call evidence records every required
+tool/resource call, response hash, successful result status, and extracted
+deterministic IDs. Resume uses the same inputs plus the aggregate, projection,
+and final model artifacts:
 
 ```yaml
 - id: arc-resume
@@ -76,7 +93,8 @@ plus both receipts:
     provision-binding-path: out/aws-ecs-provision-binding.json
     real-model-receipt-path: out/aws-ecs-real-model-ai-arc.json
     real-model-evidence-path: out/aws-ecs-real-model-ai-arc.evidence.json
-    console-receipt-path: out/console-approval.json
+    console-receipt-path: out/console-aggregate.json
+    sdk-console-receipt-path: out/console-sdk-projection.json
     fixture-base-url: https://<ephemeral-fixture-origin>
     db-host: <terraform-db-endpoint>
     db-connection-secret-ref: <terraform-install-contract-db-secret-arn>
@@ -85,8 +103,11 @@ plus both receipts:
     pre-teardown-evidence-path: out/aws-ecs-ai-delivery-arc.pre-teardown.json
 ```
 
-Resume supplies `--checkpoint-digest` and the SDK atomically claims the
-checkpoint, so replay or concurrent resume fails before adapter work. Every
+Resume supplies `--checkpoint-digest` and only
+`sdk-console-receipt-path` to the SDK, which atomically claims the checkpoint,
+so replay or concurrent resume fails before adapter work. The aggregate and SDK
+projection paths must be distinct, and both exact file hashes are sealed into
+the pre-teardown evidence. Every
 action must be `passed` with live evidence. Contract, skipped, queued,
 approval-required, pre-approval URL, missing map/app/dashboard publication
 evidence, model transcript without tool use, or a model receipt not joined to
@@ -121,18 +142,22 @@ with:
 
 The final two receipts use `honua.release.evidence-receipt/v1`, carry the exact
 component SHAs and manifest SHA-256 identity, and point to the uploaded final
-evidence bytes by SHA-256. Upload the evidence, SDK receipt, Console receipt,
-real-model receipt, and non-secret bindings as one restricted release artifact.
+evidence bytes by SHA-256. Upload the evidence, SDK receipt, aggregate and SDK
+Console receipts, real-model receipt, and non-secret bindings as one restricted
+release artifact.
 Keep the full model transcript in a separate restricted artifact if retained.
 Do not upload the runner environment, Terraform state, Secrets Manager
 responses, or model credentials.
 
 ## Inputs that remain external
 
-A live run still needs an OIDC role with narrowly scoped Terraform and
-Secrets Manager access, a configured public HTTPS ECS/domain path, an HTTPS
-fixture origin reachable from ECS, the database connection secret ARN from the
-IaC install contract, a live-model provider credential and model id, a
-manifest-pinned Studio full-arc model runner, and the focused Console approval
-producer. The platform manifest must be re-pinned to the exact server, SDK,
-Studio, Console, DevOps, and IaC commits before the producer will run.
+A live run still needs an OIDC role with narrowly scoped Terraform and Secrets
+Manager access, a configured public HTTPS ECS/domain path, an HTTPS fixture
+origin reachable from ECS, the database connection secret ARN from the IaC
+install contract, a live-model provider credential and model id, and a scoped
+Console read + `admin:approve` bearer. The executable contract was audited
+against Studio `c0c67666cf5345f0ae86e2644161ba15437ab571`, Console
+`6c04acf6bd41f05447221ed7ef98c39bcac56f5f`, and corrected SDK source
+`c11668ee47d28ccd65e64b5c9e7179e1422d74f5`; the final candidate must use the
+resealed SDK head and re-pin the exact server, SDK, Studio, Console, DevOps, and
+IaC commits before the producer will run.

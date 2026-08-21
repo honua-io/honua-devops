@@ -35,4 +35,9 @@ jobs:
           action = yaml.safe_load(Path('.github/actions/aws-ecs-ai-delivery-arc/action.yml').read_text())
           assert action['runs']['using'] == 'composite'
           assert set(action['inputs']['phase']) == {'description', 'required'}
+          assert 'console-receipt-path' in action['inputs']
+          assert 'sdk-console-receipt-path' in action['inputs']
+          producer = Path('scripts/aws_ecs_ai_delivery_arc.py').read_text()
+          assert '"--sdk-console-receipt"' in producer
+          assert '"sdkConsoleReceipt": sha256_file(args.sdk_console_receipt)' in producer
           PY

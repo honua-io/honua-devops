@@ -27,7 +27,10 @@ inputs:
     description: Secret-free content-addressed model call/result evidence
     required: false
   console-receipt-path:
-    description: Console approval receipt written between prepare and resume
+    description: Three-family aggregate Console receipt consumed by DevOps and Studio
+    required: false
+  sdk-console-receipt-path:
+    description: App-gate Console projection consumed only by the manifest-pinned SDK
     required: false
   fixture-base-url:
     description: Public HTTPS origin serving the checked-in journey fixtures
@@ -82,6 +85,10 @@ outputs:
     value: ${{ inputs.real-model-receipt-path }}
   real-model-evidence-path:
     value: ${{ inputs.real-model-evidence-path }}
+  console-receipt-path:
+    value: ${{ inputs.console-receipt-path }}
+  sdk-console-receipt-path:
+    value: ${{ inputs.sdk-console-receipt-path }}
   sdk-receipt-path:
     value: ${{ inputs.sdk-receipt-path }}
   pre-teardown-evidence-path:
@@ -126,6 +133,7 @@ runs:
         REAL_MODEL_RECEIPT_PATH: ${{ inputs.real-model-receipt-path }}
         REAL_MODEL_EVIDENCE_PATH: ${{ inputs.real-model-evidence-path }}
         CONSOLE_RECEIPT_PATH: ${{ inputs.console-receipt-path }}
+        SDK_CONSOLE_RECEIPT_PATH: ${{ inputs.sdk-console-receipt-path }}
         FIXTURE_BASE_URL: ${{ inputs.fixture-base-url }}
         DB_HOST: ${{ inputs.db-host }}
         DB_PORT: ${{ inputs.db-port }}
@@ -168,6 +176,7 @@ runs:
             if [[ "$PHASE" = resume ]]; then
               args+=(
                 --console-receipt "$CONSOLE_RECEIPT_PATH"
+                --sdk-console-receipt "$SDK_CONSOLE_RECEIPT_PATH"
                 --real-model-receipt "$REAL_MODEL_RECEIPT_PATH"
                 --real-model-evidence "$REAL_MODEL_EVIDENCE_PATH"
                 --pre-teardown-evidence "$PRE_TEARDOWN_EVIDENCE_PATH"
