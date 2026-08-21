@@ -157,7 +157,7 @@ origin reachable from ECS, the database connection secret ARN from the IaC
 install contract, a live-model provider credential and model id, and a scoped
 Console read + `admin:approve` bearer. The executable contract was audited
 against Studio `c0c67666cf5345f0ae86e2644161ba15437ab571`, Console
-`6c04acf6bd41f05447221ed7ef98c39bcac56f5f`, and corrected SDK source
-`c11668ee47d28ccd65e64b5c9e7179e1422d74f5`; the final candidate must use the
-resealed SDK head and re-pin the exact server, SDK, Studio, Console, DevOps, and
-IaC commits before the producer will run.
+`6c04acf6bd41f05447221ed7ef98c39bcac56f5f`, and final resealed SDK head
+`1e895f886c70bc1e6e8518f07325cc34a7fed081`; the final candidate must re-pin
+the exact server, SDK, Studio, Console, DevOps, and IaC commits before the
+producer will run.
