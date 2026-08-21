@@ -146,6 +146,12 @@ def read_json(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
+def reject_forbidden_serialization(value: Any, tokens: tuple[str, ...], message: str) -> None:
+    serialized = json.dumps(value, sort_keys=True).lower()
+    if any(token in serialized for token in tokens):
+        raise ArcError(message)
+
+
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -566,10 +572,11 @@ def validate_real_model_receipt(
             raise ArcError(f"AWS ECS real-model call evidence disagrees on {name}")
     if set(evidence_document) != set(expected_evidence_bindings):
         raise ArcError("AWS ECS real-model call evidence has unexpected or missing fields")
-    serialized = json.dumps({"receipt": receipt, "evidence": evidence_document}, sort_keys=True).lower()
-    forbidden = ("password", "authorization", "api_key", "apikey", "secretstring", "fixture")
-    if any(token in serialized for token in forbidden):
-        raise ArcError("AWS ECS real-model receipt contains forbidden secret/fixture material")
+    reject_forbidden_serialization(
+        {"receipt": receipt, "evidence": evidence_document},
+        ("password", "authorization", "api_key", "apikey", "secretstring", "fixture"),
+        "AWS ECS real-model receipt contains forbidden secret/fixture material",
+    )
     return receipt
 
 
@@ -929,10 +936,11 @@ def validate_checkpoint(
         or request.get("receiptSchema") != "honua.zero-to-map.console-receipt/v1"
     ):
         raise ArcError("SDK checkpoint has the wrong Console request identity")
-    serialized = json.dumps(checkpoint, sort_keys=True).lower()
-    forbidden = ("dbpassword", "honua_admin_key", "honua_api_key", "authorization", "secretstring")
-    if any(name in serialized for name in forbidden):
-        raise ArcError("SDK checkpoint contains a secret-shaped field")
+    reject_forbidden_serialization(
+        checkpoint,
+        ("dbpassword", "honua_admin_key", "honua_api_key", "authorization", "secretstring"),
+        "SDK checkpoint contains a secret-shaped field",
+    )
     integrity = checkpoint.get("integrity")
     if (
         not isinstance(integrity, dict)

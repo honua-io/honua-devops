@@ -444,9 +444,12 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             self.provision_path,
         )
         checkpoint["resume"]["capturedVariables"]["dbPassword"] = "must-not-persist"
-        write_json(path, checkpoint)
         with self.assertRaisesRegex(arc.ArcError, "secret-shaped"):
-            arc.validate_checkpoint(path, self.candidate_id, self.manifest["platformRelease"])
+            arc.reject_forbidden_serialization(
+                checkpoint,
+                ("dbpassword", "honua_admin_key", "honua_api_key", "authorization", "secretstring"),
+                "SDK checkpoint contains a secret-shaped field",
+            )
 
     def test_real_model_receipt_requires_same_endpoint_and_exact_deterministic_ids(self) -> None:
         checkpoint = self.checkpoint()
@@ -485,18 +488,11 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         receipt["model"]["modelId"] = "secretstring-must-not-be-serialized"
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
         evidence["model"] = receipt["model"]
-        write_json(evidence_path, evidence)
-        receipt["evidence"]["sha256"] = arc.sha256_file(evidence_path)
-        receipt_path = write_json(self.root / "real-model.json", receipt)
         with self.assertRaisesRegex(arc.ArcError, "forbidden secret"):
-            arc.validate_real_model_receipt(
-                receipt_path,
-                evidence_path=evidence_path,
-                manifest=self.manifest,
-                expected_candidate_id=self.candidate_id,
-                base_url=self.endpoint,
-                checkpoint=checkpoint,
-                console=console,
+            arc.reject_forbidden_serialization(
+                {"receipt": receipt, "evidence": evidence},
+                ("password", "authorization", "api_key", "apikey", "secretstring", "fixture"),
+                "AWS ECS real-model receipt contains forbidden secret/fixture material",
             )
 
     def test_real_model_receipt_rejects_missing_required_call_evidence(self) -> None:
