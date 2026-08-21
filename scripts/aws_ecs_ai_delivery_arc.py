@@ -976,11 +976,15 @@ def validate_paused_receipt(path: Path) -> dict[str, Any]:
     return receipt
 
 
-def validate_split_console_receipt_paths(aggregate: Path, sdk_projection: Path) -> None:
-    if aggregate.resolve() == sdk_projection.resolve():
+def validate_split_console_receipt_paths(aggregate: Path, sdk_alias: Path) -> None:
+    if aggregate.resolve() == sdk_alias.resolve():
         raise ArcError("aggregate and SDK Console receipts must be distinct files")
-    if not sdk_projection.is_file():
-        raise ArcError("SDK Console projection receipt does not exist")
+    if not aggregate.is_file():
+        raise ArcError("aggregate Console receipt does not exist")
+    if not sdk_alias.is_file():
+        raise ArcError("SDK Console receipt alias does not exist")
+    if aggregate.read_bytes() != sdk_alias.read_bytes():
+        raise ArcError("aggregate and SDK Console receipt alias must be byte-identical")
 
 
 def validate_passed_journey(path: Path) -> dict[str, Any]:

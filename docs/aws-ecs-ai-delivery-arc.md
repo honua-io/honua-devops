@@ -61,16 +61,16 @@ the same ECS lifetime, in this exact order:
 2. From the Console `e2e/playwright` directory, run
    `npm run receipt:console`. Its credential environment must contain only
    `HONUA_AI_ARC_CONSOLE_TOKEN`, never `HONUA_ADMIN_KEY` or `HONUA_API_KEY`. It
-   consumes the checkpoint and paused Studio evidence and writes two distinct
-   outputs: the three-family aggregate at `HONUA_AI_ARC_CONSOLE_RECEIPT` and the
-   app-gate SDK projection at `HONUA_AI_ARC_SDK_CONSOLE_RECEIPT`.
+   consumes the checkpoint and paused Studio evidence and writes the single
+   SDK-owned three-family aggregate to two distinct, byte-identical outputs:
+   `HONUA_AI_ARC_CONSOLE_RECEIPT` and `HONUA_AI_ARC_SDK_CONSOLE_RECEIPT`.
 3. Run Studio
    `npm run release:real-model-ai-arc -- resume --execute --yes` with the
    aggregate Console receipt. It replaces the paused handoff with final
    transcript-level evidence and writes the passed real-model receipt.
 4. Invoke this action's `resume` phase. DevOps validates the aggregate against
-   the checkpoint and real-model joins, but passes only the SDK projection to
-   the deterministic SDK resume.
+   the checkpoint and real-model joins, requires the SDK alias to be
+   byte-identical, and passes that alias to the deterministic SDK resume.
 
 The model must cover Admin setup/configuration/publication, Esri GP, native
 analysis, and map/app/dashboard composition and publication. It operates on and
@@ -94,7 +94,7 @@ and final model artifacts:
     real-model-receipt-path: out/aws-ecs-real-model-ai-arc.json
     real-model-evidence-path: out/aws-ecs-real-model-ai-arc.evidence.json
     console-receipt-path: out/console-aggregate.json
-    sdk-console-receipt-path: out/console-sdk-projection.json
+    sdk-console-receipt-path: out/console-sdk-alias.json
     fixture-base-url: https://<ephemeral-fixture-origin>
     db-host: <terraform-db-endpoint>
     db-connection-secret-ref: <terraform-install-contract-db-secret-arn>
@@ -106,8 +106,8 @@ and final model artifacts:
 Resume supplies `--checkpoint-digest` and only
 `sdk-console-receipt-path` to the SDK, which atomically claims the checkpoint,
 so replay or concurrent resume fails before adapter work. The aggregate and SDK
-projection paths must be distinct, and both exact file hashes are sealed into
-the pre-teardown evidence. Every
+alias paths must be distinct and byte-identical, and both exact file hashes are
+sealed into the pre-teardown evidence. Every
 action must be `passed` with live evidence. Contract, skipped, queued,
 approval-required, pre-approval URL, missing map/app/dashboard publication
 evidence, model transcript without tool use, or a model receipt not joined to

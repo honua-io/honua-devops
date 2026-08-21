@@ -30,7 +30,7 @@ inputs:
     description: Three-family aggregate Console receipt consumed by DevOps and Studio
     required: false
   sdk-console-receipt-path:
-    description: App-gate Console projection consumed only by the manifest-pinned SDK
+    description: Byte-identical SDK alias of the three-family Console receipt
     required: false
   fixture-base-url:
     description: Public HTTPS origin serving the checked-in journey fixtures

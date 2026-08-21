@@ -138,7 +138,7 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         (sdk / "mcp" / "package.json").write_text("{}", encoding="utf-8")
         checkpoint_path = write_json(self.root / "checkpoint.json", self.checkpoint())
         aggregate_receipt = self.root / "console-aggregate.json"
-        sdk_receipt = self.root / "console-sdk-projection.json"
+        sdk_receipt = self.root / "console-sdk-alias.json"
         args = SimpleNamespace(
             sdk_root=sdk,
             checkpoint=checkpoint_path,
@@ -165,9 +165,9 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         self.assertNotIn(str(aggregate_receipt), command)
         self.assertIn("--checkpoint-digest", command)
 
-    def test_split_console_receipts_must_exist_at_distinct_paths(self) -> None:
+    def test_console_receipt_aliases_must_exist_at_distinct_paths_with_identical_bytes(self) -> None:
         aggregate_receipt = write_json(self.root / "console-aggregate.json", {})
-        sdk_receipt = write_json(self.root / "console-sdk-projection.json", {})
+        sdk_receipt = write_json(self.root / "console-sdk-alias.json", {})
 
         arc.validate_split_console_receipt_paths(aggregate_receipt, sdk_receipt)
         with self.assertRaisesRegex(arc.ArcError, "distinct files"):
@@ -175,8 +175,11 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         with self.assertRaisesRegex(arc.ArcError, "does not exist"):
             arc.validate_split_console_receipt_paths(
                 aggregate_receipt,
-                self.root / "missing-sdk-projection.json",
+                self.root / "missing-sdk-alias.json",
             )
+        different_receipt = write_json(self.root / "different-sdk-alias.json", {"different": True})
+        with self.assertRaisesRegex(arc.ArcError, "byte-identical"):
+            arc.validate_split_console_receipt_paths(aggregate_receipt, different_receipt)
 
     def checkpoint(self) -> dict:
         captures = {
