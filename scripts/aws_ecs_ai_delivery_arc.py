@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 try:
@@ -36,6 +36,13 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 AWS_SECRET_ARN = re.compile(
     r"^arn:aws(?:-us-gov|-cn)?:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$"
 )
+ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+SDK_CHILD_ENVIRONMENT_KEYS = {
+    "PATH", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT",
+    "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR", "LANG",
+    "LC_ALL", "TZ", "CI", "NODE_OPTIONS", "NODE_PATH", "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+}
 HANDOFF_SCHEMA = "honua.mcp-proxy.handoff/v1"
 PROVISION_BINDING_SCHEMA = "honua.aws-ecs.provision-binding/v1"
 TEARDOWN_SCHEMA = "honua.aws-ecs.teardown-evidence/v1"
@@ -85,43 +92,68 @@ REAL_MODEL_CHECKS = (
     "no-secret-serialization",
 )
 REAL_MODEL_LANES = ("admin", "esriGp", "nativeAnalysis", "studioPublication")
-REAL_MODEL_ROSTER = {
-    "admin": {
-        ("server-status", None, "mcp", "honua_admin_server_status"),
-        ("connection-create", None, "mcp", "honua_admin_connection_create"),
-        ("connection-test", None, "mcp", "honua_admin_connection_test"),
-        ("import-upload-url", "parcels", "mcp", "honua_admin_import_upload_url"),
-        ("import-upload-url", "zoning", "mcp", "honua_admin_import_upload_url"),
-        ("layer-publish", "parcels", "mcp", "honua_admin_layer_publish"),
-        ("layer-publish", "zoning", "mcp", "honua_admin_layer_publish"),
-        ("service-access", None, "mcp", "honua_admin_service_set_access_policy"),
-    },
-    "esriGp": {
-        ("list-tasks", None, "mcp", "honua_esri_gp_list_tasks"),
-        ("describe-buffer", None, "mcp", "honua_esri_gp_describe_task"),
-        ("execute-buffer", None, "mcp", "honua_esri_gp_execute_task"),
-        ("wait-buffer", None, "mcp-resource", "honua://jobs/{esriMcpJobId}"),
-        ("read-buffer-results", None, "mcp-resource", "honua://jobs/{esriMcpJobId}/results"),
-    },
-    "nativeAnalysis": {
-        ("execute-buffer", None, "mcp", "honua_buffer_features"),
-        ("wait-buffer", None, "mcp-resource", "honua://jobs/{directAnalysisJobId}"),
-        ("read-buffer-results", None, "mcp-resource", "honua://jobs/{directAnalysisJobId}/results"),
-    },
-}
-STUDIO_REAL_MODEL_ROLES = {
-    ("create-draft", "honua_studio_create_draft"),
-    ("add-layer", "honua_studio_add_layer"),
-    ("set-layer-style", "honua_studio_set_layer_style"),
-    ("set-view", "honua_studio_set_view"),
-    ("add-widget", "honua_studio_add_widget"),
-    ("add-control", "honua_studio_add_control"),
-    ("validate-draft", "honua_studio_validate_draft"),
-    ("save-version", "honua_studio_save_version"),
-    ("get-version", "honua_studio_get_version"),
-    ("reopen-version", "honua_studio_reopen_version"),
-    ("propose-publication", "honua_studio_propose_publication"),
-}
+# Exact ordered 58-action real-model roster owned by the manifest-pinned SDK plan.
+# Tuple fields: actionId, lane, role, family, kind, emitted evidence name.
+REAL_MODEL_ACTION_SPECS = (
+    ("admin-status", "admin", "server-status", None, "mcp", "honua_admin_server_status"),
+    ("create-connection", "admin", "connection-create", None, "mcp", "honua_admin_connection_create"),
+    ("test-connection", "admin", "connection-test", None, "mcp", "honua_admin_connection_test"),
+    ("import-parcels", "admin", "import-upload-url", "parcels", "mcp", "honua_admin_import_upload_url"),
+    ("import-zoning", "admin", "import-upload-url", "zoning", "mcp", "honua_admin_import_upload_url"),
+    ("publish-parcels", "admin", "layer-publish", "parcels", "mcp", "honua_admin_layer_publish"),
+    ("publish-zoning", "admin", "layer-publish", "zoning", "mcp", "honua_admin_layer_publish"),
+    ("set-public-access", "admin", "service-access", None, "mcp", "honua_admin_service_set_access_policy"),
+    ("create-scoped-key", "admin", "scoped-key-create", None, "mcp", "honua_admin_api_key_create"),
+    ("list-esri-gp-tasks", "esriGp", "list-tasks", None, "mcp", "honua_esri_gp_list_tasks"),
+    ("describe-esri-buffer", "esriGp", "describe-buffer", None, "mcp", "honua_esri_gp_describe_task"),
+    ("buffer-esri-mcp", "esriGp", "execute-buffer", None, "mcp", "honua_esri_gp_execute_task"),
+    ("wait-esri-mcp-buffer", "esriGp", "wait-buffer", None, "mcp-resource", "honua://jobs/{esriMcpJobId}"),
+    ("read-esri-mcp-buffer-results", "esriGp", "read-buffer-results", None, "mcp-resource", "honua://jobs/{esriMcpJobId}/results"),
+    ("buffer-esri-gpserver", "nativeAnalysis", "execute-buffer-gpserver", None, "gpserver", "GPServer/analysis/Buffer"),
+    ("buffer-parcels", "nativeAnalysis", "execute-buffer", None, "mcp", "honua_buffer_features"),
+    ("wait-direct-buffer", "nativeAnalysis", "wait-buffer", None, "mcp-resource", "honua://jobs/{directAnalysisJobId}"),
+    ("read-direct-buffer-results", "nativeAnalysis", "read-buffer-results", None, "mcp-resource", "honua://jobs/{directAnalysisJobId}/results"),
+    ("create-map-draft", "studioPublication", "create-draft", "map", "mcp", "honua_studio_create_draft"),
+    ("add-map-parcels-layer", "studioPublication", "add-layer", "map", "mcp", "honua_studio_add_layer"),
+    ("add-map-buffer-layer", "studioPublication", "add-layer", "map", "mcp", "honua_studio_add_layer"),
+    ("style-map-buffer-layer", "studioPublication", "set-layer-style", "map", "mcp", "honua_studio_set_layer_style"),
+    ("set-map-buffer-visibility", "studioPublication", "set-layer-visibility", "map", "mcp", "honua_studio_set_layer_visibility"),
+    ("set-map-view", "studioPublication", "set-view", "map", "mcp", "honua_studio_set_view"),
+    ("add-map-widget", "studioPublication", "add-widget", "map", "mcp", "honua_studio_add_widget"),
+    ("add-map-control", "studioPublication", "add-control", "map", "mcp", "honua_studio_add_control"),
+    ("validate-map-draft", "studioPublication", "validate-draft", "map", "mcp", "honua_studio_validate_draft"),
+    ("save-map-version", "studioPublication", "save-version", "map", "mcp", "honua_studio_save_version"),
+    ("get-map-version", "studioPublication", "get-version", "map", "mcp", "honua_studio_get_version"),
+    ("reopen-map-version", "studioPublication", "reopen-version", "map", "mcp", "honua_studio_reopen_version"),
+    ("create-app-draft", "studioPublication", "create-draft", "app", "mcp", "honua_studio_create_draft"),
+    ("add-app-parcels-layer", "studioPublication", "add-layer", "app", "mcp", "honua_studio_add_layer"),
+    ("add-app-buffer-layer", "studioPublication", "add-layer", "app", "mcp", "honua_studio_add_layer"),
+    ("style-app-buffer-layer", "studioPublication", "set-layer-style", "app", "mcp", "honua_studio_set_layer_style"),
+    ("set-app-view", "studioPublication", "set-view", "app", "mcp", "honua_studio_set_view"),
+    ("add-app-chart", "studioPublication", "add-widget", "app", "mcp", "honua_studio_add_widget"),
+    ("add-app-layer-control", "studioPublication", "add-control", "app", "mcp", "honua_studio_add_control"),
+    ("bind-app-chart-interaction", "studioPublication", "bind-interaction", "app", "mcp", "honua_studio_bind_interaction"),
+    ("validate-app-draft", "studioPublication", "validate-draft", "app", "mcp", "honua_studio_validate_draft"),
+    ("save-app-version", "studioPublication", "save-version", "app", "mcp", "honua_studio_save_version"),
+    ("get-app-version", "studioPublication", "get-version", "app", "mcp", "honua_studio_get_version"),
+    ("reopen-app-version", "studioPublication", "reopen-version", "app", "mcp", "honua_studio_reopen_version"),
+    ("create-dashboard-draft", "studioPublication", "create-draft", "dashboard", "mcp", "honua_studio_create_draft"),
+    ("add-dashboard-buffer-layer", "studioPublication", "add-layer", "dashboard", "mcp", "honua_studio_add_layer"),
+    ("style-dashboard-buffer-layer", "studioPublication", "set-layer-style", "dashboard", "mcp", "honua_studio_set_layer_style"),
+    ("set-dashboard-view", "studioPublication", "set-view", "dashboard", "mcp", "honua_studio_set_view"),
+    ("add-dashboard-chart", "studioPublication", "add-widget", "dashboard", "mcp", "honua_studio_add_widget"),
+    ("add-dashboard-layer-control", "studioPublication", "add-control", "dashboard", "mcp", "honua_studio_add_control"),
+    ("validate-dashboard-draft", "studioPublication", "validate-draft", "dashboard", "mcp", "honua_studio_validate_draft"),
+    ("save-dashboard-version", "studioPublication", "save-version", "dashboard", "mcp", "honua_studio_save_version"),
+    ("get-dashboard-version", "studioPublication", "get-version", "dashboard", "mcp", "honua_studio_get_version"),
+    ("reopen-dashboard-version", "studioPublication", "reopen-version", "dashboard", "mcp", "honua_studio_reopen_version"),
+    ("propose-map-publication", "studioPublication", "propose-publication", "map", "mcp", "honua_studio_propose_publication"),
+    ("save-map-publication-version", "studioPublication", "save-version", "map", "mcp", "honua_studio_save_version"),
+    ("propose-app-publication", "studioPublication", "propose-publication", "app", "mcp", "honua_studio_propose_publication"),
+    ("save-app-publication-version", "studioPublication", "save-version", "app", "mcp", "honua_studio_save_version"),
+    ("propose-dashboard-publication", "studioPublication", "propose-publication", "dashboard", "mcp", "honua_studio_propose_publication"),
+    ("save-dashboard-publication-version", "studioPublication", "save-version", "dashboard", "mcp", "honua_studio_save_version"),
+)
 
 
 class ArcError(ValueError):
@@ -157,9 +189,24 @@ def canonical_sha256(value: Any) -> str:
 
 
 def reject_forbidden_serialization(value: Any, tokens: tuple[str, ...], message: str) -> None:
-    serialized = json.dumps(value, sort_keys=True).lower()
-    if any(token in serialized for token in tokens):
-        raise ArcError(message)
+    lowered = tuple(token.lower() for token in tokens)
+
+    def visit(item: Any, field_name: str | None = None) -> None:
+        if isinstance(item, dict):
+            for name, child in item.items():
+                normalized = str(name).lower()
+                if any(token in normalized for token in lowered):
+                    raise ArcError(message)
+                visit(child, normalized)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child, field_name)
+        elif isinstance(item, str) and field_name != "name":
+            normalized = item.lower()
+            if any(token in normalized for token in lowered):
+                raise ArcError(message)
+
+    visit(value)
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
@@ -358,7 +405,22 @@ def validate_real_model_lanes(
 ) -> None:
     if not isinstance(lanes, dict) or set(lanes) != set(REAL_MODEL_LANES):
         raise ArcError("AWS ECS real-model receipt does not cover the four required natural-language lanes")
-    observed: dict[str, set[tuple[str, str | None, str, str]]] = {}
+    expected_by_lane: dict[str, list[tuple[str, str, str | None, str, str]]] = {
+        lane: [] for lane in REAL_MODEL_LANES
+    }
+    for action_id, lane, role, family, kind, name in REAL_MODEL_ACTION_SPECS:
+        expected_by_lane[lane].append(
+            (
+                action_id,
+                role,
+                family,
+                kind,
+                name.format(
+                    esriMcpJobId=joins.get("esriMcpJobId", ""),
+                    directAnalysisJobId=joins.get("directAnalysisJobId", ""),
+                ),
+            )
+        )
     identity_keys: dict[str, set[str]] = {}
     observed_action_ids: set[str] = set()
     for lane_name in REAL_MODEL_LANES:
@@ -374,9 +436,13 @@ def validate_real_model_lanes(
         calls = lane.get("calls")
         if not isinstance(calls, list) or not calls:
             raise ArcError(f"AWS ECS real-model lane {lane_name} has no content-addressed call evidence")
-        observed[lane_name] = set()
         identity_keys[lane_name] = set()
-        for call in calls:
+        expected_calls = expected_by_lane[lane_name]
+        if len(calls) != len(expected_calls):
+            raise ArcError(
+                f"AWS ECS real-model lane {lane_name} does not have the canonical action multiplicity"
+            )
+        for index, call in enumerate(calls):
             if not isinstance(call, dict) or call.get("status") != "passed":
                 raise ArcError(f"AWS ECS real-model lane {lane_name} contains a non-passing call")
             allowed_call_fields = {
@@ -397,11 +463,25 @@ def validate_real_model_lanes(
                 or not isinstance(action_id, str)
                 or not action_id
                 or family not in {None, "map", "app", "dashboard", "parcels", "zoning"}
-                or kind not in {"mcp", "mcp-resource"}
+                or kind not in {"mcp", "mcp-resource", "gpserver"}
                 or not isinstance(name, str)
                 or not name
             ):
                 raise ArcError(f"AWS ECS real-model lane {lane_name} has malformed call identity")
+            expected_action_id, expected_role, expected_family, expected_kind, expected_name = (
+                expected_calls[index]
+            )
+            if (action_id, role, family, kind, name) != (
+                expected_action_id,
+                expected_role,
+                expected_family,
+                expected_kind,
+                expected_name,
+            ):
+                raise ArcError(
+                    f"AWS ECS real-model lane {lane_name} call {index} is not canonical action "
+                    f"{expected_action_id}"
+                )
             if action_id in observed_action_ids:
                 raise ArcError(f"AWS ECS real-model evidence duplicates SDK action {action_id}")
             observed_action_ids.add(action_id)
@@ -416,14 +496,10 @@ def validate_real_model_lanes(
             if not SHA256.fullmatch(str(call.get("responseSha256", ""))):
                 raise ArcError(f"AWS ECS real-model lane {lane_name} call {role} has no response hash")
             result = call.get("result")
-            if not isinstance(result, dict) or not isinstance(result.get("status"), str) or not result["status"]:
+            if not isinstance(result, dict) or result.get("status") != "reconciled":
                 raise ArcError(f"AWS ECS real-model lane {lane_name} call {role} has no result status")
             if set(result) != {"status", "identities"}:
                 raise ArcError(f"AWS ECS real-model lane {lane_name} call {role} has unexpected result fields")
-            if result["status"].lower() in {
-                "blocked", "failed", "error", "pending", "queued", "approval-required",
-            }:
-                raise ArcError(f"AWS ECS real-model lane {lane_name} call {role} did not reach success")
             identities = result.get("identities")
             if not isinstance(identities, dict) or not identities:
                 raise ArcError(f"AWS ECS real-model lane {lane_name} call {role} has no result identities")
@@ -442,26 +518,6 @@ def validate_real_model_lanes(
                 raise ArcError(
                     f"AWS ECS real-model lane {lane_name} call {role} is not joined to a deterministic identity"
                 )
-            observed[lane_name].add((role, family, kind, name))
-
-    expected = {lane: set(roster) for lane, roster in REAL_MODEL_ROSTER.items()}
-    expected["esriGp"] = {
-        (role, family, kind, name.format(esriMcpJobId=joins.get("esriMcpJobId", "")))
-        for role, family, kind, name in expected["esriGp"]
-    }
-    expected["nativeAnalysis"] = {
-        (role, family, kind, name.format(directAnalysisJobId=joins.get("directAnalysisJobId", "")))
-        for role, family, kind, name in expected["nativeAnalysis"]
-    }
-    expected["studioPublication"] = {
-        (role, family, "mcp", tool)
-        for family in ("map", "app", "dashboard")
-        for role, tool in STUDIO_REAL_MODEL_ROLES
-    }
-    for lane_name, roster in expected.items():
-        missing = sorted(roster - observed[lane_name])
-        if missing:
-            raise ArcError(f"AWS ECS real-model lane {lane_name} lacks required calls {missing}")
 
     required_join_results = {
         "admin": {"connectionId", "parcelsLayerId", "zoningLayerId", "serviceName"},
@@ -735,6 +791,102 @@ def validate_console_receipt(
     return {**receipt, "shareUrl": share_url}
 
 
+def validate_real_model_handoff(
+    path: Path,
+    *,
+    manifest: dict[str, Any],
+    expected_candidate_id: str,
+    base_url: str,
+    checkpoint: dict[str, Any],
+) -> dict[str, Any]:
+    handoff = read_json(path, "immutable Studio model handoff")
+    expected_fields = {
+        "schemaVersion", "status", "target", "candidateId", "releaseId",
+        "endpointSha256", "source", "components", "model", "promptVersion",
+        "evalVersion", "transcriptSha256", "deterministic", "lanes", "joins",
+        "consoleReceiptRequest", "integrity",
+    }
+    if set(handoff) != expected_fields:
+        raise ArcError("immutable Studio model handoff has unexpected or missing fields")
+    if (
+        handoff.get("schemaVersion") != "honua.studio.real-model-ai-arc-handoff/v1"
+        or handoff.get("status") != "paused"
+        or handoff.get("target") != "aws-ecs"
+    ):
+        raise ArcError("immutable Studio model handoff has the wrong schema, status, or target")
+    if (
+        handoff.get("candidateId") != expected_candidate_id
+        or handoff.get("releaseId") != manifest["platformRelease"]
+        or handoff.get("endpointSha256")
+        != hashlib.sha256(base_url.encode("utf-8")).hexdigest()
+    ):
+        raise ArcError("immutable Studio model handoff is not bound to this candidate endpoint")
+    expected_source = {
+        "repository": "honua-io/honua-studio",
+        "sha": manifest["components"]["honua-studio"]["sha"],
+    }
+    if handoff.get("source") != expected_source:
+        raise ArcError("immutable Studio model handoff source differs from the manifest")
+    if handoff.get("components") != exact_component_shas(manifest, ARC_COMPONENTS):
+        raise ArcError("immutable Studio model handoff component identities differ from the manifest")
+    model = handoff.get("model")
+    if (
+        not isinstance(model, dict)
+        or set(model) != {"provider", "modelId"}
+        or model.get("provider") not in {"anthropic", "bedrock", "openai"}
+        or not isinstance(model.get("modelId"), str)
+        or not model["modelId"]
+    ):
+        raise ArcError("immutable Studio model handoff has no exact live model identity")
+    if (
+        handoff.get("promptVersion") != "honua.aws-ecs.ai-arc.prompt/v1"
+        or handoff.get("evalVersion") != "honua.aws-ecs.ai-arc.eval/v1"
+        or not SHA256.fullmatch(str(handoff.get("transcriptSha256", "")))
+    ):
+        raise ArcError("immutable Studio model handoff has the wrong prompt/eval/transcript binding")
+    checkpoint_digest = (checkpoint.get("integrity") or {}).get("digest")
+    if handoff.get("deterministic") != {
+        "target": "aws-ecs",
+        "provisionReceiptSha256": checkpoint.get("provisionReceiptSha256"),
+        "checkpointDigest": checkpoint_digest,
+    }:
+        raise ArcError("immutable Studio model handoff deterministic binding changed")
+    expected_joins = scalar_captures((checkpoint.get("resume") or {}).get("capturedVariables"))
+    expected_joins.update(
+        {"candidateId": expected_candidate_id, "releaseId": manifest["platformRelease"]}
+    )
+    if handoff.get("joins") != expected_joins:
+        raise ArcError("immutable Studio model handoff joins are not checkpoint-owned")
+    if handoff.get("consoleReceiptRequest") != checkpoint.get("consoleReceiptRequest"):
+        raise ArcError("immutable Studio model handoff Console request changed")
+    validate_real_model_lanes(
+        handoff.get("lanes"), expected_joins, checkpoint_action_receipt_digests(checkpoint)
+    )
+    expected_transcript = canonical_sha256(
+        [handoff["lanes"][lane]["transcriptSha256"] for lane in REAL_MODEL_LANES]
+    )
+    if handoff["transcriptSha256"] != expected_transcript:
+        raise ArcError("immutable Studio model handoff transcript does not bind its lane transcripts")
+    integrity = handoff.get("integrity")
+    if (
+        not isinstance(integrity, dict)
+        or set(integrity) != {"algorithm", "digest"}
+        or integrity.get("algorithm") != "sha256"
+        or not SHA256.fullmatch(str(integrity.get("digest", "")))
+    ):
+        raise ArcError("immutable Studio model handoff has no canonical integrity digest")
+    unsigned = dict(handoff)
+    unsigned.pop("integrity", None)
+    if not hmac.compare_digest(str(integrity["digest"]), canonical_sha256(unsigned)):
+        raise ArcError("immutable Studio model handoff canonical integrity digest does not match")
+    reject_forbidden_serialization(
+        handoff,
+        ("password", "authorization", "api_key", "apikey", "secretstring"),
+        "immutable Studio model handoff contains forbidden credential material",
+    )
+    return handoff
+
+
 def validate_console_evidence(
     path: Path,
     *,
@@ -767,7 +919,13 @@ def validate_console_evidence(
         raise ArcError("Console browser evidence was not observed against the provisioned endpoint")
     if evidence.get("components") != exact_component_shas(manifest, ARC_COMPONENTS):
         raise ArcError("Console browser evidence component identities differ from the manifest")
-    real_model_handoff = read_json(real_model_handoff_path, "immutable Studio model handoff")
+    real_model_handoff = validate_real_model_handoff(
+        real_model_handoff_path,
+        manifest=manifest,
+        expected_candidate_id=expected_candidate_id,
+        base_url=base_url,
+        checkpoint=checkpoint,
+    )
     handoff_integrity = real_model_handoff.get("integrity")
     if (
         not isinstance(handoff_integrity, dict)
@@ -879,17 +1037,7 @@ def fetch_admin_json(base_url: str, path: str, admin_secret: str, label: str) ->
 
 def audit_execution_operation_id(row: dict[str, Any]) -> str | None:
     direct = row.get("executionOperationId")
-    if isinstance(direct, str) and direct:
-        return direct
-    details = row.get("details")
-    if not isinstance(details, str) or not details or len(details) > 16 * 1024:
-        return None
-    try:
-        parsed = json.loads(details)
-    except json.JSONDecodeError:
-        return None
-    value = parsed.get("executionOperationId") if isinstance(parsed, dict) else None
-    return value if isinstance(value, str) and value else None
+    return direct if isinstance(direct, str) and direct else None
 
 
 def verify_privileged_console_audit(
@@ -901,6 +1049,18 @@ def verify_privileged_console_audit(
         proposal = console["proposals"][family]
         audit = console["audit"][family]
         proposal_id = proposal["proposalId"]
+        proposal_state = fetch_admin_json(
+            base_url,
+            f"/api/v1/admin/proposals/{quote(proposal_id, safe='')}",
+            admin_secret,
+            f"{family} proposal state",
+        )
+        if (
+            proposal_state.get("proposalId") != proposal_id
+            or proposal_state.get("executionOperationId") != proposal["executionOperationId"]
+            or proposal_state.get("status") not in {"Submitted", "Reconciling", "Succeeded"}
+        ):
+            raise ArcError(f"candidate {family} proposal is not durably applied")
         query = urlencode(
             {
                 "resourceType": "operation_proposal",
@@ -1086,7 +1246,13 @@ def child_environment(
     sdk_source_sha: str,
 ) -> dict[str, str]:
     db_password = resolve_database_password(args)
-    env = dict(os.environ)
+    if not ENVIRONMENT_NAME.fullmatch(str(args.db_password_env)):
+        raise ArcError("database password environment variable name is invalid")
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name.upper() in SDK_CHILD_ENVIRONMENT_KEYS
+    }
     env.update(
         {
             "HONUA_ADMIN_KEY": admin_secret,

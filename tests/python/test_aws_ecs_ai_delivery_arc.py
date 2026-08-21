@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -90,25 +91,21 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         self.temp.cleanup()
 
     @staticmethod
-    def model_action_id(lane: str, role: str, family: str | None) -> str:
-        return f"model-{lane}-{family or 'global'}-{role}"
-
-    @staticmethod
-    def model_rosters() -> dict[str, set[tuple[str, str | None, str, str]]]:
-        rosters = {lane: set(values) for lane, values in arc.REAL_MODEL_ROSTER.items()}
-        rosters["esriGp"] = {
-            (role, family, kind, name.format(esriMcpJobId="esri-mcp-job-1"))
-            for role, family, kind, name in rosters["esriGp"]
-        }
-        rosters["nativeAnalysis"] = {
-            (role, family, kind, name.format(directAnalysisJobId="native-job-1"))
-            for role, family, kind, name in rosters["nativeAnalysis"]
-        }
-        rosters["studioPublication"] = {
-            (role, family, "mcp", tool)
-            for family in ("map", "app", "dashboard")
-            for role, tool in arc.STUDIO_REAL_MODEL_ROLES
-        }
+    def model_rosters() -> dict[str, list[tuple[str, str, str | None, str, str]]]:
+        rosters = {lane: [] for lane in arc.REAL_MODEL_LANES}
+        for action_id, lane, role, family, kind, name in arc.REAL_MODEL_ACTION_SPECS:
+            rosters[lane].append(
+                (
+                    action_id,
+                    role,
+                    family,
+                    kind,
+                    name.format(
+                        esriMcpJobId="esri-mcp-job-1",
+                        directAnalysisJobId="native-job-1",
+                    ),
+                )
+            )
         return rosters
 
     def test_handoff_and_provision_binding_join_exact_candidate(self) -> None:
@@ -212,14 +209,20 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "parcelsLayerId": 1,
             "zoningLayerId": 2,
             "esriMcpJobId": "esri-mcp-job-1",
+            "esriMcpResultPackageId": "esri-result-package-1",
+            "esriMcpArtifactId": "esri-artifact-1",
             "gpServerJobId": "gpserver-job-1",
             "directAnalysisJobId": "native-job-1",
+            "bufferArtifactId": "native-artifact-1",
             "mapItemId": "map-item-1",
             "mapVersionId": "map-version-1",
+            "mapContentHash": "map-content-hash-1",
             "appItemId": "app-item-1",
             "appVersionId": "app-version-1",
+            "appContentHash": "app-content-hash-1",
             "dashboardItemId": "dashboard-item-1",
             "dashboardVersionId": "dashboard-version-1",
+            "dashboardContentHash": "dashboard-content-hash-1",
             "mapReopenedDraftId": "map-draft-1",
             "appReopenedDraftId": "app-draft-1",
             "dashboardReopenedDraftId": "dashboard-draft-1",
@@ -232,15 +235,16 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "mapPublicationContentHash": "map-publication-hash-1",
             "appPublicationContentHash": "app-publication-hash-1",
             "dashboardPublicationContentHash": "dashboard-publication-hash-1",
+            "mapProposalId": "map-proposal-1",
+            "appProposalId": "app-proposal-1",
+            "dashboardProposalId": "dashboard-proposal-1",
         }
         model_actions = []
         for lane, roster in self.model_rosters().items():
-            for role, family, kind, _ in sorted(
-                roster, key=lambda value: tuple("" if item is None else item for item in value)
-            ):
+            for action_id, _role, _family, kind, _name in roster:
                 model_actions.append(
                     {
-                        "id": self.model_action_id(lane, role, family),
+                        "id": action_id,
                         "kind": kind,
                         "status": "passed",
                         "startedAt": "2026-08-20T12:00:00.000Z",
@@ -360,13 +364,100 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "shareUrl": publications["app"]["publicUrl"],
         }
 
+    def model_lanes(self, checkpoint: dict, joins: dict) -> dict:
+        lane_identities = {
+            "admin": {
+                "candidateId": self.candidate_id,
+                "connectionId": joins["connectionId"],
+                "parcelsLayerId": joins["parcelsLayerId"],
+                "zoningLayerId": joins["zoningLayerId"],
+                "serviceName": joins["serviceName"],
+            },
+            "esriGp": {
+                "candidateId": self.candidate_id,
+                "esriMcpJobId": joins["esriMcpJobId"],
+                "esriMcpResultPackageId": joins["esriMcpResultPackageId"],
+                "esriMcpArtifactId": joins["esriMcpArtifactId"],
+            },
+            "nativeAnalysis": {
+                "candidateId": self.candidate_id,
+                "gpServerJobId": joins["gpServerJobId"],
+                "directAnalysisJobId": joins["directAnalysisJobId"],
+                "bufferArtifactId": joins["bufferArtifactId"],
+            },
+            "studioPublication": {
+                "candidateId": self.candidate_id,
+                "mapProposalId": joins["mapProposalId"],
+                "appProposalId": joins["appProposalId"],
+                "dashboardProposalId": joins["dashboardProposalId"],
+                "mapPublicationVersionId": joins["mapPublicationVersionId"],
+                "appPublicationVersionId": joins["appPublicationVersionId"],
+                "dashboardPublicationVersionId": joins["dashboardPublicationVersionId"],
+            },
+        }
+        action_digests = arc.checkpoint_action_receipt_digests(checkpoint)
+        lanes = {}
+        for index, lane_name in enumerate(arc.REAL_MODEL_LANES, start=1):
+            calls = []
+            for action_id, role, family, kind, name in self.model_rosters()[lane_name]:
+                calls.append(
+                    {
+                        "actionId": action_id,
+                        "actionReceiptSha256": action_digests[action_id],
+                        "role": role,
+                        **({"family": family} if family is not None else {}),
+                        "kind": kind,
+                        "name": name,
+                        "status": "passed",
+                        "responseSha256": f"{index:x}" * 64,
+                        "result": {
+                            "status": "reconciled",
+                            "identities": lane_identities[lane_name],
+                        },
+                    }
+                )
+            lanes[lane_name] = {
+                "promptSha256": f"{index + 4:x}" * 64,
+                "transcriptSha256": f"{index + 8:x}" * 64,
+                "calls": calls,
+            }
+        return lanes
+
     def real_model_handoff(self, checkpoint: dict) -> Path:
+        joins = arc.scalar_captures(checkpoint["resume"]["capturedVariables"])
+        joins.update(
+            {
+                "candidateId": self.candidate_id,
+                "releaseId": self.manifest["platformRelease"],
+            }
+        )
+        lanes = self.model_lanes(checkpoint, joins)
         handoff = {
             "schemaVersion": "honua.studio.real-model-ai-arc-handoff/v1",
             "status": "paused",
             "target": "aws-ecs",
             "candidateId": self.candidate_id,
-            "checkpointDigest": checkpoint["integrity"]["digest"],
+            "releaseId": self.manifest["platformRelease"],
+            "endpointSha256": hashlib.sha256(self.endpoint.encode()).hexdigest(),
+            "source": {
+                "repository": "honua-io/honua-studio",
+                "sha": self.shas["honua-studio"],
+            },
+            "components": {name: self.shas[name] for name in arc.ARC_COMPONENTS},
+            "model": {"provider": "anthropic", "modelId": "claude-release-eval"},
+            "promptVersion": "honua.aws-ecs.ai-arc.prompt/v1",
+            "evalVersion": "honua.aws-ecs.ai-arc.eval/v1",
+            "transcriptSha256": arc.canonical_sha256(
+                [lanes[lane]["transcriptSha256"] for lane in arc.REAL_MODEL_LANES]
+            ),
+            "deterministic": {
+                "target": "aws-ecs",
+                "provisionReceiptSha256": checkpoint["provisionReceiptSha256"],
+                "checkpointDigest": checkpoint["integrity"]["digest"],
+            },
+            "lanes": lanes,
+            "joins": joins,
+            "consoleReceiptRequest": checkpoint["consoleReceiptRequest"],
         }
         handoff["integrity"] = {
             "algorithm": "sha256",
@@ -453,60 +544,7 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                     f"{family}AuditCorrelationId": audit["correlationId"],
                 }
             )
-        lane_identities = {
-            "admin": {
-                "candidateId": self.candidate_id,
-                "connectionId": "connection-1",
-                "parcelsLayerId": 1,
-                "zoningLayerId": 2,
-                "serviceName": "zero-to-map",
-            },
-            "esriGp": {"candidateId": self.candidate_id, "esriMcpJobId": "esri-mcp-job-1"},
-            "nativeAnalysis": {
-                "candidateId": self.candidate_id,
-                "directAnalysisJobId": "native-job-1",
-            },
-            "studioPublication": {
-                "candidateId": self.candidate_id,
-                "mapProposalId": "map-proposal-1",
-                "appProposalId": "app-proposal-1",
-                "dashboardProposalId": "dashboard-proposal-1",
-                "mapPublicationVersionId": "map-publication-version-1",
-                "appPublicationVersionId": "app-publication-version-1",
-                "dashboardPublicationVersionId": "dashboard-publication-version-1",
-            },
-        }
-        rosters = self.model_rosters()
-        action_digests = arc.checkpoint_action_receipt_digests(checkpoint)
-        lanes = {}
-        for index, lane_name in enumerate(arc.REAL_MODEL_LANES, start=1):
-            calls = []
-            for role, family, kind, name in sorted(
-                rosters[lane_name], key=lambda value: tuple("" if item is None else item for item in value)
-            ):
-                calls.append(
-                    {
-                        "actionId": self.model_action_id(lane_name, role, family),
-                        "actionReceiptSha256": action_digests[
-                            self.model_action_id(lane_name, role, family)
-                        ],
-                        "role": role,
-                        **({"family": family} if family is not None else {}),
-                        "kind": kind,
-                        "name": name,
-                        "status": "passed",
-                        "responseSha256": f"{index:x}" * 64,
-                        "result": {
-                            "status": "completed",
-                            "identities": lane_identities[lane_name],
-                        },
-                    }
-                )
-            lanes[lane_name] = {
-                "promptSha256": f"{index + 4:x}" * 64,
-                "transcriptSha256": f"{index + 8:x}" * 64,
-                "calls": calls,
-            }
+        lanes = self.model_lanes(checkpoint, joins)
         receipt = {
             "schemaVersion": arc.REAL_MODEL_RECEIPT_SCHEMA,
             "id": "aws-ecs-real-model-ai-arc",
@@ -523,7 +561,9 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             "model": {"provider": "anthropic", "modelId": "claude-release-eval"},
             "promptVersion": "honua.aws-ecs.ai-arc.prompt/v1",
             "evalVersion": "honua.aws-ecs.ai-arc.eval/v1",
-            "transcriptSha256": "a" * 64,
+            "transcriptSha256": arc.canonical_sha256(
+                [lanes[lane]["transcriptSha256"] for lane in arc.REAL_MODEL_LANES]
+            ),
             "deterministic": {
                 "target": "aws-ecs",
                 "provisionReceiptSha256": checkpoint["provisionReceiptSha256"],
@@ -585,16 +625,27 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             db_user="honua",
             db_password_env="TEST_DB_PASSWORD",
         )
-        env = arc.child_environment(
-            args,
-            admin_secret="resolved-admin-value",
-            base_url=self.endpoint,
-            mcp_url=self.endpoint + "/mcp",
-            sdk_source_sha=self.shas["honua-sdk-js"],
-        )
+        hostile = {
+            "AWS_ACCESS_KEY_ID": "sentinel-aws-access",
+            "AWS_SECRET_ACCESS_KEY": "sentinel-aws-secret",
+            "AWS_SESSION_TOKEN": "sentinel-aws-session",
+            "HONUA_AI_ARC_CONSOLE_TOKEN": "sentinel-console",
+            "OPENAI_API_KEY": "sentinel-provider",
+            "UNRELATED_PRIVATE_VALUE": "sentinel-private",
+        }
+        with mock.patch.dict(arc.os.environ, hostile, clear=False):
+            env = arc.child_environment(
+                args,
+                admin_secret="resolved-admin-value",
+                base_url=self.endpoint,
+                mcp_url=self.endpoint + "/mcp",
+                sdk_source_sha=self.shas["honua-sdk-js"],
+            )
         resolve.assert_called_once_with(db_ref, "database connection secret")
         self.assertEqual("resolved-db-value", env["TEST_DB_PASSWORD"])
         self.assertEqual(self.shas["honua-sdk-js"], env["HONUA_SOURCE_REVISION"])
+        for name in hostile:
+            self.assertNotIn(name, env)
 
     def test_checkpoint_integrity_and_secret_redaction_fail_closed(self) -> None:
         checkpoint = self.checkpoint()
@@ -676,7 +727,7 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         receipt, evidence_path = self.real_model_receipt(
             checkpoint, console, console_path, console_evidence_path
         )
-        receipt["model"]["modelId"] = "secretstring-must-not-be-serialized"
+        receipt["model"]["apiKey"] = "must-not-be-serialized"
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
         evidence["model"] = receipt["model"]
         with self.assertRaisesRegex(arc.ArcError, "forbidden secret"):
@@ -703,7 +754,7 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             if call["role"] != "service-access"
         ]
         receipt_path = write_json(self.root / "real-model.json", receipt)
-        with self.assertRaisesRegex(arc.ArcError, "lacks required calls"):
+        with self.assertRaisesRegex(arc.ArcError, "canonical action multiplicity"):
             arc.validate_real_model_receipt(
                 receipt_path,
                 evidence_path=evidence_path,
@@ -715,6 +766,79 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                 console_evidence_path=console_evidence_path,
                 console=console,
             )
+
+    def test_real_model_roster_rejects_omission_extra_reorder_and_action_swap(self) -> None:
+        checkpoint = self.checkpoint()
+        joins = arc.scalar_captures(checkpoint["resume"]["capturedVariables"])
+        joins.update(
+            {
+                "candidateId": self.candidate_id,
+                "releaseId": self.manifest["platformRelease"],
+            }
+        )
+        baseline = self.model_lanes(checkpoint, joins)
+        action_digests = arc.checkpoint_action_receipt_digests(checkpoint)
+
+        omission = copy.deepcopy(baseline)
+        omission["admin"]["calls"] = [
+            call
+            for call in omission["admin"]["calls"]
+            if call["actionId"] != "create-scoped-key"
+        ]
+        extra = copy.deepcopy(baseline)
+        extra["admin"]["calls"].append(copy.deepcopy(extra["admin"]["calls"][0]))
+        reordered = copy.deepcopy(baseline)
+        reordered["admin"]["calls"][0], reordered["admin"]["calls"][1] = (
+            reordered["admin"]["calls"][1],
+            reordered["admin"]["calls"][0],
+        )
+        swapped = copy.deepcopy(baseline)
+        first, second = swapped["admin"]["calls"][:2]
+        first["actionId"], second["actionId"] = second["actionId"], first["actionId"]
+        first["actionReceiptSha256"], second["actionReceiptSha256"] = (
+            second["actionReceiptSha256"],
+            first["actionReceiptSha256"],
+        )
+
+        for name, lanes in {
+            "omission": omission,
+            "extra": extra,
+            "reordered": reordered,
+            "swapped": swapped,
+        }.items():
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(arc.ArcError, "canonical action"):
+                    arc.validate_real_model_lanes(lanes, joins, action_digests)
+
+    def test_real_model_handoff_rejects_resealed_candidate_and_join_mutations(self) -> None:
+        checkpoint = self.checkpoint()
+        for name, mutate in {
+            "component": lambda handoff: handoff["components"].__setitem__(
+                "honua-server", "f" * 40
+            ),
+            "join": lambda handoff: handoff["joins"].__setitem__(
+                "connectionId", "lookalike-connection"
+            ),
+        }.items():
+            with self.subTest(name=name):
+                handoff_path = self.real_model_handoff(checkpoint)
+                handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+                mutate(handoff)
+                unsigned = dict(handoff)
+                unsigned.pop("integrity")
+                handoff["integrity"] = {
+                    "algorithm": "sha256",
+                    "digest": arc.canonical_sha256(unsigned),
+                }
+                write_json(handoff_path, handoff)
+                with self.assertRaises(arc.ArcError):
+                    arc.validate_real_model_handoff(
+                        handoff_path,
+                        manifest=self.manifest,
+                        expected_candidate_id=self.candidate_id,
+                        base_url=self.endpoint,
+                        checkpoint=checkpoint,
+                    )
 
     def test_real_model_receipt_rejects_unbound_sdk_action_receipt(self) -> None:
         checkpoint = self.checkpoint()
@@ -756,6 +880,12 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             )
             proposal = observed_console["proposals"][family]
             audit = observed_console["audit"][family]
+            if "/admin/proposals/" in path:
+                return {
+                    "proposalId": proposal["proposalId"],
+                    "status": "Submitted",
+                    "executionOperationId": proposal["executionOperationId"],
+                }
             return {
                 "items": [
                     {

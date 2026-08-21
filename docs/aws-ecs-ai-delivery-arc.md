@@ -117,7 +117,14 @@ alias paths must be distinct and byte-identical. DevOps independently rereads
 the privileged proposal audit rows and audit-chain verification, validates the
 Console sidecar against the exact Studio handoff/checkpoint/runtime/component
 identities, and seals all exact file hashes into the pre-teardown evidence. Every
-action must be `passed` with live evidence. Contract, skipped, queued,
+model call must match the SDK-owned ordered 58-action roster exactly, including
+action id, lane, role, family, kind, emitted name, multiplicity, and canonical
+checkpoint action-receipt hash. The Studio handoff's canonical integrity is
+recomputed and its complete candidate/component/checkpoint/join contract is
+validated before Console evidence is accepted. The SDK child receives only a
+small process-runtime allowlist plus its explicit Honua/database inputs; ambient
+AWS, provider, Console, and unrelated job credentials are not inherited.
+Every action must be `passed` with live evidence. Contract, skipped, queued,
 approval-required, pre-approval URL, missing map/app/dashboard publication
 evidence, model transcript without tool use, or a model receipt not joined to
 the deterministic IDs is a hard refusal. The real-model receipt validates
