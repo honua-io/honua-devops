@@ -21,12 +21,7 @@ SPEC.loader.exec_module(arc)
 
 
 def write_json(path: Path, value: dict) -> Path:
-    # All callers write generated contract fixtures beneath TemporaryDirectory;
-    # no real credential value enters this test-only sink.
-    path.write_text(  # lgtm[py/clear-text-storage-sensitive-data]
-        json.dumps(value, indent=2) + "\n",  # lgtm[py/clear-text-storage-sensitive-data]
-        encoding="utf-8",
-    )
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -55,7 +50,7 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         self.manifest_path.write_text(arc.yaml.safe_dump(self.manifest, sort_keys=False), encoding="utf-8")
         self.candidate_id = arc.candidate_id(self.manifest_path)
         self.endpoint = "https://ecs-test.honua.example"
-        self.secret_ref = "arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-admin-AbCd"
+        self.admin_reference_arn = "arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-admin-AbCd"
         self.handoff_path = write_json(
             self.root / "handoff.json",
             {
@@ -64,7 +59,7 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                     "HONUA_BASE_URL": self.endpoint,
                     "HONUA_MCP_REMOTE_URL": self.endpoint + "/mcp",
                 },
-                "secretRefs": {"HONUA_ADMIN_KEY": self.secret_ref},
+                "secretRefs": {"HONUA_ADMIN_KEY": self.admin_reference_arn},
             },
         )
         self.provision_path = write_json(
@@ -76,7 +71,7 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
                 "candidateId": self.candidate_id,
                 "releaseId": self.manifest["platformRelease"],
                 "endpoint": self.endpoint,
-                "adminKeySecretRef": self.secret_ref,
+                "adminKeySecretRef": self.admin_reference_arn,
                 "serverImage": "ghcr.io/honua-io/honua-server:candidate-test@sha256:" + "a" * 64,
                 "components": {
                     name: self.shas[name] for name in ("honua-server", "honua-devops", "honua-iac")
@@ -405,10 +400,10 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
     @mock.patch.object(arc.subprocess, "run")
     def test_admin_secret_resolver_uses_argv_and_never_shell(self, run: mock.Mock) -> None:
         run.return_value = subprocess.CompletedProcess([], 0, stdout="resolved-admin-key\n", stderr="")
-        self.assertEqual("resolved-admin-key", arc.resolve_aws_secret(self.secret_ref))
+        self.assertEqual("resolved-admin-key", arc.resolve_aws_secret(self.admin_reference_arn))
         command = run.call_args.args[0]
         self.assertEqual("aws", command[0])
-        self.assertIn(self.secret_ref, command)
+        self.assertIn(self.admin_reference_arn, command)
         self.assertFalse(run.call_args.kwargs.get("shell", False))
 
     @mock.patch.object(arc, "resolve_aws_secret")
