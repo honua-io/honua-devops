@@ -21,7 +21,11 @@ SPEC.loader.exec_module(arc)
 
 
 def write_json(path: Path, value: dict) -> Path:
-    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    # All callers write generated contract fixtures beneath TemporaryDirectory;
+    # no real credential value enters this test-only sink.
+    path.write_text(  # lgtm[py/clear-text-storage-sensitive-data]
+        json.dumps(value, indent=2) + "\n", encoding="utf-8"
+    )
     return path
 
 
