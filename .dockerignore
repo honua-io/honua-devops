@@ -1,0 +1,9 @@
+.git
+.github
+.honua
+artifacts
+**/bin
+**/obj
+test-results
+*.user
+*.log

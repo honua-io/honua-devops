@@ -72,7 +72,7 @@ public sealed class PreflightRunnerTests
             ExecutionTier.Plan,
             GitOpsTool: "honua-gitops",
             AllowedEnvironments: ["dev", "staging", "prod"],
-            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRepository: "https://github.com/honua-io/honua-iac",
             TerraformRef: "main",
             TerraformLocalPath: terraformPath,
             TerraformDeploymentTargets: targets);

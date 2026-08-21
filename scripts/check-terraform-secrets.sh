@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO="${1:-honua-io/honua-terraform}"
+REPO="${1:-honua-io/honua-iac}"
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "[ERROR] gh CLI is required" >&2

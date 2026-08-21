@@ -4,19 +4,19 @@ Runbooks for apply -> smoke -> destroy validation loops.
 
 ## Preconditions
 
-1. `gh` is authenticated with access to `honua-io/honua-terraform`.
+1. `gh` is authenticated with access to `honua-io/honua-iac`.
 2. Terraform secrets are set in GitHub:
 
 ```bash
-/home/makani/honua-terraform/scripts/bootstrap-gh-secrets.sh \
-  --env-file /home/makani/honua-terraform/scripts/tf-secrets.local.sh
+/home/makani/honua-iac/scripts/bootstrap-gh-secrets.sh \
+  --env-file /home/makani/honua-iac/scripts/tf-secrets.local.sh
 ```
 
 3. Terraform validation repo variables are set in GitHub:
 
 ```bash
-source <(/home/makani/honua-terraform/scripts/tf-pass-secrets.sh export --scope publish)
-/home/makani/honua-terraform/scripts/bootstrap-gh-vars.sh
+source <(/home/makani/honua-iac/scripts/tf-pass-secrets.sh export --scope publish)
+/home/makani/honua-iac/scripts/bootstrap-gh-vars.sh
 ```
 
 This seeds the currently usable image refs and stack-selection vars. Today that means:
@@ -61,12 +61,12 @@ Notes:
 - `ephemeral` + `--no-destroy false` is the default launch-safe posture (auto-cleanup).
 - `persistent` mode requires manual approval and explicit `APPROVED` confirmation.
 
-## Option B: Local script execution from honua-terraform
+## Option B: Local script execution from honua-iac
 
 ### AWS apply/smoke/destroy
 
 ```bash
-cd /home/makani/honua-terraform
+cd /home/makani/honua-iac
 source <(scripts/tf-pass-secrets.sh export)
 scripts/run-aws-terraform-integration.sh \
   --stack both \
@@ -78,7 +78,7 @@ scripts/run-aws-terraform-integration.sh \
 ### Azure apply/smoke/destroy
 
 ```bash
-cd /home/makani/honua-terraform
+cd /home/makani/honua-iac
 source <(scripts/tf-pass-secrets.sh export)
 scripts/run-azure-terraform-integration.sh \
   --stack aca \
@@ -89,7 +89,7 @@ scripts/run-azure-terraform-integration.sh \
 ### Kubernetes apply/smoke/destroy
 
 ```bash
-cd /home/makani/honua-terraform
+cd /home/makani/honua-iac
 source <(scripts/tf-pass-secrets.sh export)
 HONUA_K8S_IMAGE=ghcr.io/honua-io/honua-server:latest-aot \
 scripts/run-k8s-terraform-integration.sh
@@ -116,6 +116,11 @@ Local smoke verification for the contract itself:
 ```bash
 ./scripts/smoke-contract-smoke.sh
 ```
+
+The 2026.1 release candidate requires more than this smoke. For the AWS ECS
+cell, run the candidate-bound [AI delivery-arc producer](aws-ecs-ai-delivery-arc.md)
+after readiness and before the existing teardown path, then finalize its two
+release receipts only after cleanup verification succeeds.
 
 ## Admin UI Verification
 

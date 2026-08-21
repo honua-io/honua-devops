@@ -31,7 +31,7 @@ cleanup() {
 trap cleanup EXIT
 
 CUSTOMER_ROOT="$WORKDIR/customer-repo"
-TERRAFORM_ROOT="$WORKDIR/honua-terraform"
+TERRAFORM_ROOT="$WORKDIR/honua-iac"
 mkdir -p "$TERRAFORM_ROOT"
 PORT_FILE="$WORKDIR/mock-server.port"
 

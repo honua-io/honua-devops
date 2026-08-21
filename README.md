@@ -48,8 +48,11 @@ open-core runtime promise.
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 - Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`) projecting stable, evidence-linked proposal/operation/brief and read-only release-explanation contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
-- MCP stdio server mode (`--mcp`) exposing the full 35-tool operator surface 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
+- MCP stdio server mode (`--mcp`) exposing the full 37-tool operator surface 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
 - Signed support bug-report intake (`--bugreport-listen`) with durable cross-restart `eventId` replay protection — see [docs/bug-report-idempotency.md](docs/bug-report-idempotency.md)
+
+The MCP host is also packaged as self-contained GitHub Release binaries and a
+multi-stage container whose final image does not require the .NET SDK.
 
 ## Provider Configuration
 
@@ -99,10 +102,10 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE` (`true` default; when true, accepted webhooks trigger read-only ticket triage output)
 - `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
 - `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`)
-- `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-terraform`)
-- `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `main`)
+- `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-iac`)
+- `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `trunk`)
 - `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
-- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-terraform`)
+- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-iac`)
 - `HONUA_DEVOPS_DEPLOY_TARGET_ID` (optional Honua deploy-control target; enables real `/api/v1/admin/deploy/*` preflight, plan, and operation calls)
 
 ## Backend Integration

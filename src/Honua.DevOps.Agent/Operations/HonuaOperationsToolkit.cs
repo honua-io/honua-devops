@@ -25,7 +25,8 @@ internal sealed partial class HonuaOperationsToolkit(
     BackendGateway gateway,
     OperatorPolicyModel? policy = null,
     SupportGateway? supportGateway = null,
-    string? defaultEdition = null)
+    string? defaultEdition = null,
+    IProvisioningProcessRunner? provisioningProcessRunner = null)
 {
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 

@@ -1,0 +1,48 @@
+name: AWS ECS AI delivery arc contracts
+
+on:
+  pull_request:
+  push:
+    branches: [trunk]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install manifest parser
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
+
+      - name: Validate producer contracts
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/aws_ecs_ai_delivery_arc.py
+          python -m json.tool contracts/aws-ecs-provision-binding.schema.json >/dev/null
+          python -m json.tool contracts/aws-ecs-real-model-ai-arc-evidence.schema.json >/dev/null
+          python -m json.tool contracts/aws-ecs-real-model-ai-arc.schema.json >/dev/null
+          python -m json.tool contracts/aws-ecs-teardown-evidence.schema.json >/dev/null
+          python -m unittest discover -s tests/python -p 'test_aws_ecs_ai_delivery_arc.py' -v
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          action = yaml.safe_load(Path('.github/actions/aws-ecs-ai-delivery-arc/action.yml').read_text())
+          assert action['runs']['using'] == 'composite'
+          assert set(action['inputs']['phase']) == {'description', 'required'}
+          assert 'console-receipt-path' in action['inputs']
+          assert 'sdk-console-receipt-path' in action['inputs']
+          assert 'console-evidence-path' in action['inputs']
+          assert 'real-model-handoff-path' in action['inputs']
+          producer = Path('scripts/aws_ecs_ai_delivery_arc.py').read_text()
+          assert '"--sdk-console-receipt"' in producer
+          assert '"--console-evidence"' in producer
+          assert '"--real-model-handoff"' in producer
+          assert '"sdkConsoleReceipt": sha256_file(args.sdk_console_receipt)' in producer
+          assert '"consoleEvidence": sha256_file(args.console_evidence)' in producer
+          PY

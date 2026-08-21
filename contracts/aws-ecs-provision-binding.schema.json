@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/schemas/aws-ecs-provision-binding.v1.json",
+  "title": "Honua pre-teardown AWS ECS provision binding",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "target",
+    "status",
+    "candidateId",
+    "releaseId",
+    "endpoint",
+    "adminKeySecretRef",
+    "serverImage",
+    "components",
+    "checks",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "honua.aws-ecs.provision-binding/v1" },
+    "target": { "const": "aws-ecs" },
+    "status": { "const": "ready" },
+    "candidateId": { "type": "string", "pattern": "^manifest-sha256:[0-9a-f]{64}$" },
+    "releaseId": { "type": "string", "minLength": 1 },
+    "endpoint": { "type": "string", "pattern": "^https://" },
+    "adminKeySecretRef": {
+      "type": "string",
+      "pattern": "^arn:aws(?:-us-gov|-cn)?:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$"
+    },
+    "serverImage": {
+      "type": "string",
+      "pattern": "^ghcr\\.io/honua-io/honua-server:[^@]+@sha256:[0-9a-f]{64}$"
+    },
+    "components": {
+      "type": "object",
+      "required": ["honua-server", "honua-devops", "honua-iac"],
+      "properties": {
+        "honua-server": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "honua-devops": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "honua-iac": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "object",
+      "required": ["terraform-plan", "terraform-apply", "readiness", "admin-mcp-handoff"],
+      "properties": {
+        "terraform-plan": { "const": "passed" },
+        "terraform-apply": { "const": "passed" },
+        "readiness": { "const": "passed" },
+        "admin-mcp-handoff": { "const": "passed" }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["url", "sha256"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https://" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

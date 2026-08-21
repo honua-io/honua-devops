@@ -9,7 +9,7 @@ PROVIDER="codex"
 OUTPUT_PATH="$REPO_ROOT/.env.local"
 RUN_PREFLIGHT="false"
 FORCE="false"
-TERRAFORM_LOCAL_PATH="$REPO_ROOT/../honua-terraform"
+TERRAFORM_LOCAL_PATH="$REPO_ROOT/../honua-iac"
 HONUA_API_BASE_URL="http://localhost:8080"
 OTEL_BASE_URL="http://localhost:4318"
 HONUA_API_KEY=""
@@ -29,7 +29,7 @@ Usage:
 Options:
   --provider <codex|claude>           Default: codex
   --output <path>                     Default: .env.local in the repo root
-  --terraform-local-path <path>       Default: ../honua-terraform
+  --terraform-local-path <path>       Default: ../honua-iac
   --honua-api-base-url <url>          Default: http://localhost:8080
   --otel-base-url <url>               Default: http://localhost:4318
   --honua-api-key <value>             Optional

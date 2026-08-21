@@ -37,7 +37,7 @@ Baseline assumptions:
 
 - runtime target: `eks`
 - GitOps tool: `honua-gitops`
-- Terraform source: `https://github.com/honua-io/honua-terraform@main`
+- Terraform source: `https://github.com/honua-io/honua-iac@trunk`
 - default approval posture: plan-first, approval required
 - break-glass policy exists separately and is not the default reference
 
