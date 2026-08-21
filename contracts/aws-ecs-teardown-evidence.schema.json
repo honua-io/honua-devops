@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/schemas/aws-ecs-teardown-evidence.v1.json",
+  "title": "Honua candidate-bound AWS ECS teardown evidence",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "target",
+    "status",
+    "candidateId",
+    "releaseId",
+    "components",
+    "checks",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "honua.aws-ecs.teardown-evidence/v1" },
+    "target": { "const": "aws-ecs" },
+    "status": { "const": "passed" },
+    "candidateId": { "type": "string", "pattern": "^manifest-sha256:[0-9a-f]{64}$" },
+    "releaseId": { "type": "string", "minLength": 1 },
+    "components": {
+      "type": "object",
+      "required": ["honua-devops", "honua-iac"],
+      "properties": {
+        "honua-devops": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "honua-iac": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "object",
+      "required": ["terraform-destroy", "cleanup-verified"],
+      "properties": {
+        "terraform-destroy": { "const": "passed" },
+        "cleanup-verified": { "const": "passed" }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["url", "sha256"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https://" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

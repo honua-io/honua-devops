@@ -1,0 +1,183 @@
+name: AWS ECS AI delivery arc
+description: Run and seal the manifest-pinned zero-to-map journey inside an existing ECS lifetime
+
+inputs:
+  phase:
+    description: prepare, resume, or finalize
+    required: true
+  producer-sha:
+    description: Exact honua-devops SHA from the platform manifest; must equal github.action_ref
+    required: true
+  manifest-path:
+    description: Path to the exact platform-manifest.yaml bytes
+    required: true
+  sdk-root:
+    description: Manifest-pinned honua-sdk-js checkout
+    required: false
+  handoff-path:
+    description: Secretless install_handoff JSON
+    required: false
+  provision-binding-path:
+    description: Pre-teardown ECS provision binding JSON
+    required: false
+  real-model-receipt-path:
+    description: Same-cell candidate-bound real-model AI arc receipt
+    required: false
+  real-model-evidence-path:
+    description: Secret-free content-addressed model call/result evidence
+    required: false
+  console-receipt-path:
+    description: Console approval receipt written between prepare and resume
+    required: false
+  fixture-base-url:
+    description: Public HTTPS origin serving the checked-in journey fixtures
+    required: false
+  db-host:
+    description: Database host reachable from the provisioned Honua server
+    required: false
+  db-port:
+    description: Database port
+    default: "5432"
+  db-name:
+    description: Database name
+    default: honua
+  db-user:
+    description: Database user
+    default: honua
+  db-password-env:
+    description: Existing runner environment variable containing the DB password
+    default: HONUA_ZERO_TO_MAP_DB_PASSWORD
+  checkpoint-path:
+    description: SDK pause/resume checkpoint path
+    required: false
+  sdk-receipt-path:
+    description: SDK journey receipt path
+    required: false
+  pre-teardown-evidence-path:
+    description: Passed journey evidence awaiting teardown
+    required: false
+  teardown-evidence-path:
+    description: Candidate-bound cleanup record
+    required: false
+  evidence-url:
+    description: HTTPS workflow or artifact URL for the uploaded final evidence
+    required: false
+  final-evidence-path:
+    description: Final evidence output path
+    required: false
+  provision-receipt-path:
+    description: Final aws-ecs-provision receipt output path
+    required: false
+  arc-receipt-path:
+    description: Final aws-ecs-ai-delivery-arc receipt output path
+    required: false
+
+outputs:
+  checkpoint-path:
+    value: ${{ inputs.checkpoint-path }}
+  real-model-receipt-path:
+    value: ${{ inputs.real-model-receipt-path }}
+  real-model-evidence-path:
+    value: ${{ inputs.real-model-evidence-path }}
+  sdk-receipt-path:
+    value: ${{ inputs.sdk-receipt-path }}
+  pre-teardown-evidence-path:
+    value: ${{ inputs.pre-teardown-evidence-path }}
+  final-evidence-path:
+    value: ${{ inputs.final-evidence-path }}
+  provision-receipt-path:
+    value: ${{ inputs.provision-receipt-path }}
+  arc-receipt-path:
+    value: ${{ inputs.arc-receipt-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Verify immutable producer identity
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+        PRODUCER_SHA: ${{ inputs.producer-sha }}
+      run: |
+        set -euo pipefail
+        [[ "$PRODUCER_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+          echo "::error::producer-sha is not an exact commit"; exit 1;
+        }
+        [[ "$ACTION_REF" = "$PRODUCER_SHA" ]] || {
+          echo "::error::the loaded honua-devops action ref is not the manifest-pinned producer SHA"; exit 1;
+        }
+
+    - name: Install pinned manifest parser
+      shell: bash
+      run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
+
+    - name: Run candidate-bound producer phase
+      shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+        PRODUCER_SHA: ${{ inputs.producer-sha }}
+        MANIFEST_PATH: ${{ inputs.manifest-path }}
+        SDK_ROOT: ${{ inputs.sdk-root }}
+        HANDOFF_PATH: ${{ inputs.handoff-path }}
+        PROVISION_BINDING_PATH: ${{ inputs.provision-binding-path }}
+        REAL_MODEL_RECEIPT_PATH: ${{ inputs.real-model-receipt-path }}
+        REAL_MODEL_EVIDENCE_PATH: ${{ inputs.real-model-evidence-path }}
+        CONSOLE_RECEIPT_PATH: ${{ inputs.console-receipt-path }}
+        FIXTURE_BASE_URL: ${{ inputs.fixture-base-url }}
+        DB_HOST: ${{ inputs.db-host }}
+        DB_PORT: ${{ inputs.db-port }}
+        DB_NAME: ${{ inputs.db-name }}
+        DB_USER: ${{ inputs.db-user }}
+        DB_PASSWORD_ENV: ${{ inputs.db-password-env }}
+        CHECKPOINT_PATH: ${{ inputs.checkpoint-path }}
+        SDK_RECEIPT_PATH: ${{ inputs.sdk-receipt-path }}
+        PRE_TEARDOWN_EVIDENCE_PATH: ${{ inputs.pre-teardown-evidence-path }}
+        TEARDOWN_EVIDENCE_PATH: ${{ inputs.teardown-evidence-path }}
+        EVIDENCE_URL: ${{ inputs.evidence-url }}
+        FINAL_EVIDENCE_PATH: ${{ inputs.final-evidence-path }}
+        PROVISION_RECEIPT_PATH: ${{ inputs.provision-receipt-path }}
+        ARC_RECEIPT_PATH: ${{ inputs.arc-receipt-path }}
+      run: |
+        set -euo pipefail
+        producer="$GITHUB_ACTION_PATH/../../../scripts/aws_ecs_ai_delivery_arc.py"
+        case "$PHASE" in
+          prepare|resume)
+            args=(
+              "$PHASE"
+              --manifest "$MANIFEST_PATH"
+              --sdk-root "$SDK_ROOT"
+              --handoff "$HANDOFF_PATH"
+              --provision-binding "$PROVISION_BINDING_PATH"
+              --fixture-base-url "$FIXTURE_BASE_URL"
+              --db-host "$DB_HOST"
+              --db-port "$DB_PORT"
+              --db-name "$DB_NAME"
+              --db-user "$DB_USER"
+              --db-password-env "$DB_PASSWORD_ENV"
+              --checkpoint "$CHECKPOINT_PATH"
+              --sdk-receipt "$SDK_RECEIPT_PATH"
+              --source-sha "$PRODUCER_SHA"
+            )
+            if [[ "$PHASE" = resume ]]; then
+              args+=(
+                --console-receipt "$CONSOLE_RECEIPT_PATH"
+                --real-model-receipt "$REAL_MODEL_RECEIPT_PATH"
+                --real-model-evidence "$REAL_MODEL_EVIDENCE_PATH"
+                --pre-teardown-evidence "$PRE_TEARDOWN_EVIDENCE_PATH"
+              )
+            fi
+            python "$producer" "${args[@]}"
+            ;;
+          finalize)
+            python "$producer" finalize \
+              --manifest "$MANIFEST_PATH" \
+              --pre-teardown-evidence "$PRE_TEARDOWN_EVIDENCE_PATH" \
+              --teardown-evidence "$TEARDOWN_EVIDENCE_PATH" \
+              --evidence-url "$EVIDENCE_URL" \
+              --final-evidence "$FINAL_EVIDENCE_PATH" \
+              --provision-receipt "$PROVISION_RECEIPT_PATH" \
+              --arc-receipt "$ARC_RECEIPT_PATH"
+            ;;
+          *)
+            echo "::error::phase must be prepare, resume, or finalize"; exit 1 ;;
+        esac
