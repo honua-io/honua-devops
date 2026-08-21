@@ -33,17 +33,20 @@ at the Console gate:
     provision-binding-path: out/aws-ecs-provision-binding.json
     fixture-base-url: https://<ephemeral-fixture-origin>
     db-host: <terraform-db-endpoint>
-    db-password-env: HONUA_ZERO_TO_MAP_DB_PASSWORD
+    db-connection-secret-ref: <terraform-install-contract-db-secret-arn>
     checkpoint-path: out/zero-to-map-checkpoint.json
     sdk-receipt-path: out/zero-to-map-paused.json
 ```
 
 The action resolves only the handoff's scoped Secrets Manager admin ARN and
 places the result in the SDK child environment as `HONUA_ADMIN_KEY` and
-`HONUA_API_KEY`. The existing database password environment variable is passed
-to the SDK with `--var-env`; no secret is placed on argv. The SDK checkpoint
-contains captured identifiers and a resolved Console receipt request, never the
-database password or authentication environment.
+`HONUA_API_KEY`. The provisioned database connection secret is resolved in the
+same child job, checked against the expected host/port/database/user, and its
+password is passed to the SDK with `--var-env`; no secret is placed on argv. An
+already-populated database password environment variable remains supported for
+non-IaC callers. The SDK checkpoint contains captured identifiers and a resolved
+Console receipt request, never the database password or authentication
+environment.
 
 The manifest-pinned Studio runner also drives a real model, with natural
 language, against this same endpoint and the captured runtime identifiers. It
@@ -76,7 +79,7 @@ plus both receipts:
     console-receipt-path: out/console-approval.json
     fixture-base-url: https://<ephemeral-fixture-origin>
     db-host: <terraform-db-endpoint>
-    db-password-env: HONUA_ZERO_TO_MAP_DB_PASSWORD
+    db-connection-secret-ref: <terraform-install-contract-db-secret-arn>
     checkpoint-path: out/zero-to-map-checkpoint.json
     sdk-receipt-path: out/zero-to-map-live.json
     pre-teardown-evidence-path: out/aws-ecs-ai-delivery-arc.pre-teardown.json
@@ -128,8 +131,8 @@ responses, or model credentials.
 
 A live run still needs an OIDC role with narrowly scoped Terraform and
 Secrets Manager access, a configured public HTTPS ECS/domain path, an HTTPS
-fixture origin reachable from ECS, the existing database password secret in a
-runner environment variable, a live-model provider credential and model id, a
+fixture origin reachable from ECS, the database connection secret ARN from the
+IaC install contract, a live-model provider credential and model id, a
 manifest-pinned Studio full-arc model runner, and the focused Console approval
 producer. The platform manifest must be re-pinned to the exact server, SDK,
 Studio, Console, DevOps, and IaC commits before the producer will run.

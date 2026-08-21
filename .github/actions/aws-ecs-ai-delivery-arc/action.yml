@@ -47,6 +47,9 @@ inputs:
   db-password-env:
     description: Existing runner environment variable containing the DB password
     default: HONUA_ZERO_TO_MAP_DB_PASSWORD
+  db-connection-secret-ref:
+    description: Optional AWS Secrets Manager ARN for the provisioned DB connection string
+    required: false
   checkpoint-path:
     description: SDK pause/resume checkpoint path
     required: false
@@ -129,6 +132,7 @@ runs:
         DB_NAME: ${{ inputs.db-name }}
         DB_USER: ${{ inputs.db-user }}
         DB_PASSWORD_ENV: ${{ inputs.db-password-env }}
+        DB_CONNECTION_SECRET_REF: ${{ inputs.db-connection-secret-ref }}
         CHECKPOINT_PATH: ${{ inputs.checkpoint-path }}
         SDK_RECEIPT_PATH: ${{ inputs.sdk-receipt-path }}
         PRE_TEARDOWN_EVIDENCE_PATH: ${{ inputs.pre-teardown-evidence-path }}
@@ -158,6 +162,9 @@ runs:
               --sdk-receipt "$SDK_RECEIPT_PATH"
               --source-sha "$PRODUCER_SHA"
             )
+            if [[ -n "$DB_CONNECTION_SECRET_REF" ]]; then
+              args+=(--db-connection-secret-ref "$DB_CONNECTION_SECRET_REF")
+            fi
             if [[ "$PHASE" = resume ]]; then
               args+=(
                 --console-receipt "$CONSOLE_RECEIPT_PATH"

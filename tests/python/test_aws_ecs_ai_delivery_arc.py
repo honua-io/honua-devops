@@ -406,6 +406,32 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
         self.assertIn(self.secret_ref, command)
         self.assertFalse(run.call_args.kwargs.get("shell", False))
 
+    @mock.patch.object(arc, "resolve_aws_secret")
+    def test_database_secret_is_checked_and_injected_only_into_child_env(self, resolve: mock.Mock) -> None:
+        db_ref = "arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-db-AbCd"
+        resolve.return_value = (
+            "Host=db.example;Port=5432;Database=honua;Username=honua;"
+            "Password=resolved-db-value;SSL Mode=Require"
+        )
+        args = SimpleNamespace(
+            db_connection_secret_ref=db_ref,
+            db_host="db.example",
+            db_port=5432,
+            db_name="honua",
+            db_user="honua",
+            db_password_env="TEST_DB_PASSWORD",
+        )
+        env = arc.child_environment(
+            args,
+            admin_secret="resolved-admin-value",
+            base_url=self.endpoint,
+            mcp_url=self.endpoint + "/mcp",
+            sdk_source_sha=self.shas["honua-sdk-js"],
+        )
+        resolve.assert_called_once_with(db_ref, "database connection secret")
+        self.assertEqual("resolved-db-value", env["TEST_DB_PASSWORD"])
+        self.assertEqual(self.shas["honua-sdk-js"], env["HONUA_SOURCE_REVISION"])
+
     def test_checkpoint_integrity_and_secret_redaction_fail_closed(self) -> None:
         checkpoint = self.checkpoint()
         path = write_json(self.root / "checkpoint.json", checkpoint)

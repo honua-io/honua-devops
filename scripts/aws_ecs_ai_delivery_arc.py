@@ -669,7 +669,7 @@ def validate_console_receipt(
     return {**receipt, "shareUrl": share_url}
 
 
-def resolve_aws_secret(secret_ref: str) -> str:
+def resolve_aws_secret(secret_ref: str, label: str = "admin secret") -> str:
     try:
         result = subprocess.run(
             [
@@ -690,15 +690,50 @@ def resolve_aws_secret(secret_ref: str) -> str:
             text=True,
         )
     except FileNotFoundError as exc:
-        raise ArcError("AWS CLI is required to resolve the scoped admin secret") from exc
+        raise ArcError(f"AWS CLI is required to resolve the scoped {label}") from exc
     except subprocess.CalledProcessError as exc:
         # Never relay subprocess output: providers occasionally include request
         # material in diagnostics.
-        raise ArcError("AWS Secrets Manager refused the scoped admin secret lookup") from exc
+        raise ArcError(f"AWS Secrets Manager refused the scoped {label} lookup") from exc
     secret = result.stdout.rstrip("\r\n")
     if not secret or secret == "None":
-        raise ArcError("AWS Secrets Manager returned no admin secret material")
+        raise ArcError(f"AWS Secrets Manager returned no {label} material")
     return secret
+
+
+def resolve_database_password(args: argparse.Namespace) -> str:
+    secret_ref = args.db_connection_secret_ref
+    if secret_ref:
+        if not AWS_SECRET_ARN.fullmatch(secret_ref):
+            raise ArcError("database connection secret reference must be an AWS Secrets Manager ARN")
+        connection = resolve_aws_secret(secret_ref, "database connection secret")
+        fields: dict[str, str] = {}
+        for part in connection.split(";"):
+            if not part:
+                continue
+            name, separator, value = part.partition("=")
+            if not separator or not name or name.lower() in fields:
+                raise ArcError("database connection secret has an invalid connection-string shape")
+            fields[name.lower()] = value
+        expected = {
+            "host": str(args.db_host),
+            "port": str(args.db_port),
+            "database": str(args.db_name),
+            "username": str(args.db_user),
+        }
+        for name, expected_value in expected.items():
+            if fields.get(name) != expected_value:
+                raise ArcError(f"database connection secret does not match the provisioned {name}")
+        password = fields.get("password")
+        if not password:
+            raise ArcError("database connection secret contains no password")
+        return password
+    password = os.environ.get(args.db_password_env)
+    if not password:
+        raise ArcError(
+            f"database password environment variable {args.db_password_env} is not set and no secret ref was supplied"
+        )
+    return password
 
 
 def sdk_command(
@@ -773,9 +808,7 @@ def child_environment(
     mcp_url: str,
     sdk_source_sha: str,
 ) -> dict[str, str]:
-    db_password = os.environ.get(args.db_password_env)
-    if not db_password:
-        raise ArcError(f"database password environment variable {args.db_password_env} is not set")
+    db_password = resolve_database_password(args)
     env = dict(os.environ)
     env.update(
         {
@@ -784,6 +817,7 @@ def child_environment(
             "HONUA_BASE_URL": base_url,
             "HONUA_MCP_REMOTE_URL": mcp_url,
             "HONUA_SOURCE_REVISION": sdk_source_sha,
+            args.db_password_env: db_password,
         }
     )
     return env
@@ -1253,6 +1287,7 @@ def add_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--db-name", default="honua")
     parser.add_argument("--db-user", default="honua")
     parser.add_argument("--db-password-env", default="HONUA_ZERO_TO_MAP_DB_PASSWORD")
+    parser.add_argument("--db-connection-secret-ref")
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--sdk-receipt", required=True, type=Path)
     parser.add_argument("--source-sha", required=True)
