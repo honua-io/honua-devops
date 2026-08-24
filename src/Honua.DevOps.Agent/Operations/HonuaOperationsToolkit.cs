@@ -674,6 +674,7 @@ internal sealed partial class HonuaOperationsToolkit(
             GitOpsExecutionStatus.InProgress => "execute-in-progress",
             GitOpsExecutionStatus.RolledBack => "rolled-back",
             GitOpsExecutionStatus.Failed => "execute-failed",
+            GitOpsExecutionStatus.Indeterminate => "indeterminate",
             GitOpsExecutionStatus.ApprovalRequired => "approval-required",
             GitOpsExecutionStatus.ContractUnavailable => "contract-unavailable",
             _ => "execute-enabled"

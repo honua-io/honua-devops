@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -131,11 +133,22 @@ internal sealed class GitOpsExecutor(
         BackendCallResult preflight = await _gateway.RequestDeployPreflightAsync(includeDiagnostics: true, cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-preflight", preflight, mutatesState: false));
 
+        Dictionary<string, string> lineageParameters = new(parameters, StringComparer.Ordinal)
+        {
+            ["honua.devops/request-digest"] = ComputeRequestDigest(
+                _runtime.DeployTargetId!,
+                kind,
+                desiredRevision,
+                currentRevision,
+                parameters),
+            ["honua.devops/idempotency-key"] = idempotencyKey
+        };
+
         BackendCallResult plan = await _gateway.PlanDeployOperationAsync(
             _runtime.DeployTargetId!,
             desiredRevision,
             currentRevision,
-            parameters,
+            lineageParameters,
             cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-plan", plan, mutatesState: false));
 
@@ -151,7 +164,7 @@ internal sealed class GitOpsExecutor(
             idempotencyKey,
             correlationId,
             priority,
-            parameters,
+            lineageParameters,
             cancellationToken);
         bool operationRecorded = created.CallResult.IsSuccess && created.Payload is not null;
         steps.Add(OperationBackendStep.From("deploy-operation-create", created.CallResult, mutatesState: operationRecorded));
@@ -239,6 +252,8 @@ internal sealed class GitOpsExecutor(
         }
 
         string? status = submitted.Payload is null ? null : DeployOperationReader.ReadStatus(submitted.Payload.RootElement);
+        string? receiptId = submitted.Payload is null ? null : DeployOperationReader.ReadActuatorReceiptId(submitted.Payload.RootElement);
+        string? receiptOperationId = submitted.Payload is null ? null : DeployOperationReader.ReadActuatorReceiptOperationId(submitted.Payload.RootElement);
         findings.Add($"Operation `{operationId}` submitted (status {status ?? "unknown"}).");
 
         // Poll to a terminal status with capped exponential backoff up to the configured
@@ -272,6 +287,8 @@ internal sealed class GitOpsExecutor(
             if (polled.CallResult.IsSuccess && polled.Payload is not null)
             {
                 status = DeployOperationReader.ReadStatus(polled.Payload.RootElement);
+                receiptId = DeployOperationReader.ReadActuatorReceiptId(polled.Payload.RootElement) ?? receiptId;
+                receiptOperationId = DeployOperationReader.ReadActuatorReceiptOperationId(polled.Payload.RootElement) ?? receiptOperationId;
             }
         }
 
@@ -310,6 +327,28 @@ internal sealed class GitOpsExecutor(
             findings.Add($"Terminal status for `{operationId}`: {status ?? "unknown"}.");
         }
 
+        if (resultStatus == GitOpsExecutionStatus.Succeeded &&
+            (string.IsNullOrWhiteSpace(receiptId) ||
+             (!string.IsNullOrWhiteSpace(receiptOperationId) &&
+              !string.Equals(receiptOperationId, operationId, StringComparison.Ordinal))))
+        {
+            findings.Add($"Operation `{operationId}` reached success without an authoritative actuator receipt bound to that operation; result is indeterminate.");
+            return new GitOpsExecutionResult(
+                Status: GitOpsExecutionStatus.Indeterminate,
+                OperationId: operationId,
+                ServerStatus: status,
+                Mutated: false,
+                Decision: decision,
+                BackendSteps: steps,
+                Findings: findings,
+                BlockingReasons: ["actuator-receipt-missing-or-mismatched"]);
+        }
+
+        if (resultStatus == GitOpsExecutionStatus.Succeeded)
+        {
+            findings.Add($"Authoritative actuator receipt `{receiptId}` is bound to operation `{operationId}`.");
+        }
+
         return new GitOpsExecutionResult(
             Status: resultStatus,
             OperationId: operationId,
@@ -319,5 +358,25 @@ internal sealed class GitOpsExecutor(
             BackendSteps: steps,
             Findings: findings,
             BlockingReasons: []);
+    }
+
+    private static string ComputeRequestDigest(
+        string targetId,
+        string kind,
+        string desiredRevision,
+        string? currentRevision,
+        IReadOnlyDictionary<string, string> parameters)
+    {
+        StringBuilder canonical = new();
+        canonical.Append(targetId).Append('\n')
+            .Append(kind).Append('\n')
+            .Append(desiredRevision).Append('\n')
+            .Append(currentRevision ?? string.Empty).Append('\n');
+        foreach ((string key, string value) in parameters.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            canonical.Append(key).Append('=').Append(value).Append('\n');
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToString()))).ToLowerInvariant();
     }
 }

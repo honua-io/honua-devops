@@ -51,6 +51,10 @@ internal static class GitOpsExecutionStatus
     // The deploy-control contract was unavailable (no operationId returned, target
     // unconfigured, or a backend error). Nothing mutated; no operation id invented.
     internal const string ContractUnavailable = "contract-unavailable";
+
+    // A successful-looking operation without an authoritative actuator receipt is
+    // ambiguous and must never be reported as success.
+    internal const string Indeterminate = "indeterminate";
 }
 
 // Poll budget for SubmitAndPollAsync after a deploy/promotion is submitted. The reconciler
@@ -211,6 +215,46 @@ internal static class DeployOperationReader
 
     internal static IReadOnlyList<string> ReadBlockingReasons(JsonElement root)
         => ReadStringArray(root, "blockingReasons", "blocking_reasons");
+
+    internal static string? ReadActuatorReceiptId(JsonElement root)
+    {
+        string? direct = ReadString(root, "actuatorReceiptId", "actuator_receipt_id", "receiptId", "receipt_id");
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return direct;
+        }
+
+        foreach (string propertyName in new[] { "actuatorReceipt", "actuator_receipt", "receipt" })
+        {
+            if (root.TryGetProperty(propertyName, out JsonElement receipt) && receipt.ValueKind == JsonValueKind.Object)
+            {
+                string? nested = ReadString(receipt, "receiptId", "receipt_id", "id");
+                if (!string.IsNullOrWhiteSpace(nested))
+                {
+                    return nested;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    internal static string? ReadActuatorReceiptOperationId(JsonElement root)
+    {
+        foreach (string propertyName in new[] { "actuatorReceipt", "actuator_receipt", "receipt" })
+        {
+            if (root.TryGetProperty(propertyName, out JsonElement receipt) && receipt.ValueKind == JsonValueKind.Object)
+            {
+                string? nested = ReadString(receipt, "operationId", "operation_id");
+                if (!string.IsNullOrWhiteSpace(nested))
+                {
+                    return nested;
+                }
+            }
+        }
+
+        return ReadString(root, "receiptOperationId", "receipt_operation_id");
+    }
 
     // metadataRelease.rollbackPlan.isDataAffecting drives the server's OperatorApprovalGate.
     // When absent the server defaults isDestructive=true, so we mirror that conservative

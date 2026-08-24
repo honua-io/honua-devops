@@ -233,10 +233,15 @@ internal sealed class BackendGateway : IDisposable
         using BackendJsonResult capabilitiesSnapshot = await GetJsonFromHonuaAsync(
             configuration.HonuaAdminCapabilitiesPath,
             cancellationToken);
-        BackendCallResult applyResult = await PostToHonuaAsync(
-            configuration.HonuaManifestApplyPath,
-            requestBody,
-            cancellationToken);
+        // #153: write-enabled requests must enter the durable deploy-control
+        // operation/approval spine before any mutating backend route. The manifest
+        // route is permitted here only when the server is explicitly asked to dry-run.
+        BackendCallResult? applyResult = dryRun
+            ? await PostToHonuaAsync(
+                configuration.HonuaManifestApplyPath,
+                requestBody,
+                cancellationToken)
+            : null;
 
         // Deploy-control operation creation/submission is owned by the GitOps actuation
         // executors (GitOpsExecutor / PromotionExecutor), which create the operation with
@@ -248,8 +253,13 @@ internal sealed class BackendGateway : IDisposable
         [
             manifestSnapshot.CallResult,
             capabilitiesSnapshot.CallResult,
-            applyResult
+            manifestSnapshot.CallResult,
+            capabilitiesSnapshot.CallResult
         ];
+        if (applyResult is not null)
+        {
+            combinedCalls.Add(applyResult);
+        }
         if (deployPreflightResult is not null)
         {
             combinedCalls.Add(deployPreflightResult);
