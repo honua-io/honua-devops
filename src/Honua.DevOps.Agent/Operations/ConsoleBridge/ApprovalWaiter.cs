@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -28,6 +29,7 @@ internal sealed class ApprovalWaiter
 
     private readonly BackendGateway _gateway;
     private readonly OperatorPolicyModel _policy;
+    private readonly ActuationSpine _spine;
     private readonly TimeSpan _timeout;
     private readonly TimeSpan _initialPollInterval;
     private readonly TimeSpan _maxPollInterval;
@@ -38,6 +40,7 @@ internal sealed class ApprovalWaiter
     internal ApprovalWaiter(
         BackendGateway gateway,
         OperatorPolicyModel policy,
+        OperationRuntime? runtime = null,
         TimeSpan? timeout = null,
         TimeSpan? initialPollInterval = null,
         TimeSpan? maxPollInterval = null,
@@ -47,6 +50,7 @@ internal sealed class ApprovalWaiter
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
+        _spine = new ActuationSpine(runtime ?? OperationRuntime.SafeDefault, policy);
         _timeout = timeout ?? ResolveTimeout();
         _initialPollInterval = initialPollInterval ?? TimeSpan.FromSeconds(5);
         _maxPollInterval = maxPollInterval ?? TimeSpan.FromSeconds(30);
@@ -212,12 +216,41 @@ internal sealed class ApprovalWaiter
 
     private async Task<bool> TrySubmitAsync(string operationId, CancellationToken cancellationToken)
     {
+        // The waiter advances an operation that ALREADY exists and is parked at
+        // AwaitingApproval, under a registered direct-execution policy. It still routes the
+        // submit through the actuation spine so the write carries a sealed request identity,
+        // an idempotency key, and the policy decision that permitted it (issue #153).
+        ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
+            ActuatorId: "honua.deploy-operation.submit",
+            Action: "submit",
+            Target: operationId,
+            Environments: [],
+            DesiredState: $"submit:{operationId}",
+            IdempotencyKey: $"honua-devops:await-approval:{operationId}",
+            PolicyGate: "await-approval",
+            AuthorizationDryRun: false,
+            Actor: "honua-devops:--await-approval",
+            LifecycleEntry: BackendMutation.DeployOperationCreate));
+
+        if (!authorization.IsGranted
+            || !_spine.TryAuthorizeMutation(
+                authorization.Grant!,
+                BackendMutation.DeployOperationSubmit,
+                operationId,
+                ApprovalEvidence.FromDirectExecutionPolicy(authorization.Decision),
+                out ActuationSpine.MutationGrant? grant,
+                out _))
+        {
+            return false;
+        }
+
         try
         {
             using BackendJsonResult result = await _gateway
                 .SubmitDeployOperationJsonAsync(
                     operationId,
                     reason: "honua-devops --await-approval direct-allowed auto-submit",
+                    grant!,
                     cancellationToken)
                 .ConfigureAwait(false);
             return result.CallResult.IsSuccess;

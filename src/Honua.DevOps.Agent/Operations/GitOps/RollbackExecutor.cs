@@ -1,3 +1,4 @@
+using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -20,11 +21,13 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 internal sealed class RollbackExecutor(
     OperationRuntime runtime,
     BackendGateway gateway,
-    OperatorPolicyModel policy)
+    OperatorPolicyModel policy,
+    ActuationSpine? spine = null)
 {
     private readonly OperationRuntime _runtime = runtime;
     private readonly BackendGateway _gateway = gateway;
     private readonly OperatorPolicyModel _policy = policy;
+    private readonly ActuationSpine _spine = spine ?? new ActuationSpine(runtime, policy);
 
     internal async Task<GitOpsExecutionResult> ExecuteRollbackAsync(
         string operationId,
@@ -138,7 +141,65 @@ internal sealed class RollbackExecutor(
                 BlockingReasons: []);
         }
 
-        using BackendJsonResult rolledBack = await _gateway.RollbackDeployOperationJsonAsync(operationId, reason, cancellationToken);
+        // Seal the request and bind the mutation to this exact operation before issuing it.
+        // A rollback is a state mutation, so it needs a spine grant like every other write.
+        ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
+            ActuatorId: "honua.deploy-operation.rollback",
+            Action: "rollback",
+            Target: _runtime.DeployTargetId ?? operationId,
+            Environments: [],
+            DesiredState: $"rollback:{operationId}:{rollbackClass}",
+            IdempotencyKey: $"honua-devops:rollback:{operationId}",
+            PolicyGate: decision.PolicyGate,
+            AuthorizationDryRun: !decision.Mutating,
+            Actor: $"honua-devops:rollback:{operationId}",
+            LifecycleEntry: BackendMutation.DeployOperationCreate));
+
+        if (!authorization.IsGranted)
+        {
+            findings.Add(authorization.Reason);
+            return new GitOpsExecutionResult(
+                Status: GitOpsExecutionStatus.ContractUnavailable,
+                OperationId: operationId,
+                ServerStatus: serverStatus,
+                Mutated: false,
+                Decision: decision,
+                BackendSteps: steps,
+                Findings: findings,
+                BlockingReasons: authorization.BlockingReason is null ? [] : [authorization.BlockingReason]);
+        }
+
+        // The operation already exists, so adopt it into the spine's at-most-once ledger: a
+        // retry resumes this lineage rather than issuing a second rollback.
+        ApprovalEvidence approval = ApprovalEvidence
+            .FromDirectExecutionPolicy(decision)
+            .And(ApprovalEvidence.FromControlPlane(operationId, awaitingApproval: false, blockingReasons: []));
+
+        if (!_spine.TryAuthorizeMutation(
+                authorization.Grant!,
+                BackendMutation.DeployOperationRollback,
+                operationId,
+                approval,
+                out ActuationSpine.MutationGrant? rollbackGrant,
+                out string refusal))
+        {
+            findings.Add($"Rollback not authorized: {refusal}");
+            return new GitOpsExecutionResult(
+                Status: GitOpsExecutionStatus.ApprovalRequired,
+                OperationId: operationId,
+                ServerStatus: serverStatus,
+                Mutated: false,
+                Decision: decision,
+                BackendSteps: steps,
+                Findings: findings,
+                BlockingReasons: ["rollback-not-authorized"]);
+        }
+
+        using BackendJsonResult rolledBack = await _gateway.RollbackDeployOperationJsonAsync(
+            operationId,
+            reason,
+            rollbackGrant!,
+            cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-operation-rollback", rolledBack.CallResult, mutatesState: rolledBack.CallResult.IsSuccess));
 
         if (!rolledBack.CallResult.IsSuccess)

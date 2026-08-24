@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.DesiredState;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -15,6 +16,9 @@ namespace Honua.DevOps.Agent.Tests;
 //   2. execute + unapproved (pr-first / server AwaitingApproval) = create but NO submit.
 //   3. execute + approved (direct-allowed) = create + submit + poll to terminal.
 //   4. data-affecting rollback without approval = refused (never auto-issued).
+//   5. (issue #153) the desired-state apply happens ONLY after the durable operation exists
+//      and its approval gate is satisfied — never on the planning path, and never at all
+//      when the operation is parked for approval.
 public class GitOpsExecutorTests
 {
     private static readonly IReadOnlyDictionary<string, string> SyncParameters = new Dictionary<string, string>
@@ -458,7 +462,167 @@ public class GitOpsExecutorTests
         public void Advance(TimeSpan delta) => _now += delta;
     }
 
-    private static Task<GitOpsExecutionResult> ExecuteSyncAsync(GitOpsExecutor executor, bool authorizationDryRun = false)
+    // ---- Invariant 5: the desired-state write never precedes the operation + approval. ----
+
+    [Fact]
+    public async Task ExecuteSyncAsync_ExecutePrFirst_NeverAppliesTheDesiredState()
+    {
+        // The operation is created and parked for approval. Under the old ordering the
+        // manifest apply had ALREADY been sent by this point; it must not be sent at all.
+        TestHttpMessageHandler handler = new(request =>
+            request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/deploy/operations", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "AwaitingApproval" })
+                : TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor, desiredState: DesiredState());
+
+        Assert.Equal(GitOpsExecutionStatus.AwaitingApproval, result.Status);
+        Assert.DoesNotContain(
+            handler.CapturedRequests,
+            request => request.Uri.Contains("/manifest/apply", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.BackendSteps, step => step.Name == "manifest-apply");
+    }
+
+    [Fact]
+    public async Task ExecuteSyncAsync_ExecuteDirectAllowed_AppliesDesiredStateAfterTheOperationExists()
+    {
+        List<string> order = [];
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post)
+            {
+                order.Add(path);
+            }
+
+            return path.EndsWith("/deploy/operations", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Planned" })
+                : TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Succeeded" });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor, desiredState: DesiredState());
+
+        Assert.Equal(GitOpsExecutionStatus.Succeeded, result.Status);
+
+        int createIndex = order.FindIndex(path => path.EndsWith("/deploy/operations", StringComparison.Ordinal));
+        int applyIndex = order.FindIndex(path => path.Contains("/manifest/apply", StringComparison.Ordinal));
+        int submitIndex = order.FindIndex(path => path.EndsWith("/submit", StringComparison.Ordinal));
+
+        Assert.True(createIndex >= 0, "The durable operation must be created.");
+        Assert.True(applyIndex > createIndex, "The desired-state apply must follow operation creation.");
+        Assert.True(submitIndex > applyIndex, "The submit must follow the desired-state apply.");
+        Assert.Contains(result.BackendSteps, step => step.Name == "manifest-apply" && step.MutatesState && step.Success);
+    }
+
+    [Fact]
+    public async Task ExecuteSyncAsync_DesiredStateApplyFails_ReportsIndeterminateAndDoesNotSubmit()
+    {
+        // The apply was issued but did not succeed: whether it took effect is unknown, so the
+        // executor must not submit on top of it and must not collapse this into success.
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("/manifest/apply", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                {
+                    Content = new StringContent("apply failed")
+                };
+            }
+
+            return path.EndsWith("/deploy/operations", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Planned" })
+                : TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Planned" });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor, desiredState: DesiredState());
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, result.Status);
+        Assert.Contains("manifest-apply-unconfirmed", result.BlockingReasons);
+        Assert.DoesNotContain(
+            handler.CapturedRequests,
+            request => request.Uri.EndsWith("/submit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteSyncAsync_RetryOfTheSameRequest_IssuesAtMostOneSubmit()
+    {
+        // The spine's at-most-once ledger: a duplicate delivery of the same sealed request
+        // resumes the original operation instead of submitting a second time.
+        TestHttpMessageHandler handler = new(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("/deploy/operations", StringComparison.Ordinal)
+                && request.Method == HttpMethod.Post
+                ? TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Planned" })
+                : TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Succeeded" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        GitOpsExecutionResult first = await ExecuteSyncAsync(executor);
+        GitOpsExecutionResult retry = await ExecuteSyncAsync(executor);
+
+        Assert.Equal(GitOpsExecutionStatus.Succeeded, first.Status);
+        Assert.Equal(GitOpsExecutionStatus.AwaitingApproval, retry.Status);
+        Assert.Equal(
+            1,
+            handler.CapturedRequests.Count(request => request.Uri.EndsWith("/submit", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ExecuteSyncAsync_FailsClosed_WhenTheAuditReceiptSinkIsUnavailable()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy() with { AuditHookTarget = "  " });
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.False(result.Mutated);
+        Assert.Contains("audit-sink-unavailable", result.BlockingReasons);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    private static ManifestApplyRequest DesiredState()
+        => BackendGateway.BuildGitOpsManifestRequest(
+            service: "roads-api",
+            environments: ["dev"],
+            revision: "release/2026.03",
+            action: "sync",
+            changeSummary: "ship roads-api",
+            gitOpsTool: "honua-gitops",
+            terraformRepository: "https://github.com/honua-io/honua-iac",
+            terraformRef: "main",
+            deploymentTargets: ["eks"],
+            dryRun: false,
+            executionMode: ExecutionMode.Execute,
+            executionTier: ExecutionTier.ExecuteLowerEnv,
+            allowedEnvironments: ["dev", "staging", "prod"]);
+
+    private static Task<GitOpsExecutionResult> ExecuteSyncAsync(
+        GitOpsExecutor executor,
+        bool authorizationDryRun = false,
+        ManifestApplyRequest? desiredState = null)
         => executor.ExecuteSyncAsync(
             desiredRevision: "release/2026.03",
             currentRevision: null,
@@ -469,7 +633,8 @@ public class GitOpsExecutorTests
             parameters: SyncParameters,
             authorizationDryRun: authorizationDryRun,
             policyGate: authorizationDryRun ? "plan-only" : "lower-env-execution",
-            CancellationToken.None);
+            CancellationToken.None,
+            desiredState);
 
     private static OperationRuntime CreateRuntime(
         ExecutionMode mode,

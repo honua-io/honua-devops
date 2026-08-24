@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Http;
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.DesiredState;
+using Honua.DevOps.Agent.Operations.GitOps;
 
 namespace Honua.DevOps.Agent.Tests;
 
@@ -32,6 +35,76 @@ public class BackendGatewayTests
 
         Assert.Throws<InvalidOperationException>(
             () => BackendGateway.BuildEndpoint(baseUri, "/https://evil.example/v1/logs/search"));
+    }
+
+    // Issue #153: the planning/diff route to /manifest/apply is pinned to dryRun=true and
+    // verifies it rather than trusting the caller. A planning path that a boolean can switch
+    // into a write is exactly the shared-authority bug the actuation spine exists to remove.
+    [Fact]
+    public async Task PreviewManifestAsync_RefusesANonDryRunRequestBeforeSending()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(BackendConfigurationFixture.Create(), httpClient);
+
+        ManifestApplyRequest writeRequest = BackendGateway.BuildGitOpsManifestRequest(
+            service: "roads-api",
+            environments: ["dev"],
+            revision: "main",
+            action: "sync",
+            changeSummary: "attempted write via the planning route",
+            gitOpsTool: "honua-gitops",
+            terraformRepository: "https://github.com/honua-io/honua-iac",
+            terraformRef: "main",
+            deploymentTargets: ["eks"],
+            dryRun: false,
+            executionMode: ExecutionMode.Execute,
+            executionTier: ExecutionTier.ExecuteLowerEnv,
+            allowedEnvironments: ["dev"]);
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => gateway.PreviewManifestAsync(writeRequest, CancellationToken.None));
+
+        Assert.Contains("requires dryRun=true", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task PlanGitOpsDeployAsync_SendsOnlyReadsPlansAndADryRunPreview()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(BackendConfigurationFixture.Create(), httpClient);
+
+        using GitOpsDeployBackendResult result = await gateway.PlanGitOpsDeployAsync(
+            service: "roads-api",
+            environments: ["dev"],
+            revision: "main",
+            action: "sync",
+            changeSummary: "plan",
+            gitOpsTool: "honua-gitops",
+            terraformRepository: "https://github.com/honua-io/honua-iac",
+            terraformRef: "main",
+            deploymentTargets: ["eks"],
+            executionMode: ExecutionMode.Execute,
+            executionTier: ExecutionTier.ExecuteLowerEnv,
+            allowedEnvironments: ["dev"],
+            deployTargetId: "prod-api",
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+
+        // The only POST body that reaches /manifest/apply on this path is a dry run, and no
+        // deploy operation is created or submitted by planning.
+        CapturedRequest preview = Assert.Single(
+            handler.CapturedRequests,
+            request => request.Uri.Contains("/manifest/apply", StringComparison.Ordinal));
+        Assert.Contains("\"dryRun\":true", preview.Body!, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            handler.CapturedRequests,
+            request => request.Uri.EndsWith("/deploy/operations", StringComparison.Ordinal)
+                || request.Uri.EndsWith("/submit", StringComparison.Ordinal)
+                || request.Uri.EndsWith("/rollback", StringComparison.Ordinal));
     }
 
     [Fact]

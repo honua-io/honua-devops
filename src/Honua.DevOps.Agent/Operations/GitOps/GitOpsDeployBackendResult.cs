@@ -11,7 +11,6 @@ internal sealed record GitOpsDeployBackendResult(
     JsonDocument? CapabilitiesPayload,
     BackendCallResult? DeployPreflightResult = null,
     BackendCallResult? DeployPlanResult = null,
-    BackendCallResult? DeployOperationResult = null,
     BackendCallResult? DeployOperationStatusResult = null,
     BackendCallResult? ManifestDriftResult = null) : IDisposable
 {

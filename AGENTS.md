@@ -116,9 +116,19 @@ agent provider.
   `CapabilityToolset` (registers function tools), `HonuaOperationsToolkit`,
   `BackendGateway`/`SupportGateway` (HTTP), `OperationResponse(+Builder)` and
   `OperationEvidence` (typed evidence bundles), `Redaction`, `PreflightRunner`.
-  Subfolders: `Audit`, `OperatorPolicy`, `GitOps`, `DesiredState`,
+  Subfolders: `Actuation`, `Audit`, `OperatorPolicy`, `GitOps`, `DesiredState`,
   `RuntimeAdapters`, `ReleaseOrchestration`, `ServiceBundleReconciliation`,
   `Troubleshooting`, `GuidedFix`, `ConsoleBridge`.
+- `Operations/Actuation/` — the single write seam (honua-devops#153/#151). Every
+  mutating `BackendGateway` route requires a grant that only `ActuationSpine` can
+  issue, so a backend write cannot precede its durable operation, policy decision,
+  and approval. `ActuationResult` + `ActuationResponseGuard` are the matching
+  response invariant: a tool's status, its audit `Mutated` flag, and its backend
+  steps all derive from one authoritative result, and `executed`/`applied` requires
+  a typed actuator, a durable receipt, and a successful mutating backend step.
+  `ActuatorRegistry` resolves the typed actuator BEFORE any readiness is reported —
+  an unregistered runbook or remediation returns `unsupported-action` with zero
+  backend calls.
 - `Configuration/`, `Prompts/` — runtime config and prompt assets.
 - Backends are external HTTP services configured by env: Honua API
   (`HONUA_DEVOPS_HONUA_API_BASE_URL`), OTEL (`HONUA_DEVOPS_OTEL_BASE_URL`),
@@ -174,6 +184,12 @@ Each tool call emits one JSONL audit record.
   `submitImmediately=false` and never submits/rolls back.
 - `create_gitops_proposal` returns a blocked `target-unconfigured` projection
   unless `HONUA_DEVOPS_DEPLOY_TARGET_ID` is set (it does not invent operation ids).
+- Adding a mutating backend route means adding it to `BackendMutationCatalog` and
+  taking an `ActuationSpine` grant; `BackendMutationCatalogTests` fails otherwise.
+  Planning/diff may only call non-mutating routes or `PreviewManifestAsync`, which
+  pins `dryRun=true` and refuses a write request before sending it.
+- A mutation is refused before it starts when the deploy target, the idempotency
+  key, or the audit/receipt sink (`HONUA_DEVOPS_AUDIT_HOOK_TARGET`) is unavailable.
 - Auto-bundle (forwarding a Honua API key to support) is disabled by default and
   host-allowlisted via `HONUA_DEVOPS_SUPPORT_AUTOBUNDLE_*` when enabled.
 - The webhook `--listen` receiver requires `X-Honua-Signature: sha256=<HMAC-SHA256>`

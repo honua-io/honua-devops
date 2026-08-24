@@ -84,7 +84,7 @@ try
 
     if (options.AwaitApproval is not null)
     {
-        ApprovalWaiter waiter = new(backendGateway, policy);
+        ApprovalWaiter waiter = new(backendGateway, policy, runtime);
         Console.WriteLine(
             $"Waiting for deploy-control operation `{options.AwaitApproval}` to leave AwaitingApproval "
             + $"(approval={policy.ApprovalMode.ToConfigValue()}, timeout={waiter.Timeout.TotalSeconds:0}s).");

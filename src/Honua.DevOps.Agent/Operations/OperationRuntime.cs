@@ -46,6 +46,20 @@ internal sealed record OperationRuntime(
     internal const string RollbackEnabledVariable = "HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK";
     internal const string CrossEnvironmentPromotionEnabledVariable = "HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION";
 
+    /// <summary>
+    /// Fail-closed runtime: plan mode, observe tier, no deploy target. Used where a runtime
+    /// is optional so that omitting it can only ever REMOVE authority, never grant it.
+    /// </summary>
+    internal static OperationRuntime SafeDefault { get; } = new(
+        ExecutionMode: ExecutionMode.Plan,
+        ExecutionTier: ExecutionTier.Observe,
+        GitOpsTool: "honua-gitops",
+        AllowedEnvironments: DefaultEnvironments,
+        TerraformRepository: "honua-iac",
+        TerraformRef: "main",
+        TerraformLocalPath: string.Empty,
+        TerraformDeploymentTargets: []);
+
     internal static OperationRuntime Load()
     {
         ExecutionMode mode = ParseExecutionMode(

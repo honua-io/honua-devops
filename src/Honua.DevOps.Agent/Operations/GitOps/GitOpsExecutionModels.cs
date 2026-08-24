@@ -51,6 +51,11 @@ internal static class GitOpsExecutionStatus
     // The deploy-control contract was unavailable (no operationId returned, target
     // unconfigured, or a backend error). Nothing mutated; no operation id invented.
     internal const string ContractUnavailable = "contract-unavailable";
+
+    // A mutating call was issued but its outcome could not be established. The operation may
+    // or may not have taken effect, so this is reported as-is and never collapsed into
+    // success or failure (issue #153).
+    internal const string Indeterminate = "indeterminate";
 }
 
 // Poll budget for SubmitAndPollAsync after a deploy/promotion is submitted. The reconciler
