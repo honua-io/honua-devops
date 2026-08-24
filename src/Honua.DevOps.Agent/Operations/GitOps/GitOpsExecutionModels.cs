@@ -52,8 +52,10 @@ internal static class GitOpsExecutionStatus
     // unconfigured, or a backend error). Nothing mutated; no operation id invented.
     internal const string ContractUnavailable = "contract-unavailable";
 
-    // A successful-looking operation without an authoritative actuator receipt is
-    // ambiguous and must never be reported as success.
+    // A mutating call was issued but its outcome could not be established: the operation may
+    // or may not have taken effect, so this is reported as-is and never collapsed into
+    // success or failure (issue #153). A successful-looking operation without an
+    // authoritative actuator receipt bound to it is the same kind of ambiguity.
     internal const string Indeterminate = "indeterminate";
 }
 

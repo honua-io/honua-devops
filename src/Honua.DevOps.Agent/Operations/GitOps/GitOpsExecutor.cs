@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
+using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.DesiredState;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -15,8 +17,13 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 //     -> create the durable operation (submitImmediately=false)
 //        -> if the server parked it at AwaitingApproval, or policy is pr-first: STOP and
 //           surface the operationId + evidence (never auto-submit)
-//        -> only when policy/approval allows: submit
+//        -> only when policy/approval allows: apply desired state, then submit
 //           -> poll /operations/{id} to a terminal status.
+//
+// Every write on that path goes through ActuationSpine (issue #153): the request identity is
+// sealed before the durable operation is created, and the manifest apply and the submit are
+// each authorized by a grant bound to that exact operation, digest, and approval. Nothing
+// mutates ahead of the operation record.
 //
 // Default-safe: with EXECUTION_MODE=plan (the default) the decision is non-mutating and the
 // executor returns plan-only WITHOUT touching the backend at all.
@@ -26,11 +33,13 @@ internal sealed class GitOpsExecutor(
     OperatorPolicyModel policy,
     DeployPollPolicy? pollPolicy = null,
     Func<TimeSpan, CancellationToken, Task>? delay = null,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    ActuationSpine? spine = null)
 {
     private readonly OperationRuntime _runtime = runtime;
     private readonly BackendGateway _gateway = gateway;
     private readonly OperatorPolicyModel _policy = policy;
+    private readonly ActuationSpine _spine = spine ?? new ActuationSpine(runtime, policy);
     private readonly DeployPollPolicy _pollPolicy = pollPolicy ?? DeployPollPolicy.Resolve();
     private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
@@ -40,6 +49,8 @@ internal sealed class GitOpsExecutor(
     internal BackendGateway Gateway => _gateway;
 
     internal OperatorPolicyModel Policy => _policy;
+
+    internal ActuationSpine Spine => _spine;
 
     // Actuate a sync. `desiredRevision`/`reason`/`correlationId`/`priority`/`parameters` are
     // already validated/sanitized by the caller. `authorizationDryRun` is the toolkit's
@@ -55,7 +66,8 @@ internal sealed class GitOpsExecutor(
         IReadOnlyDictionary<string, string> parameters,
         bool authorizationDryRun,
         string policyGate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ManifestApplyRequest? desiredState = null)
     {
         GitOpsActuationDecision decision = GitOpsActuationDecision.Resolve(
             _runtime.ExecutionMode,
@@ -73,7 +85,8 @@ internal sealed class GitOpsExecutor(
             priority,
             parameters,
             decision,
-            cancellationToken);
+            cancellationToken,
+            desiredState);
     }
 
     // Core create -> gate -> submit -> poll spine shared by sync and promote. Rollback has a
@@ -89,7 +102,8 @@ internal sealed class GitOpsExecutor(
         string priority,
         IReadOnlyDictionary<string, string> parameters,
         GitOpsActuationDecision decision,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ManifestApplyRequest? desiredState = null)
     {
         List<OperationBackendStep> steps = [];
         List<string> findings =
@@ -114,10 +128,25 @@ internal sealed class GitOpsExecutor(
                 BlockingReasons: []);
         }
 
-        // No durable target -> cannot enter the lifecycle. Do not invent an operation id.
-        if (string.IsNullOrWhiteSpace(_runtime.DeployTargetId))
+        // Seal the request identity BEFORE any write. The spine fails closed here when the
+        // durable operation store, the audit/receipt sink, or the idempotency key is missing:
+        // no durable target means we cannot enter the lifecycle, and an operation id is never
+        // invented locally.
+        ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
+            ActuatorId: $"honua.gitops.{kind}",
+            Action: kind,
+            Target: _runtime.DeployTargetId ?? string.Empty,
+            Environments: ReadEnvironments(parameters),
+            DesiredState: BuildDesiredStateIdentity(desiredRevision, currentRevision, parameters),
+            IdempotencyKey: idempotencyKey,
+            PolicyGate: decision.PolicyGate,
+            AuthorizationDryRun: !decision.Mutating,
+            Actor: correlationId,
+            LifecycleEntry: BackendMutation.DeployOperationCreate));
+
+        if (!authorization.IsGranted)
         {
-            findings.Add("HONUA_DEVOPS_DEPLOY_TARGET_ID is not configured; cannot create a durable server operation.");
+            findings.Add(authorization.Reason);
             return new GitOpsExecutionResult(
                 Status: GitOpsExecutionStatus.ContractUnavailable,
                 OperationId: null,
@@ -126,22 +155,26 @@ internal sealed class GitOpsExecutor(
                 Decision: decision,
                 BackendSteps: steps,
                 Findings: findings,
-                BlockingReasons: ["deploy-target-unconfigured"]);
+                BlockingReasons: authorization.BlockingReason is null ? [] : [authorization.BlockingReason]);
         }
+
+        ActuationSpine.OperationGrant operationGrant = authorization.Grant!;
+        findings.Add(
+            $"Sealed actuation request: actuator `{operationGrant.ActuatorId}`, target `{operationGrant.Target}`, " +
+            $"digest `{operationGrant.RequestDigest[..12]}`, idempotency key `{operationGrant.IdempotencyKey}`.");
 
         // Read-only validation against RequiredChecks: preflight + plan.
         BackendCallResult preflight = await _gateway.RequestDeployPreflightAsync(includeDiagnostics: true, cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-preflight", preflight, mutatesState: false));
 
+        // Stamp the sealed lineage onto the server-visible parameters so the durable operation
+        // records the same identity the spine authorized. The digest is taken FROM the grant
+        // rather than recomputed here: one source of truth, so the value the server stores
+        // cannot drift from the value that gated the mutation.
         Dictionary<string, string> lineageParameters = new(parameters, StringComparer.Ordinal)
         {
-            ["honua.devops/request-digest"] = ComputeRequestDigest(
-                _runtime.DeployTargetId!,
-                kind,
-                desiredRevision,
-                currentRevision,
-                parameters),
-            ["honua.devops/idempotency-key"] = idempotencyKey
+            ["honua.devops/request-digest"] = operationGrant.RequestDigest,
+            ["honua.devops/idempotency-key"] = operationGrant.IdempotencyKey
         };
 
         BackendCallResult plan = await _gateway.PlanDeployOperationAsync(
@@ -165,6 +198,7 @@ internal sealed class GitOpsExecutor(
             correlationId,
             priority,
             lineageParameters,
+            operationGrant,
             cancellationToken);
         bool operationRecorded = created.CallResult.IsSuccess && created.Payload is not null;
         steps.Add(OperationBackendStep.From("deploy-operation-create", created.CallResult, mutatesState: operationRecorded));
@@ -196,16 +230,25 @@ internal sealed class GitOpsExecutor(
         //   * the operation carries blocking reasons, or
         //   * policy is pr-first (decision.MayAutoSubmit == false).
         // In all of these we STOP and surface the operationId + evidence for an external approver.
-        bool serverRequiresApproval = DeployOperationReader.IsAwaitingApproval(serverStatus);
-        bool blocked = createBlockers.Count > 0;
-        if (!decision.MayAutoSubmit || serverRequiresApproval || blocked)
+        // Both gates must hold before ANY state mutation: the local policy ceiling (a
+        // registered direct-execution policy result, never a caller flag) AND the control
+        // plane's own decision for this exact operation.
+        ApprovalEvidence approval = ApprovalEvidence
+            .FromDirectExecutionPolicy(decision)
+            .And(ApprovalEvidence.FromControlPlane(
+                operationId,
+                DeployOperationReader.IsAwaitingApproval(serverStatus),
+                createBlockers));
+
+        if (!_spine.TryAuthorizeMutation(
+                operationGrant,
+                BackendMutation.DeployOperationSubmit,
+                operationId,
+                approval,
+                out ActuationSpine.MutationGrant? submitGrant,
+                out string refusal))
         {
-            string why = blocked
-                ? $"Operation has blocking reasons: {string.Join("; ", createBlockers)}."
-                : serverRequiresApproval
-                    ? "Server parked the operation at AwaitingApproval; deploy plan requires explicit approval."
-                    : "Approval mode `pr-first` requires external approval before submission.";
-            findings.Add($"Submission paused: {why}");
+            findings.Add($"Submission paused: {refusal}");
             findings.Add($"Surface operationId `{operationId}` and the recorded evidence for governed approval; submit it through the deploy-control approval path.");
             return new GitOpsExecutionResult(
                 Status: GitOpsExecutionStatus.AwaitingApproval,
@@ -218,8 +261,166 @@ internal sealed class GitOpsExecutor(
                 BlockingReasons: createBlockers);
         }
 
-        // Approval satisfied (direct-allowed / break-glass) -> submit, then poll to terminal.
-        return await SubmitAndPollAsync(operationId, reason, decision, steps, findings, cancellationToken);
+        findings.Add(
+            $"Mutation authorized for operation `{operationId}` by {approval.Kind} ({approval.ReceiptId ?? "no reference"}).");
+
+        // Desired-state write, when this actuation carries one. It happens HERE — after the
+        // durable operation exists and its approval gate is satisfied — never on the planning
+        // path (issue #153).
+        if (desiredState is not null)
+        {
+            if (!_spine.TryAuthorizeMutation(
+                    operationGrant,
+                    BackendMutation.ManifestApply,
+                    operationId,
+                    approval,
+                    out ActuationSpine.MutationGrant? applyGrant,
+                    out string applyRefusal))
+            {
+                findings.Add($"Desired-state apply not authorized: {applyRefusal}");
+                return new GitOpsExecutionResult(
+                    Status: GitOpsExecutionStatus.AwaitingApproval,
+                    OperationId: operationId,
+                    ServerStatus: serverStatus,
+                    Mutated: operationRecorded,
+                    Decision: decision,
+                    BackendSteps: steps,
+                    Findings: findings,
+                    BlockingReasons: createBlockers);
+            }
+
+            BackendCallResult applied = await _gateway.ApplyManifestAsync(desiredState, applyGrant!, cancellationToken);
+            steps.Add(OperationBackendStep.From("manifest-apply", applied, mutatesState: applied.IsSuccess));
+            if (!applied.IsSuccess)
+            {
+                // The apply was issued but did not succeed. Do not submit on top of an
+                // unknown desired state; report the ambiguity rather than a failure or a
+                // success we cannot substantiate.
+                findings.Add($"Desired-state apply did not succeed ({applied.Detail}); operation `{operationId}` was not submitted.");
+                return new GitOpsExecutionResult(
+                    Status: GitOpsExecutionStatus.Indeterminate,
+                    OperationId: operationId,
+                    ServerStatus: serverStatus,
+                    Mutated: true,
+                    Decision: decision,
+                    BackendSteps: steps,
+                    Findings: findings,
+                    BlockingReasons: ["manifest-apply-unconfirmed"]);
+            }
+
+            findings.Add($"Desired state applied for operation `{operationId}`.");
+        }
+
+        // Approval satisfied -> submit, then poll to terminal.
+        return await SubmitAndPollAsync(operationId, reason, decision, steps, findings, submitGrant!, cancellationToken);
+    }
+
+    private static IReadOnlyList<string> ReadEnvironments(IReadOnlyDictionary<string, string> parameters)
+        => parameters.TryGetValue("environments", out string? environments) && !string.IsNullOrWhiteSpace(environments)
+            ? environments.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [];
+
+    // The canonical request payload the spine takes its digest over. Two deliveries of the
+    // same logical request produce the same digest, which is what lets a retry prove it is
+    // resuming the original operation rather than starting a second one.
+    private static string BuildDesiredStateIdentity(
+        string desiredRevision,
+        string? currentRevision,
+        IReadOnlyDictionary<string, string> parameters)
+        => string.Join(
+            ";",
+            [
+                $"desiredRevision={desiredRevision}",
+                $"currentRevision={currentRevision ?? string.Empty}",
+                .. parameters.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}")
+            ]);
+
+    // Submits an EXISTING durable operation (the `deploy-submit` runbook). The operation was
+    // created by an earlier governed action, so there is no create step here — but the write
+    // still goes through the same spine: read the operation, check the control plane's own
+    // decision alongside the policy ceiling, then submit under a bound mutation grant.
+    internal async Task<GitOpsExecutionResult> ExecuteSubmitAsync(
+        string operationId,
+        string reason,
+        bool authorizationDryRun,
+        string policyGate,
+        CancellationToken cancellationToken)
+    {
+        GitOpsActuationDecision decision = GitOpsActuationDecision.Resolve(
+            _runtime.ExecutionMode,
+            _policy,
+            authorizationDryRun,
+            policyGate);
+
+        List<OperationBackendStep> steps = [];
+        List<string> findings =
+        [
+            $"Actuation kind: submit (operation {operationId}).",
+            $"Execution mode: {decision.Mode}; approval mode: {decision.ApprovalMode}; policy gate: {decision.PolicyGate}.",
+            decision.Rationale
+        ];
+
+        if (!decision.Mutating)
+        {
+            findings.Add($"No submit was issued for `{operationId}`; plan-only posture.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.PlanOnly, operationId, null, false, decision, steps, findings, []);
+        }
+
+        using BackendJsonResult current = await _gateway.GetDeployOperationJsonAsync(operationId, cancellationToken);
+        steps.Add(OperationBackendStep.From("deploy-operation-read", current.CallResult, mutatesState: false));
+        if (!current.CallResult.IsSuccess || current.Payload is null)
+        {
+            findings.Add($"Could not read deploy-control operation `{operationId}`; nothing was submitted, no operation invented.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.ContractUnavailable, operationId, null, false, decision, steps, findings,
+                ["submit-operation-not-found"]);
+        }
+
+        string? serverStatus = DeployOperationReader.ReadStatus(current.Payload.RootElement);
+        IReadOnlyList<string> blockers = DeployOperationReader.ReadBlockingReasons(current.Payload.RootElement);
+
+        ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
+            ActuatorId: "honua.deploy-operation.submit",
+            Action: "submit",
+            Target: _runtime.DeployTargetId ?? operationId,
+            Environments: [],
+            DesiredState: $"submit:{operationId}",
+            IdempotencyKey: $"honua-devops:submit:{operationId}",
+            PolicyGate: decision.PolicyGate,
+            AuthorizationDryRun: !decision.Mutating,
+            Actor: $"honua-devops:runbook:deploy-submit",
+            LifecycleEntry: BackendMutation.DeployOperationCreate));
+
+        if (!authorization.IsGranted)
+        {
+            findings.Add(authorization.Reason);
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.ContractUnavailable, operationId, serverStatus, false, decision, steps, findings,
+                authorization.BlockingReason is null ? [] : [authorization.BlockingReason]);
+        }
+
+        ApprovalEvidence approval = ApprovalEvidence
+            .FromDirectExecutionPolicy(decision)
+            .And(ApprovalEvidence.FromControlPlane(
+                operationId,
+                DeployOperationReader.IsAwaitingApproval(serverStatus),
+                blockers));
+
+        if (!_spine.TryAuthorizeMutation(
+                authorization.Grant!,
+                BackendMutation.DeployOperationSubmit,
+                operationId,
+                approval,
+                out ActuationSpine.MutationGrant? grant,
+                out string refusal))
+        {
+            findings.Add($"Submission paused: {refusal}");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings, blockers);
+        }
+
+        return await SubmitAndPollAsync(operationId, reason, decision, steps, findings, grant!, cancellationToken);
     }
 
     internal async Task<GitOpsExecutionResult> SubmitAndPollAsync(
@@ -228,9 +429,10 @@ internal sealed class GitOpsExecutor(
         GitOpsActuationDecision decision,
         List<OperationBackendStep> steps,
         List<string> findings,
+        ActuationSpine.MutationGrant grant,
         CancellationToken cancellationToken)
     {
-        using BackendJsonResult submitted = await _gateway.SubmitDeployOperationJsonAsync(operationId, reason, cancellationToken);
+        using BackendJsonResult submitted = await _gateway.SubmitDeployOperationJsonAsync(operationId, reason, grant, cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-operation-submit", submitted.CallResult, mutatesState: submitted.CallResult.IsSuccess));
 
         if (!submitted.CallResult.IsSuccess)
@@ -367,25 +569,5 @@ internal sealed class GitOpsExecutor(
             BackendSteps: steps,
             Findings: findings,
             BlockingReasons: []);
-    }
-
-    private static string ComputeRequestDigest(
-        string targetId,
-        string kind,
-        string desiredRevision,
-        string? currentRevision,
-        IReadOnlyDictionary<string, string> parameters)
-    {
-        StringBuilder canonical = new();
-        canonical.Append(targetId).Append('\n')
-            .Append(kind).Append('\n')
-            .Append(desiredRevision).Append('\n')
-            .Append(currentRevision ?? string.Empty).Append('\n');
-        foreach ((string key, string value) in parameters.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-        {
-            canonical.Append(key).Append('=').Append(value).Append('\n');
-        }
-
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToString()))).ToLowerInvariant();
     }
 }

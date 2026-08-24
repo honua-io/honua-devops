@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.DesiredState;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.Observability;
@@ -37,10 +38,16 @@ internal sealed class BackendGateway : IDisposable
             request => ApplyApiKey(request, configuration.HonuaApiKey, ApiKeyTransport.XApiKey));
     }
 
+    // Creates a server-owned proposal from an ops finding. This is a lifecycle-entry write:
+    // it records a durable governed request and executes nothing, so it needs the sealed
+    // operation grant from the actuation spine (issue #153).
     internal Task<BackendJsonResult> ProposeOpsFindingAsync(
         string findingId,
+        ActuationSpine.OperationGrant grant,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(grant);
+        grant.EnsureAuthorizes(BackendMutation.OpsFindingPropose);
         if (string.IsNullOrWhiteSpace(findingId))
         {
             throw new ArgumentException("Finding id is required.", nameof(findingId));
@@ -172,7 +179,13 @@ internal sealed class BackendGateway : IDisposable
         return CombineResults(operation, calls);
     }
 
-    internal async Task<GitOpsDeployBackendResult> RequestGitOpsDeployAsync(
+    // Plans a GitOps deploy. Every call on this path is provably non-mutating: two snapshot
+    // GETs, the deploy preflight GET, the deploy plan POST (which computes but does not
+    // write), and a manifest preview pinned to dryRun=true. It deliberately takes no dry-run
+    // flag — issue #153 forbids a planning path that a caller boolean can switch into a
+    // write. The real apply is a step of the typed actuator, after the durable operation and
+    // its approval exist.
+    internal async Task<GitOpsDeployBackendResult> PlanGitOpsDeployAsync(
         string service,
         string[] environments,
         string revision,
@@ -182,7 +195,6 @@ internal sealed class BackendGateway : IDisposable
         string terraformRepository,
         string terraformRef,
         string[] deploymentTargets,
-        bool dryRun,
         ExecutionMode executionMode,
         ExecutionTier executionTier,
         string[] allowedEnvironments,
@@ -206,12 +218,12 @@ internal sealed class BackendGateway : IDisposable
                     ["environments"] = string.Join(",", environments),
                     ["action"] = action,
                     ["gitOpsTool"] = gitOpsTool,
-                    ["dryRun"] = dryRun ? "true" : "false"
+                    ["dryRun"] = "true"
                 },
                 cancellationToken);
         }
 
-        ManifestApplyRequest requestBody = DesiredStateManifestBuilder.BuildGitOpsDeployRequest(
+        ManifestApplyRequest previewBody = BuildGitOpsManifestRequest(
             service,
             environments,
             revision,
@@ -221,7 +233,7 @@ internal sealed class BackendGateway : IDisposable
             terraformRepository,
             terraformRef,
             deploymentTargets,
-            dryRun,
+            dryRun: true,
             executionMode,
             executionTier,
             allowedEnvironments);
@@ -232,30 +244,12 @@ internal sealed class BackendGateway : IDisposable
         using BackendJsonResult capabilitiesSnapshot = await GetJsonFromHonuaAsync(
             configuration.HonuaAdminCapabilitiesPath,
             cancellationToken);
-        // #153: write-enabled requests must enter the durable deploy-control
-        // operation/approval spine before any mutating backend route. The manifest
-        // route is permitted here only when the server is explicitly asked to dry-run.
-        //
-        // When the apply is skipped the result is an explicit, truthful "skipped" record
-        // rather than null: GitOpsDeployBackendResult.ApplyResult is non-nullable and is
-        // projected into a backend step, so a null here crashes the write-enabled deploy
-        // path. This mirrors PlanGitOpsRunAsync's skipped-apply record.
-        BackendCallResult applyResult = dryRun
-            ? await PostToHonuaAsync(
-                configuration.HonuaManifestApplyPath,
-                requestBody,
-                cancellationToken)
-            : new BackendCallResult(
-                IsSuccess: true,
-                Endpoint: BuildEndpoint(configuration.HonuaApiBaseUri, configuration.HonuaManifestApplyPath).ToString(),
-                Detail: "manifest apply skipped: write-enabled requests are routed through the durable actuation spine",
-                PayloadPreview: "apply not requested on the planning path");
+        BackendCallResult applyResult = await PreviewManifestAsync(previewBody, cancellationToken);
 
-        // Deploy-control operation creation/submission is owned by the GitOps actuation
-        // executors (GitOpsExecutor / PromotionExecutor), which create the operation with
-        // submitImmediately=false and only submit when EXECUTION_MODE=execute AND the approval
-        // gate is satisfied. This combined backend path no longer creates an operation here,
-        // so it never issues the old unguarded submitImmediately=true create.
+        // Deploy-control operation creation/submission AND the real (dryRun=false) manifest
+        // apply are owned by the GitOps actuation executors, which create the durable
+        // operation with submitImmediately=false and only mutate once the approval gate is
+        // satisfied. Nothing on this planning path writes.
 
         List<BackendCallResult> combinedCalls =
         [
@@ -322,15 +316,75 @@ internal sealed class BackendGateway : IDisposable
                 : JsonDocument.Parse(capabilitiesSnapshot.Payload.RootElement.GetRawText()));
     }
 
-    internal Task<BackendCallResult> ApplyManifestAsync(
+    // The planning/diff form of /manifest/apply. `dryRun` is verified rather than trusted:
+    // a non-dry-run request never leaves this method, so the preview route cannot be turned
+    // into a write by a caller flag (issue #153).
+    internal Task<BackendCallResult> PreviewManifestAsync(
         ManifestApplyRequest requestBody,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(requestBody);
+        if (!requestBody.DryRun)
+        {
+            throw new InvalidOperationException(
+                "PreviewManifestAsync is the non-mutating manifest route and requires dryRun=true. " +
+                "A real apply must go through ApplyManifestAsync with a grant from the durable actuation spine.");
+        }
+
         return PostToHonuaAsync(
             configuration.HonuaManifestApplyPath,
             requestBody,
             cancellationToken);
     }
+
+    // The mutating form of /manifest/apply. Reachable only with a mutation grant, which the
+    // actuation spine issues after the durable operation exists and its approval gate is
+    // satisfied.
+    internal Task<BackendCallResult> ApplyManifestAsync(
+        ManifestApplyRequest requestBody,
+        ActuationSpine.MutationGrant grant,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(requestBody);
+        ArgumentNullException.ThrowIfNull(grant);
+        grant.EnsureAuthorizes(BackendMutation.ManifestApply);
+
+        return PostToHonuaAsync(
+            configuration.HonuaManifestApplyPath,
+            requestBody,
+            cancellationToken);
+    }
+
+    // Shared builder so the preview and the post-approval apply are byte-identical apart
+    // from the dryRun flag; the digest the spine seals is taken over this same payload.
+    internal static ManifestApplyRequest BuildGitOpsManifestRequest(
+        string service,
+        string[] environments,
+        string revision,
+        string action,
+        string changeSummary,
+        string gitOpsTool,
+        string terraformRepository,
+        string terraformRef,
+        string[] deploymentTargets,
+        bool dryRun,
+        ExecutionMode executionMode,
+        ExecutionTier executionTier,
+        string[] allowedEnvironments)
+        => DesiredStateManifestBuilder.BuildGitOpsDeployRequest(
+            service,
+            environments,
+            revision,
+            action,
+            changeSummary,
+            gitOpsTool,
+            terraformRepository,
+            terraformRef,
+            deploymentTargets,
+            dryRun,
+            executionMode,
+            executionTier,
+            allowedEnvironments);
 
     internal Task<BackendJsonResult> ExportManifestSnapshotAsync(CancellationToken cancellationToken)
     {
@@ -370,35 +424,6 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
-    internal Task<BackendCallResult> CreateDeployOperationAsync(
-        string targetId,
-        string desiredRevision,
-        string? currentRevision,
-        string reason,
-        bool submitImmediately,
-        string idempotencyKey,
-        string correlationId,
-        string priority,
-        IReadOnlyDictionary<string, string>? parameters,
-        CancellationToken cancellationToken)
-    {
-        return PostToHonuaAsync(
-            configuration.HonuaDeployOperationsPath,
-            new
-            {
-                targetId,
-                desiredRevision,
-                currentRevision,
-                reason,
-                idempotencyKey,
-                correlationId,
-                priority,
-                submitImmediately,
-                parameters
-            },
-            cancellationToken);
-    }
-
     internal Task<BackendCallResult> GetDeployOperationAsync(string operationId, CancellationToken cancellationToken)
     {
         return GetFromHonuaAsync(
@@ -425,8 +450,12 @@ internal sealed class BackendGateway : IDisposable
         string correlationId,
         string priority,
         IReadOnlyDictionary<string, string>? parameters,
+        ActuationSpine.OperationGrant grant,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(grant);
+        grant.EnsureAuthorizes(BackendMutation.DeployOperationCreate);
+
         return PostJsonToHonuaAsync(
             configuration.HonuaDeployOperationsPath,
             new
@@ -444,25 +473,19 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
-    internal Task<BackendCallResult> SubmitDeployOperationAsync(
-        string operationId,
-        string reason,
-        CancellationToken cancellationToken)
-    {
-        return PostToHonuaAsync(
-            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/submit",
-            new { reason },
-            cancellationToken);
-    }
-
     // JSON-returning submit variant used by the GitOps executors: after a submit the
     // orchestrator must read the post-submit workflow status (and any blockingReasons)
     // from the durable server operation, not just a truncated payload preview.
     internal Task<BackendJsonResult> SubmitDeployOperationJsonAsync(
         string operationId,
         string reason,
+        ActuationSpine.MutationGrant grant,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(grant);
+        grant.EnsureAuthorizes(BackendMutation.DeployOperationSubmit);
+        RequireGrantMatchesOperation(grant, operationId);
+
         return PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/submit",
             new { reason },
@@ -475,8 +498,13 @@ internal sealed class BackendGateway : IDisposable
     internal Task<BackendJsonResult> RollbackDeployOperationJsonAsync(
         string operationId,
         string reason,
+        ActuationSpine.MutationGrant grant,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(grant);
+        grant.EnsureAuthorizes(BackendMutation.DeployOperationRollback);
+        RequireGrantMatchesOperation(grant, operationId);
+
         return PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
             new { reason },
@@ -501,8 +529,12 @@ internal sealed class BackendGateway : IDisposable
         string reason,
         string idempotencyKey,
         string correlationId,
+        ActuationSpine.OperationGrant grant,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(grant);
+        grant.EnsureAuthorizes(BackendMutation.MetadataReleaseCreate);
+
         return PostJsonToHonuaAsync(
             configuration.HonuaMetadataReleaseOperationsPath,
             new
@@ -684,6 +716,17 @@ internal sealed class BackendGateway : IDisposable
             configuration.HonuaApiKey,
             ApiKeyTransport.XApiKey,
             cancellationToken);
+    }
+
+    // A mutation grant is write authority for ONE durable operation. Presenting it for a
+    // different operation id would silently mutate something the approval never covered.
+    private static void RequireGrantMatchesOperation(ActuationSpine.MutationGrant grant, string operationId)
+    {
+        if (!string.Equals(grant.OperationId, operationId?.Trim(), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Actuation grant authorizes operation `{grant.OperationId}`, not `{operationId}`.");
+        }
     }
 
     private Task<BackendCallResult> PostToHonuaAsync(string relativePath, object payload, CancellationToken cancellationToken)

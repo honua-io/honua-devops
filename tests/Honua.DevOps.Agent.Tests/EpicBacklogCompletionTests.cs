@@ -70,6 +70,11 @@ public class EpicBacklogCompletionTests
             CreateGateway(),
             directPolicy);
 
+        // Issue #151: `clear-tile-cache` has no registered actuator. Under the fully
+        // write-enabled posture above (execute mode, execute-lower-env tier, direct-allowed,
+        // confirmed=true) this previously reported `runbook-execute-ready` while making zero
+        // backend calls. Policy and caller intent authorize an actuator that exists; they
+        // cannot implement one, so the honest answer is `unsupported-action`.
         OperationResponse runbook = await toolkit.RunbookExecuteAsync(
             runbookName: "clear-tile-cache",
             service: "roads-api",
@@ -77,9 +82,12 @@ public class EpicBacklogCompletionTests
             parameters: "layer=roads",
             confirmed: true,
             edition: "enterprise");
-        Assert.Equal("runbook-execute-ready", runbook.Status);
+        Assert.Equal("unsupported-action", runbook.Status);
+        Assert.Null(runbook.BackendSteps);
         Assert.NotNull(runbook.Evidence);
 
+        // Same for a remediation this agent does not implement: `cache miss storm` maps to no
+        // registered remediation action, so `autoApply: true` cannot make it ready.
         OperationResponse remediation = await toolkit.AutoRemediationPlanAsync(
             service: "roads-api",
             environment: "staging",
@@ -87,7 +95,8 @@ public class EpicBacklogCompletionTests
             desiredOutcome: "restore p95 latency",
             autoApply: true,
             edition: "enterprise");
-        Assert.Equal("auto-remediation-ready", remediation.Status);
+        Assert.Equal("unsupported-action", remediation.Status);
+        Assert.Null(remediation.BackendSteps);
     }
 
     private static OperationRuntime CreateRuntime(

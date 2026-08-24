@@ -215,7 +215,13 @@ public class HonuaOperationsToolkitDeployTests
         Assert.NotNull(response.BackendSteps);
         Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-preflight" && !step.MutatesState);
         Assert.Contains(response.BackendSteps!, step => step.Name == "deploy-plan" && !step.MutatesState);
-        Assert.Contains(response.BackendSteps!, step => step.Name == "manifest-apply" && !step.MutatesState);
+
+        // Issue #153: the planning path's /manifest/apply call is the dryRun-pinned preview,
+        // so it is reported as `manifest-preview` and can never be flagged mutating. A
+        // `manifest-apply` step only appears when the typed actuator actually applied.
+        Assert.Contains(response.BackendSteps!, step => step.Name == "manifest-preview" && !step.MutatesState);
+        Assert.DoesNotContain(response.BackendSteps!, step => step.Name == "manifest-apply");
+        Assert.All(response.BackendSteps!, step => Assert.False(step.MutatesState));
     }
 
     [Fact]
@@ -516,14 +522,21 @@ public class HonuaOperationsToolkitDeployTests
         // awaiting-approval/execute-succeeded (covered by the dedicated executor tests).
         Assert.Equal("contract-unavailable", response.Status);
 
-        // #153: this request is write-enabled, so the manifest route is NOT taken on the
-        // planning path — the write may only happen through the durable actuation spine, and
-        // here the spine could never be entered. Previously a `"dryRun":false` apply was sent
-        // at exactly this point, before any durable operation or approval existed.
-        Assert.DoesNotContain(
+        CapturedRequest previewRequest = Assert.Single(
             handler.CapturedRequests,
-            request => request.Uri.Contains("/manifest/apply", StringComparison.Ordinal));
-        Assert.All(handler.CapturedRequests, request => Assert.Equal("GET", request.Method));
+            request => request.Method == HttpMethod.Post.Method
+                && request.Uri.Contains("/manifest/apply", StringComparison.Ordinal));
+        using JsonDocument requestJson = JsonDocument.Parse(previewRequest.Body!);
+        string serialized = requestJson.RootElement.ToString();
+
+        // Issue #153: the only /manifest/apply on the planning path is the dryRun-pinned
+        // preview. The real apply is a step of the typed actuator and therefore never runs
+        // here, where no durable operation could be created in the first place. Previously a
+        // `"dryRun":false` apply was sent at exactly this point, before any durable operation
+        // or approval existed.
+        Assert.Contains("\"dryRun\":true", serialized, StringComparison.Ordinal);
+        Assert.Contains("\"honua.devops/execution-tier\":\"promote-prod\"", serialized, StringComparison.Ordinal);
+        Assert.Contains("\"promotionRef\"", serialized, StringComparison.Ordinal);
         Assert.NotNull(response.BackendSteps);
         Assert.DoesNotContain(response.BackendSteps!, step => step.MutatesState);
 
