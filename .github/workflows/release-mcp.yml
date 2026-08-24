@@ -50,8 +50,9 @@ jobs:
           # reviewed lock file never represented and the locked test lanes never exercised.
           # Restore for all declared RIDs (passing --runtime narrows the set and no longer
           # matches the lock file), then publish the single RID with --no-restore.
-          dotnet restore src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj `
-            -p:PublishSingleFile=true
+          # PublishSingleFile is declared in the csproj so this restore resolves the same
+          # package graph as every other lane.
+          dotnet restore src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           dotnet publish src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj `
@@ -60,7 +61,6 @@ jobs:
             --self-contained true `
             --no-restore `
             --output $publishDir `
-            -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:DebugType=None `
             -p:DebugSymbols=false

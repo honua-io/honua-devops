@@ -14,6 +14,14 @@
       test lanes never exercised.
     -->
     <RuntimeIdentifiers>linux-x64;osx-x64;osx-arm64;win-x64</RuntimeIdentifiers>
+    <!--
+      Declared here rather than passed on release command lines. PublishSingleFile pulls in
+      Microsoft.NET.ILLink.Tasks, so passing it only at restore time produced a lock file
+      whose package set did not match an ordinary `dotnet restore` — every locked lane then
+      failed NU1004. Declaring it keeps the package graph identical for ordinary and release
+      restores alike. It affects `dotnet publish` only; build and test are unchanged.
+    -->
+    <PublishSingleFile>true</PublishSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
