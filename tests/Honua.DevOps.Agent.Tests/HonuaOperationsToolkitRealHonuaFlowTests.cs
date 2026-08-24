@@ -23,7 +23,10 @@ public class HonuaOperationsToolkitRealHonuaFlowTests
             confirmed: true,
             edition: "enterprise");
 
-        Assert.Equal("runbook-executed", response.Status);
+        // Issue #151: a read-only runbook genuinely ran, but it mutated nothing — so it
+        // reports `runbook-observed`. `runbook-executed` is reserved for an actuation with a
+        // receipt and a successful mutating backend step.
+        Assert.Equal("runbook-observed", response.Status);
         CapturedRequest captured = Assert.Single(handler.CapturedRequests);
         Assert.Equal("GET", captured.Method);
         Assert.Contains("/api/v1/admin/deploy/preflight?includeDiagnostics=true", captured.Uri, StringComparison.Ordinal);

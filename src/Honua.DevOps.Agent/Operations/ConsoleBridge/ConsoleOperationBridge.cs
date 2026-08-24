@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -28,7 +29,11 @@ internal sealed class ConsoleOperationBridge(
     private const int MaxReadableKeyLength = 200;
     private const string AgentIdentity = "honua-devops";
 
+    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default);
+
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
+
+    private ActuationSpine Spine => _spine;
 
     private BackendConfiguration Configuration => gateway.Configuration;
 
@@ -63,42 +68,22 @@ internal sealed class ConsoleOperationBridge(
         // No durable target: stay blocked instead of minting a fake operation id.
         if (string.IsNullOrWhiteSpace(runtime.DeployTargetId))
         {
-            GitOpsProposalBridge blocked = new(
-                ProposalId: idempotencyKey,
-                OperationId: null,
-                IdempotencyKey: idempotencyKey,
-                Status: BridgeStatus.TargetUnconfigured,
-                Service: normalizedService,
-                TargetEnvironments: environments,
-                DesiredRevision: normalizedRevision,
-                CurrentRevision: null,
-                RequestedAction: normalizedAction,
-                EffectiveAction: "propose",
-                Owner: normalizedOwner,
-                ApprovalRequired: approvalRequired,
-                WorkflowLinks: [SelfLink(operationId: null)],
-                Evidence: [],
-                SuggestedActions: [ConfigureTargetSuggestion()],
-                CreatedAt: timestamp,
-                UpdatedAt: timestamp,
-                Kind: OperationKind,
-                Requester: normalizedOwner,
-                Agent: AgentIdentity,
-                // No durable target means the proposal cannot enter the lifecycle yet; stay
-                // Planned (the lifecycle entry state) rather than asserting an approval state.
-                ProposalStatus: ProposalLifecycle.Planned,
-                Plan: BuildProposalPlan(
+            const string unconfigured =
+                "HONUA_DEVOPS_DEPLOY_TARGET_ID is not configured; cannot create a durable server operation.";
+            return BuildProposalResponse(
+                BuildBlockedProposal(
+                    idempotencyKey,
                     normalizedService,
                     environments,
                     normalizedRevision,
                     normalizedAction,
+                    normalizedOwner,
                     approvalRequired,
                     targetsProd,
-                    blockingReasons: ["HONUA_DEVOPS_DEPLOY_TARGET_ID is not configured; cannot create a durable server operation."]));
-            return BuildProposalResponse(
-                blocked,
+                    timestamp,
+                    unconfigured),
                 backendSteps: null,
-                blockingReason: "HONUA_DEVOPS_DEPLOY_TARGET_ID is not configured; cannot create a durable server operation.");
+                blockingReason: unconfigured);
         }
 
         BackendCallResult preflight = await gateway.RequestDeployPreflightAsync(includeDiagnostics: true, cancellationToken);
@@ -114,6 +99,40 @@ internal sealed class ConsoleOperationBridge(
                 ["source"] = "honua-devops:proposal"
             },
             cancellationToken);
+        // Recording a proposal is a LIFECYCLE-ENTRY write: it persists a durable governed
+        // request and executes nothing. It still goes through the actuation spine so the
+        // request identity, idempotency key, and policy decision are sealed with it, and so
+        // it fails closed when the durable/audit sinks are unavailable (issue #153).
+        ActuationAuthorization authorization = Spine.Authorize(new ActuationRequest(
+            ActuatorId: "honua.gitops.proposal",
+            Action: normalizedAction,
+            Target: runtime.DeployTargetId,
+            Environments: environments,
+            DesiredState: $"revision={normalizedRevision};service={normalizedService};action={normalizedAction}",
+            IdempotencyKey: idempotencyKey,
+            PolicyGate: "proposal-required",
+            AuthorizationDryRun: true,
+            Actor: normalizedOwner,
+            LifecycleEntry: BackendMutation.DeployOperationCreate));
+
+        if (!authorization.IsGranted)
+        {
+            return BuildProposalResponse(
+                BuildBlockedProposal(
+                    idempotencyKey,
+                    normalizedService,
+                    environments,
+                    normalizedRevision,
+                    normalizedAction,
+                    normalizedOwner,
+                    approvalRequired,
+                    targetsProd,
+                    timestamp,
+                    authorization.Reason),
+                backendSteps: null,
+                blockingReason: authorization.Reason);
+        }
+
         using BackendJsonResult created = await gateway.CreateDeployOperationJsonAsync(
             runtime.DeployTargetId,
             normalizedRevision,
@@ -131,6 +150,7 @@ internal sealed class ConsoleOperationBridge(
                 ["owner"] = normalizedOwner,
                 ["proposal"] = "true"
             },
+            authorization.Grant!,
             cancellationToken);
 
         string? operationId = created.Payload is null ? null : ExtractOperationId(created.Payload.RootElement);
@@ -874,6 +894,50 @@ internal sealed class ConsoleOperationBridge(
         // keeping the target id readable.
         return $"honua-devops:proposal:{targetId}:{ShortHash(descriptor)}";
     }
+
+    // A proposal that never entered the lifecycle: no operation id is invented, the
+    // lifecycle state stays Planned, and the reason is carried as a blocking reason.
+    private GitOpsProposalBridge BuildBlockedProposal(
+        string idempotencyKey,
+        string service,
+        string[] environments,
+        string revision,
+        string action,
+        string owner,
+        bool approvalRequired,
+        bool targetsProd,
+        string timestamp,
+        string blockingReason)
+        => new(
+            ProposalId: idempotencyKey,
+            OperationId: null,
+            IdempotencyKey: idempotencyKey,
+            Status: BridgeStatus.TargetUnconfigured,
+            Service: service,
+            TargetEnvironments: environments,
+            DesiredRevision: revision,
+            CurrentRevision: null,
+            RequestedAction: action,
+            EffectiveAction: "propose",
+            Owner: owner,
+            ApprovalRequired: approvalRequired,
+            WorkflowLinks: [SelfLink(operationId: null)],
+            Evidence: [],
+            SuggestedActions: [ConfigureTargetSuggestion()],
+            CreatedAt: timestamp,
+            UpdatedAt: timestamp,
+            Kind: OperationKind,
+            Requester: owner,
+            Agent: AgentIdentity,
+            ProposalStatus: ProposalLifecycle.Planned,
+            Plan: BuildProposalPlan(
+                service,
+                environments,
+                revision,
+                action,
+                approvalRequired,
+                targetsProd,
+                blockingReasons: [blockingReason]));
 
     private OperationResponse BuildProposalResponse(
         GitOpsProposalBridge proposal,

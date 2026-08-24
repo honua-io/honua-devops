@@ -1,3 +1,5 @@
+using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.DesiredState;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -13,9 +15,10 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 internal sealed class PromotionExecutor(
     OperationRuntime runtime,
     BackendGateway gateway,
-    OperatorPolicyModel policy)
+    OperatorPolicyModel policy,
+    ActuationSpine? spine = null)
 {
-    private readonly GitOpsExecutor _executor = new(runtime, gateway, policy);
+    private readonly GitOpsExecutor _executor = new(runtime, gateway, policy, spine: spine);
 
     internal Task<GitOpsExecutionResult> ExecutePromotionAsync(
         string desiredRevision,
@@ -27,7 +30,8 @@ internal sealed class PromotionExecutor(
         IReadOnlyDictionary<string, string> parameters,
         bool authorizationDryRun,
         string policyGate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ManifestApplyRequest? desiredState = null)
     {
         GitOpsActuationDecision decision = GitOpsActuationDecision.Resolve(
             runtime.ExecutionMode,
@@ -48,6 +52,7 @@ internal sealed class PromotionExecutor(
             priority,
             parameters,
             decision,
-            cancellationToken);
+            cancellationToken,
+            desiredState);
     }
 }

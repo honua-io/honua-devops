@@ -79,6 +79,36 @@ public sealed class ApprovalWaiterTests
             r => r.Method == "POST" && r.Uri.EndsWith("/submit", StringComparison.Ordinal));
     }
 
+    // Issue #153: the waiter's submit is a mutating backend call, so it goes through the
+    // durable actuation spine and inherits the execution-mode safety ceiling. Under the
+    // default plan posture it waits for a human instead of submitting, even though the
+    // approval mode is direct-allowed.
+    [Fact]
+    public async Task WaitAsync_DirectAllowedInPlanMode_NeverSubmits()
+    {
+        var handler = new TestHttpMessageHandler(_ => StatusOk("op-plan", "AwaitingApproval"));
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch);
+        var waiter = new ApprovalWaiter(
+            CreateGateway(handler),
+            OperatorPolicyModel.Default with { ApprovalMode = ApprovalMode.DirectAllowed },
+            runtime: OperationRuntime.SafeDefault,
+            timeout: TimeSpan.FromSeconds(30),
+            initialPollInterval: TimeSpan.FromSeconds(10),
+            maxPollInterval: TimeSpan.FromSeconds(10),
+            delay: (interval, _) =>
+            {
+                clock.Advance(interval);
+                return Task.CompletedTask;
+            },
+            timeProvider: clock);
+
+        var result = await waiter.WaitAsync("op-plan", CancellationToken.None);
+
+        Assert.Equal(ApprovalWaitOutcome.TimedOut, result.Outcome);
+        Assert.False(result.SubmittedByWaiter);
+        Assert.DoesNotContain(handler.CapturedRequests, r => r.Method == "POST");
+    }
+
     [Fact]
     public async Task WaitAsync_TimesOut_WhenStillAwaitingApproval()
     {
@@ -188,12 +218,18 @@ public sealed class ApprovalWaiterTests
     private static ApprovalWaiter CreateWaiter(
         TestHttpMessageHandler handler,
         ApprovalMode approvalMode,
-        int maxConsecutiveTransientErrors = 10)
+        int maxConsecutiveTransientErrors = 10,
+        ExecutionMode executionMode = ExecutionMode.Execute)
     {
         OperatorPolicyModel policy = OperatorPolicyModel.Default with { ApprovalMode = approvalMode };
         return new ApprovalWaiter(
             CreateGateway(handler),
             policy,
+            runtime: OperationRuntime.SafeDefault with
+            {
+                ExecutionMode = executionMode,
+                ExecutionTier = ExecutionTier.ExecuteLowerEnv
+            },
             timeout: TimeSpan.FromMinutes(5),
             initialPollInterval: TimeSpan.FromMilliseconds(1),
             maxPollInterval: TimeSpan.FromMilliseconds(1),

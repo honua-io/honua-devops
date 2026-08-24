@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 
+using Honua.DevOps.Agent.Operations.Actuation;
+
 namespace Honua.DevOps.Agent.Operations.Observability;
 
 /// <summary>
@@ -11,8 +13,11 @@ namespace Honua.DevOps.Agent.Operations.Observability;
 /// </summary>
 internal sealed class OpsObserveDiagnoseProposeLoop(
     OperationRuntime runtime,
-    BackendGateway gateway)
+    BackendGateway gateway,
+    ActuationSpine? spine = null)
 {
+    private readonly ActuationSpine _spine = spine ?? new ActuationSpine(runtime, OperatorPolicy.OperatorPolicy.Default);
+
     private const int DefaultPageSize = 25;
     private const int MaxPageSize = 50;
     private const int DefaultLookbackHours = 24;
@@ -280,8 +285,30 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
                 $"This bounded invocation proposed one finding only; {additionalCandidates} additional supported candidate(s) remain for explicit review.");
         }
 
+        // Creating a server-owned proposal is a lifecycle-entry write: it records a governed
+        // request and executes nothing. It goes through the actuation spine so the finding
+        // identity and the policy decision are sealed with it, and so it fails closed when
+        // the audit/receipt sink is unavailable (issue #153).
+        ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
+            ActuatorId: "honua.ops-finding.propose",
+            Action: "propose",
+            Target: candidate.FindingId,
+            Environments: [],
+            DesiredState: $"finding={candidate.FindingId}",
+            IdempotencyKey: $"honua-devops:ops-finding:{candidate.FindingId}",
+            PolicyGate: "proposal-required",
+            AuthorizationDryRun: true,
+            Actor: "honua-devops:ops-loop",
+            LifecycleEntry: BackendMutation.OpsFindingPropose));
+
+        if (!authorization.IsGranted)
+        {
+            limitations.Add($"Finding proposal failed closed: {authorization.Reason}");
+            return "proposal-failed";
+        }
+
         using BackendJsonResult result = await gateway
-            .ProposeOpsFindingAsync(candidate.FindingId, cancellationToken)
+            .ProposeOpsFindingAsync(candidate.FindingId, authorization.Grant!, cancellationToken)
             .ConfigureAwait(false);
         if (!result.CallResult.IsSuccess || result.Payload is null)
         {
