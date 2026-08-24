@@ -252,8 +252,6 @@ internal sealed class BackendGateway : IDisposable
         List<BackendCallResult> combinedCalls =
         [
             manifestSnapshot.CallResult,
-            capabilitiesSnapshot.CallResult,
-            manifestSnapshot.CallResult,
             capabilitiesSnapshot.CallResult
         ];
         if (applyResult is not null)
