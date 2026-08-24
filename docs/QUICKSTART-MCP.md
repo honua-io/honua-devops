@@ -35,6 +35,36 @@ The container entry point already includes `--mcp`; keep stdin/stdout attached
 because they carry the MCP protocol. Mount an audit directory when using a
 `file://` audit target.
 
+### Terraform runtime contract for the container
+
+The final image is chiseled and contains only the operator binary. It
+deliberately does **not** redistribute the Terraform binary and does not bundle a
+honua-iac checkout, so `provision_infrastructure` is unavailable there by default
+and returns a `terraform-unavailable` refusal that makes zero calls and starts no
+process.
+
+To enable provisioning from the container, mount both prerequisites and point the
+operator at them:
+
+```bash
+docker run --rm -i \
+  --env-file /abs/path/honua-devops.env \
+  -v /usr/local/bin/terraform:/usr/local/bin/terraform:ro \
+  -v /abs/path/to/honua-iac:/honua-iac:ro \
+  -e PATH=/usr/local/bin:/usr/bin:/bin \
+  -e HONUA_DEVOPS_TERRAFORM_LOCAL_PATH=/honua-iac \
+  honua-devops:mcp
+```
+
+`HONUA_DEVOPS_TERRAFORM_BIN` overrides the executable path when Terraform is
+mounted somewhere that is not on `PATH`. The honua-iac mount must contain
+`infrastructure/terraform/examples/aws/{main.tf,variables.tf}`; otherwise the tool
+refuses with `terraform-root-invalid`. Terraform needs writable state and plugin
+directories, so mount the checkout read-write (or set `TF_DATA_DIR`) when you
+intend to run `plan`/`apply` rather than only verifying the refusal.
+
+Every other tool works in the container without these mounts.
+
 ## Register with Claude Code
 
 Source-development path (requires the .NET 10 SDK):
@@ -187,6 +217,19 @@ accepts only the unexpired, hash-checked saved plan produced by the earlier
 `destroy` adds a BreakGlass gate. Secret variables are rejected from the tool
 argument: keep them in a gitignored `terraform.tfvars` or process-scoped
 `TF_VAR_*` values.
+
+The `plan` response carries reviewable evidence, not just a change count: it runs
+`terraform show` against the saved plan and returns the per-resource change roster,
+an explicit list of any replacements and deletions, and a digest of the redacted
+plan text. Review that roster before repeating the call with the confirmation
+challenge. Terraform must be installed and on `PATH` (see "Terraform runtime
+contract for the container" above); when it is not, the tool refuses with
+`terraform-unavailable` before starting any process.
+
+When `environment` is supplied without an explicit `variablesJson.name_prefix`,
+the default prefix is derived from that environment (`environment=staging` plans
+`honua-staging`), so a staging plan cannot silently target the development cell's
+resources.
 
 After smoke checks, `install_handoff` writes a versioned, secretless proxy
 contract. It records `HONUA_BASE_URL`, `HONUA_MCP_REMOTE_URL`, and only the

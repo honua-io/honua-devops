@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -14,6 +15,14 @@ internal sealed partial class HonuaOperationsToolkit
 
     private static readonly Regex NamePrefixPattern = new(
         "^[a-z][a-z0-9-]{0,30}$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    // `terraform show` renders each planned change as e.g.
+    //   "  # aws_ecs_service.honua will be updated in-place"
+    //   "  # aws_db_instance.honua must be replaced"
+    //   "  # aws_s3_bucket.logs will be destroyed"
+    private static readonly Regex PlanResourceChangePattern = new(
+        @"^\s*#\s+(?<address>[^\s]+)\s+(?<verb>will be created|will be updated in-place|will be destroyed|must be replaced|will be replaced|has moved|will be read)",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly Regex PlanSummaryPattern = new(
@@ -99,6 +108,26 @@ internal sealed partial class HonuaOperationsToolkit
                 "Terraform init/plan is unavailable at the observe tier.",
                 ["Register the operator at execution tier plan or higher."],
                 ["Terraform init writes local provider metadata even when cloud state is not mutated."]);
+        }
+
+        // The `terraform` executable is a runtime prerequisite this process does not ship.
+        // Checking for it up front turns an opaque "process did not start" Win32 failure
+        // into an actionable refusal — notably for the published MCP container, whose
+        // chiseled final image contains only the operator binary.
+        if (!(provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance).CanRun("terraform"))
+        {
+            return ProvisioningRefusal(
+                "terraform-unavailable",
+                "The `terraform` executable was not found on PATH. No process was started.",
+                [
+                    "Install Terraform on the host running honua-devops and ensure it is on PATH.",
+                    "In the published MCP container, mount a Terraform binary and the honua-iac checkout, e.g. "
+                        + "`-v /usr/local/bin/terraform:/usr/local/bin/terraform:ro -v /path/to/honua-iac:/honua-iac:ro "
+                        + "-e PATH=/usr/local/bin:/usr/bin:/bin -e HONUA_DEVOPS_TERRAFORM_LOCAL_PATH=/honua-iac` "
+                        + "(see docs/QUICKSTART-MCP.md).",
+                    "The container image deliberately does not redistribute the Terraform binary."
+                ],
+                ["Provisioning is fail-closed when the Terraform runtime cannot be proven present."]);
         }
 
         string terraformRoot;
@@ -249,6 +278,19 @@ internal sealed partial class HonuaOperationsToolkit
                     steps);
             }
 
+            // Reviewable evidence. `terraform show` against the SAVED PLAN is read-only and
+            // is the only way an MCP caller can see which resources, replacements, and
+            // deletions it is being asked to confirm. Without it the response tells the
+            // caller to "review the complete plan" while handing it only three numbers.
+            ProvisioningProcessResult showResult = await runner.RunAsync(
+                "terraform",
+                ["show", "-no-color", planFile],
+                terraformRoot,
+                TimeSpan.FromMinutes(5),
+                cancellationToken);
+            steps.Add(ToBackendStep("terraform-show", canonicalStack, showResult, mutatesState: false));
+            TerraformPlanReview planReview = BuildPlanReview(showResult);
+
             bool destroyPlan = normalizedAction == "destroy";
             ProtectSavedPlan(planFile);
             SavePlanManifest(
@@ -277,11 +319,17 @@ internal sealed partial class HonuaOperationsToolkit
                     $"Deployable root: {terraformRoot}.",
                     $"Saved plan token: {planToken} (expires in 30 minutes).",
                     "Invocation used direct argv; no shell command string was evaluated.",
-                    "Generated variables were restricted to the non-secret aws-ecs/small allowlist."
+                    "Generated variables were restricted to the non-secret aws-ecs/small allowlist.",
+                    $"Planned resource changes ({planReview.ChangeCount} shown{(planReview.Truncated ? ", truncated" : string.Empty)}):",
+                    .. planReview.ResourceChanges,
+                    planReview.DestructiveChanges.Count == 0
+                        ? "No replacements or deletions are present in this plan."
+                        : $"DESTRUCTIVE changes in this plan: {string.Join("; ", planReview.DestructiveChanges)}.",
+                    $"Redacted plan digest (sha256 of the reviewed `terraform show` output): {planReview.ReviewDigest}."
                 ],
                 Actions:
                 [
-                    "Review the complete Terraform plan in the operator session before mutation.",
+                    "Review the planned resource changes listed above before mutation; replacements and deletions are called out explicitly.",
                     $"Repeat with action={nextAction}, confirmed=true, and confirmation={challenge}. The saved plan, not a newly generated plan, will be applied.",
                     "Configure and protect a remote state backend before creating a shared or long-lived cell."
                 ],
@@ -326,6 +374,26 @@ internal sealed partial class HonuaOperationsToolkit
                 "install_handoff currently supports stack=aws-ecs only.",
                 ["Choose the stack that was provisioned by the 2026.1 aws-ecs lane."],
                 []);
+        }
+
+        // The `terraform` executable is a runtime prerequisite this process does not ship.
+        // Checking for it up front turns an opaque "process did not start" Win32 failure
+        // into an actionable refusal — notably for the published MCP container, whose
+        // chiseled final image contains only the operator binary.
+        if (!(provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance).CanRun("terraform"))
+        {
+            return ProvisioningRefusal(
+                "terraform-unavailable",
+                "The `terraform` executable was not found on PATH. No process was started.",
+                [
+                    "Install Terraform on the host running honua-devops and ensure it is on PATH.",
+                    "In the published MCP container, mount a Terraform binary and the honua-iac checkout, e.g. "
+                        + "`-v /usr/local/bin/terraform:/usr/local/bin/terraform:ro -v /path/to/honua-iac:/honua-iac:ro "
+                        + "-e PATH=/usr/local/bin:/usr/bin:/bin -e HONUA_DEVOPS_TERRAFORM_LOCAL_PATH=/honua-iac` "
+                        + "(see docs/QUICKSTART-MCP.md).",
+                    "The container image deliberately does not redistribute the Terraform binary."
+                ],
+                ["Provisioning is fail-closed when the Terraform runtime cannot be proven present."]);
         }
 
         string terraformRoot;
@@ -590,12 +658,16 @@ internal sealed partial class HonuaOperationsToolkit
         return null;
     }
 
+    private const string DefaultProvisioningEnvironment = "dev";
+
+    private static string DefaultNamePrefixFor(string environment) => $"honua-{environment}";
+
     private static Dictionary<string, object?> ParseAwsEcsSmallVariables(string variablesJson)
     {
         Dictionary<string, object?> variables = new(StringComparer.Ordinal)
         {
-            ["environment"] = "dev",
-            ["name_prefix"] = "honua-dev",
+            ["environment"] = DefaultProvisioningEnvironment,
+            ["name_prefix"] = DefaultNamePrefixFor(DefaultProvisioningEnvironment),
             ["deployment_mode"] = "SingleInstance",
             ["desired_count"] = 1,
             ["max_capacity"] = 1,
@@ -641,6 +713,18 @@ internal sealed partial class HonuaOperationsToolkit
                 }
 
                 variables[property.Name] = ValidateVariable(property.Name, property.Value);
+            }
+
+            // The default name prefix is derived from the SELECTED environment, not from the
+            // default one. Otherwise `environment=staging` without an explicit name_prefix
+            // plans staging infrastructure under the `honua-dev` names, which collides with
+            // or reconciles the existing development cell — including under a break-glass
+            // destroy, where it would target the wrong cell's resources.
+            bool environmentSupplied = document.RootElement.TryGetProperty("environment", out _);
+            bool namePrefixSupplied = document.RootElement.TryGetProperty("name_prefix", out _);
+            if (environmentSupplied && !namePrefixSupplied)
+            {
+                variables["name_prefix"] = DefaultNamePrefixFor((string)variables["environment"]!);
             }
         }
 
@@ -1121,6 +1205,74 @@ internal sealed partial class HonuaOperationsToolkit
             result.TimedOut ? "process timed out" : $"process exited {result.ExitCode}",
             result.Succeeded ? ReadPlanSummary(result.StandardOutput) : BuildDiagnostic(result),
             mutatesState);
+    }
+
+    // A bounded, redacted projection of `terraform show` over the saved plan: the per-resource
+    // change roster plus an explicit destructive-change list, so the confirmation challenge is
+    // never the first time a caller learns something is being replaced or destroyed.
+    private sealed record TerraformPlanReview(
+        IReadOnlyList<string> ResourceChanges,
+        IReadOnlyList<string> DestructiveChanges,
+        int ChangeCount,
+        bool Truncated,
+        string ReviewDigest);
+
+    private const int MaxReviewedResourceChanges = 200;
+
+    private static TerraformPlanReview BuildPlanReview(ProvisioningProcessResult showResult)
+    {
+        if (!showResult.Succeeded)
+        {
+            return new TerraformPlanReview(
+                ["Plan review unavailable: `terraform show` did not succeed for the saved plan."],
+                [],
+                0,
+                false,
+                "unavailable");
+        }
+
+        string output = Redaction.Scrub(showResult.StandardOutput ?? string.Empty);
+        List<string> changes = [];
+        List<string> destructive = [];
+
+        foreach (string rawLine in output.Split('\n'))
+        {
+            Match match = PlanResourceChangePattern.Match(rawLine);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            string address = match.Groups["address"].Value.Trim();
+            string verb = match.Groups["verb"].Value.Trim();
+            string entry = $"  {verb}: {address}";
+            changes.Add(entry);
+
+            if (verb.Contains("destroy", StringComparison.OrdinalIgnoreCase)
+                || verb.Contains("replace", StringComparison.OrdinalIgnoreCase))
+            {
+                destructive.Add($"{verb} {address}");
+            }
+        }
+
+        bool truncated = changes.Count > MaxReviewedResourceChanges;
+        if (truncated)
+        {
+            changes = [.. changes.Take(MaxReviewedResourceChanges)];
+            changes.Add($"  ...({MaxReviewedResourceChanges}+ changes; review the full plan in the operator session)");
+        }
+
+        if (changes.Count == 0)
+        {
+            changes.Add("  (no resource-level changes were parsed from the plan output)");
+        }
+
+        return new TerraformPlanReview(
+            changes,
+            destructive,
+            truncated ? MaxReviewedResourceChanges : changes.Count,
+            truncated,
+            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(output))));
     }
 
     private static string ReadPlanSummary(string output)

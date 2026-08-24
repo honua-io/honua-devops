@@ -43,10 +43,14 @@ jobs:
         run: |
           $rid = '${{ matrix.rid }}'
           $publishDir = Join-Path $PWD "artifacts/publish/$rid"
+          # Locked restore. The csproj declares every release RuntimeIdentifier, so
+          # packages.lock.json carries a target for each and the restore resolves entirely
+          # from the committed lock file. Do NOT reintroduce --force-evaluate or
+          # RestoreLockedMode=false here: that would publish transitive package bytes the
+          # reviewed lock file never represented and the locked test lanes never exercised.
+          # Restore for all declared RIDs (passing --runtime narrows the set and no longer
+          # matches the lock file), then publish the single RID with --no-restore.
           dotnet restore src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj `
-            --runtime $rid `
-            --force-evaluate `
-            -p:RestoreLockedMode=false `
             -p:PublishSingleFile=true
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

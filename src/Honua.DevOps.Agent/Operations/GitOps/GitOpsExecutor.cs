@@ -333,11 +333,20 @@ internal sealed class GitOpsExecutor(
               !string.Equals(receiptOperationId, operationId, StringComparison.Ordinal))))
         {
             findings.Add($"Operation `{operationId}` reached success without an authoritative actuator receipt bound to that operation; result is indeterminate.");
+            findings.Add(
+                "The submit succeeded and the operation polled to a terminal state, so backend state may have changed; " +
+                "treat this as an unverified mutation and reconcile against the deploy-control operation before retrying.");
             return new GitOpsExecutionResult(
                 Status: GitOpsExecutionStatus.Indeterminate,
                 OperationId: operationId,
                 ServerStatus: status,
-                Mutated: false,
+                // The submit already succeeded and the operation reached a terminal state, so
+                // cloud state may well have changed — only the receipt evidence is missing.
+                // Reporting Mutated=false here would tell MCP consumers nothing happened and
+                // would contradict the in-progress/terminal paths, which mark a successful
+                // submission as mutated. The status stays fail-closed; the mutation attempt
+                // is reported truthfully.
+                Mutated: true,
                 Decision: decision,
                 BackendSteps: steps,
                 Findings: findings,

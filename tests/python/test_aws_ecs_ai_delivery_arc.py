@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -933,22 +934,29 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             with self.assertRaisesRegex(arc.ArcError, "map audit identities"):
                 arc.verify_privileged_console_audit(self.endpoint, console, "scoped-secret")
 
-    def test_finalize_emits_both_exact_release_receipts_after_teardown(self) -> None:
-        pre_path = write_json(
-            self.root / "pre.json",
-            {
-                "schemaVersion": "honua.aws-ecs.ai-delivery-arc-evidence/v1",
-                "status": "awaiting-teardown",
-                "target": "aws-ecs",
-                "candidateId": self.candidate_id,
-                "releaseId": self.manifest["platformRelease"],
-                "source": {"repository": "honua-io/honua-devops", "sha": self.shas["honua-devops"]},
-                "components": {name: self.shas[name] for name in arc.ARC_COMPONENTS},
-                "checks": {check: "passed" for check in arc.ARC_CHECKS},
-                "artifacts": {"sdkJourneyReceipt": "c" * 64},
-                "journey": {"journeyId": arc.JOURNEY_ID, "releaseContract": arc.RELEASE_CONTRACT},
+    def _complete_pre_teardown(self) -> dict:
+        """The exact pre-teardown shape `finalize` is contractually allowed to seal."""
+        return {
+            "schemaVersion": "honua.aws-ecs.ai-delivery-arc-evidence/v1",
+            "status": "awaiting-teardown",
+            "target": "aws-ecs",
+            "candidateId": self.candidate_id,
+            "releaseId": self.manifest["platformRelease"],
+            "source": {"repository": "honua-io/honua-devops", "sha": self.shas["honua-devops"]},
+            "components": {name: self.shas[name] for name in arc.ARC_COMPONENTS},
+            "endpoint": self.endpoint,
+            "checks": {check: "passed" for check in arc.ARC_CHECKS},
+            "artifacts": {name: "c" * 64 for name in arc.PRE_TEARDOWN_ARTIFACTS},
+            "journey": {
+                "journeyId": arc.JOURNEY_ID,
+                "releaseContract": arc.RELEASE_CONTRACT,
+                "shareUrl": "https://console.honua.io/share/abc",
+                "actionCount": 12,
             },
-        )
+        }
+
+    def test_finalize_emits_both_exact_release_receipts_after_teardown(self) -> None:
+        pre_path = write_json(self.root / "pre.json", self._complete_pre_teardown())
         teardown_path = write_json(
             self.root / "teardown.json",
             {
@@ -984,6 +992,117 @@ class AwsEcsAiDeliveryArcTests(unittest.TestCase):
             hashlib.sha256(final_path.read_bytes()).hexdigest(), journey["evidence"]["sha256"]
         )
         self.assertEqual(set(arc.ARC_COMPONENTS), set(journey["components"]))
+
+    def test_finalize_rejects_a_truncated_pre_teardown_artifact_roster(self) -> None:
+        """A pre-teardown file whose candidate/component/check fields still look correct must
+        not be sealable when its artifact roster has been truncated or replaced. Previously a
+        file carrying one digest was enough to emit both passed release receipts, letting
+        missing SDK, Console, handoff, checkpoint, and real-model evidence be sealed as passed.
+        """
+        truncated = self._complete_pre_teardown()
+        truncated["artifacts"] = {"sdkJourneyReceipt": "c" * 64}
+        with self.assertRaisesRegex(arc.ArcError, "artifact roster is incomplete"):
+            arc.finalize(self._finalize_args(truncated))
+
+    def test_finalize_rejects_a_non_digest_artifact_entry(self) -> None:
+        replaced = self._complete_pre_teardown()
+        replaced["artifacts"]["sdkCheckpoint"] = "not-a-digest"
+        with self.assertRaisesRegex(arc.ArcError, "sdkCheckpoint is not a SHA-256 digest"):
+            arc.finalize(self._finalize_args(replaced))
+
+    def test_finalize_rejects_pre_teardown_with_a_foreign_source_identity(self) -> None:
+        foreign = self._complete_pre_teardown()
+        foreign["source"] = {"repository": "attacker/repo", "sha": self.shas["honua-devops"]}
+        with self.assertRaisesRegex(arc.ArcError, "source identity differs"):
+            arc.finalize(self._finalize_args(foreign))
+
+    def test_finalize_rejects_pre_teardown_with_a_foreign_target(self) -> None:
+        foreign = self._complete_pre_teardown()
+        foreign["target"] = "aws-serverless"
+        with self.assertRaisesRegex(arc.ArcError, "not bound to the aws-ecs target"):
+            arc.finalize(self._finalize_args(foreign))
+
+    def test_finalize_rejects_pre_teardown_without_journey_identity(self) -> None:
+        for mutate, expected in (
+            (lambda pre: pre.pop("journey"), "carries no journey identity"),
+            (lambda pre: pre["journey"].__setitem__("journeyId", "other"), "journey identity does not match"),
+            (lambda pre: pre["journey"].__setitem__("actionCount", 0), "records no completed actions"),
+            (lambda pre: pre["journey"].__setitem__("shareUrl", "http://console.local"), "share URL"),
+        ):
+            with self.subTest(expected=expected):
+                pre = self._complete_pre_teardown()
+                mutate(pre)
+                with self.assertRaisesRegex(arc.ArcError, expected):
+                    arc.finalize(self._finalize_args(pre))
+
+    def test_action_map_rejects_duplicate_action_ids(self) -> None:
+        """A later passing duplicate must not be able to hide an earlier failed action.
+
+        `validate_passed_journey` evaluates the collapsed map, so a silent last-one-wins
+        assignment would let malformed runtime evidence pass every required-group check.
+        """
+        receipt = {
+            "stages": [
+                {"id": "s1", "actions": [{"id": "create-map", "status": "failed"}]},
+                {"id": "s2", "actions": [{"id": "create-map", "status": "passed"}]},
+            ]
+        }
+        with self.assertRaisesRegex(arc.ArcError, "duplicates action create-map"):
+            arc.action_map(receipt)
+
+    def test_action_map_accepts_distinct_action_ids(self) -> None:
+        receipt = {
+            "stages": [
+                {"id": "s1", "actions": [{"id": "create-map", "status": "passed"}]},
+                {"id": "s2", "actions": [{"id": "publish-map", "status": "passed"}]},
+            ]
+        }
+        self.assertEqual({"create-map", "publish-map"}, set(arc.action_map(receipt)))
+
+    def test_privileged_admin_read_never_follows_a_redirect(self) -> None:
+        """urllib's default redirect handler copies `x-api-key` onto the redirected request,
+        so a compromised or misconfigured candidate could redirect a privileged audit read to
+        another origin and receive the resolved admin secret.
+        """
+        handler = arc._NoRedirectHandler()
+        with self.assertRaisesRegex(arc.ArcError, "redirect"):
+            handler.redirect_request(
+                None,
+                None,
+                302,
+                "Found",
+                {},
+                "https://attacker.example/collect",
+            )
+
+    def _finalize_args(self, pre: dict) -> SimpleNamespace:
+        suffix = uuid.uuid4().hex
+        pre_path = write_json(self.root / f"pre-{suffix}.json", pre)
+        teardown_path = write_json(
+            self.root / f"teardown-{suffix}.json",
+            {
+                "schemaVersion": arc.TEARDOWN_SCHEMA,
+                "target": "aws-ecs",
+                "status": "passed",
+                "candidateId": self.candidate_id,
+                "releaseId": self.manifest["platformRelease"],
+                "components": {name: self.shas[name] for name in ("honua-devops", "honua-iac")},
+                "checks": {"terraform-destroy": "passed", "cleanup-verified": "passed"},
+                "evidence": {
+                    "url": "https://github.com/honua-io/honua-release/actions/runs/1",
+                    "sha256": "d" * 64,
+                },
+            },
+        )
+        return SimpleNamespace(
+            manifest=self.manifest_path,
+            pre_teardown_evidence=pre_path,
+            teardown_evidence=teardown_path,
+            evidence_url="https://github.com/honua-io/honua-release/actions/runs/1",
+            final_evidence=self.root / f"final-{suffix}.json",
+            provision_receipt=self.root / f"provision-{suffix}.json",
+            arc_receipt=self.root / f"arc-{suffix}.json",
+        )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,60 @@ internal sealed class SystemProvisioningProcessRunner : IProvisioningProcessRunn
     {
     }
 
+    /// <summary>
+    /// Environment override for the Terraform binary, for hosts that do not put it on PATH
+    /// (for example the MCP container, where it is mounted).
+    /// </summary>
+    internal const string TerraformExecutableVariable = "HONUA_DEVOPS_TERRAFORM_BIN";
+
+    public bool CanRun(string fileName) => Resolve(fileName) is not null;
+
+    // Locates an executable the same way the launcher will: an explicit override first,
+    // then each PATH entry. Returns null when it is genuinely unavailable.
+    internal static string? Resolve(string fileName, string? pathVariable = null)
+    {
+        if (string.Equals(fileName, "terraform", StringComparison.Ordinal)
+            && Environment.GetEnvironmentVariable(TerraformExecutableVariable) is { } configured
+            && !string.IsNullOrWhiteSpace(configured))
+        {
+            return File.Exists(configured) ? configured : null;
+        }
+
+        if (Path.IsPathRooted(fileName))
+        {
+            return File.Exists(fileName) ? fileName : null;
+        }
+
+        string[] executableNames = OperatingSystem.IsWindows()
+            ? [fileName + ".exe", fileName]
+            : [fileName];
+
+        string search = pathVariable ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (string directory in search.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (string executableName in executableNames)
+            {
+                string candidate;
+                try
+                {
+                    candidate = Path.Combine(directory.Trim(), executableName);
+                }
+                catch (ArgumentException)
+                {
+                    // A malformed PATH entry is skipped rather than failing the lookup.
+                    continue;
+                }
+
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        return null;
+    }
+
     public async Task<ProvisioningProcessResult> RunAsync(
         string fileName,
         IReadOnlyList<string> arguments,

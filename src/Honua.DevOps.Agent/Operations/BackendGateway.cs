@@ -191,7 +191,6 @@ internal sealed class BackendGateway : IDisposable
     {
         BackendCallResult? deployPreflightResult = null;
         BackendCallResult? deployPlanResult = null;
-        BackendCallResult? deployOperationResult = null;
         if (!string.IsNullOrWhiteSpace(deployTargetId))
         {
             deployPreflightResult = await RequestDeployPreflightAsync(
@@ -236,12 +235,21 @@ internal sealed class BackendGateway : IDisposable
         // #153: write-enabled requests must enter the durable deploy-control
         // operation/approval spine before any mutating backend route. The manifest
         // route is permitted here only when the server is explicitly asked to dry-run.
-        BackendCallResult? applyResult = dryRun
+        //
+        // When the apply is skipped the result is an explicit, truthful "skipped" record
+        // rather than null: GitOpsDeployBackendResult.ApplyResult is non-nullable and is
+        // projected into a backend step, so a null here crashes the write-enabled deploy
+        // path. This mirrors PlanGitOpsRunAsync's skipped-apply record.
+        BackendCallResult applyResult = dryRun
             ? await PostToHonuaAsync(
                 configuration.HonuaManifestApplyPath,
                 requestBody,
                 cancellationToken)
-            : null;
+            : new BackendCallResult(
+                IsSuccess: true,
+                Endpoint: BuildEndpoint(configuration.HonuaApiBaseUri, configuration.HonuaManifestApplyPath).ToString(),
+                Detail: "manifest apply skipped: write-enabled requests are routed through the durable actuation spine",
+                PayloadPreview: "apply not requested on the planning path");
 
         // Deploy-control operation creation/submission is owned by the GitOps actuation
         // executors (GitOpsExecutor / PromotionExecutor), which create the operation with
@@ -254,10 +262,7 @@ internal sealed class BackendGateway : IDisposable
             manifestSnapshot.CallResult,
             capabilitiesSnapshot.CallResult
         ];
-        if (applyResult is not null)
-        {
-            combinedCalls.Add(applyResult);
-        }
+        combinedCalls.Add(applyResult);
         if (deployPreflightResult is not null)
         {
             combinedCalls.Add(deployPreflightResult);
@@ -266,11 +271,6 @@ internal sealed class BackendGateway : IDisposable
         if (deployPlanResult is not null)
         {
             combinedCalls.Add(deployPlanResult);
-        }
-
-        if (deployOperationResult is not null)
-        {
-            combinedCalls.Add(deployOperationResult);
         }
 
         BackendCallResult combinedResult = CombineResults(
@@ -288,8 +288,7 @@ internal sealed class BackendGateway : IDisposable
                 ? null
                 : JsonDocument.Parse(capabilitiesSnapshot.Payload.RootElement.GetRawText()),
             DeployPreflightResult: deployPreflightResult,
-            DeployPlanResult: deployPlanResult,
-            DeployOperationResult: deployOperationResult);
+            DeployPlanResult: deployPlanResult);
     }
 
     internal async Task<GitOpsDeployBackendResult> PlanGitOpsRunAsync(CancellationToken cancellationToken)

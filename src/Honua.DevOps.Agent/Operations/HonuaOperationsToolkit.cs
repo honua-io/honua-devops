@@ -543,7 +543,7 @@ internal sealed partial class HonuaOperationsToolkit(
                 ? MapActuationStatus(execution.Status)
                 : runtime.ExecutionMode == ExecutionMode.Execute ? "execute-enabled" : "plan-only";
 
-        IReadOnlyList<OperationBackendStep> backendSteps = BuildGitOpsBackendSteps(backendResult, authorization.DryRun);
+        IReadOnlyList<OperationBackendStep> backendSteps = BuildGitOpsBackendSteps(backendResult);
         if (execution is not null && execution.BackendSteps.Count > 0)
         {
             backendSteps = [.. backendSteps, .. execution.BackendSteps];
@@ -2826,15 +2826,18 @@ internal sealed partial class HonuaOperationsToolkit(
         }
     }
 
+    // Steps for the PLANNING path only. Since #153 routes every write through the durable
+    // actuation spine, the manifest call on this path is either a server dry-run or an
+    // explicit skip — never a write. Flagging it from `dryRun` would report a mutation that
+    // did not happen, and the audit `Mutated` flag is derived from these steps.
     private static IReadOnlyList<OperationBackendStep> BuildGitOpsBackendSteps(
-        GitOpsDeployBackendResult backendResult,
-        bool dryRun)
+        GitOpsDeployBackendResult backendResult)
     {
         List<OperationBackendStep> steps =
         [
             OperationBackendStep.From("manifest-export", backendResult.ExportResult, mutatesState: false),
             OperationBackendStep.From("capabilities", backendResult.CapabilitiesResult, mutatesState: false),
-            OperationBackendStep.From("manifest-apply", backendResult.ApplyResult, mutatesState: !dryRun)
+            OperationBackendStep.From("manifest-apply", backendResult.ApplyResult, mutatesState: false)
         ];
 
         if (backendResult.DeployPreflightResult is not null)
@@ -2845,11 +2848,6 @@ internal sealed partial class HonuaOperationsToolkit(
         if (backendResult.DeployPlanResult is not null)
         {
             steps.Add(OperationBackendStep.From("deploy-plan", backendResult.DeployPlanResult, mutatesState: false));
-        }
-
-        if (backendResult.DeployOperationResult is not null)
-        {
-            steps.Add(OperationBackendStep.From("deploy-operation", backendResult.DeployOperationResult, mutatesState: !dryRun));
         }
 
         if (backendResult.DeployOperationStatusResult is not null)

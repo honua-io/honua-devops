@@ -5,6 +5,15 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!--
+      Release channels publish self-contained, RID-specific single-file binaries. Listing the
+      RIDs here makes packages.lock.json carry a `net10.0/<rid>` target for each, so those
+      restores succeed in LOCKED mode. Without it a RID-specific restore cannot be satisfied
+      from the lock file, and the release build has to disable locked mode entirely, resolving
+      transitive packages that the committed lock file never represented and that the locked
+      test lanes never exercised.
+    -->
+    <RuntimeIdentifiers>linux-x64;osx-x64;osx-arm64;win-x64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>

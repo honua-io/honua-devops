@@ -2,10 +2,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
+# Locked restore from the committed packages.lock.json, which covers every release RID
+# declared in the csproj. See .github/workflows/release-mcp.yml for why the lock bypass
+# must not come back.
 RUN dotnet restore src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj \
-    --runtime linux-x64 \
-    --force-evaluate \
-    -p:RestoreLockedMode=false \
     -p:PublishSingleFile=true
 RUN dotnet publish src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj \
     --configuration Release \

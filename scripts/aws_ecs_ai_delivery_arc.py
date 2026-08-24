@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 try:
     import yaml
@@ -71,6 +71,25 @@ PROVISION_CHECKS = (
     "admin-mcp-handoff",
     "teardown",
 )
+# Every artifact digest the pre-teardown evidence must carry. `finalize` re-checks this exact
+# roster before sealing receipts: without it a truncated or replaced pre-teardown file whose
+# candidate/component/check fields still look correct is enough to emit passed receipts,
+# letting missing SDK, Console, handoff, checkpoint, and real-model evidence be sealed as
+# passed. The writer builds its artifacts map from this same tuple, so the two cannot drift.
+PRE_TEARDOWN_ARTIFACTS = (
+    "platformManifest",
+    "provisionBinding",
+    "secretlessHandoff",
+    "sdkJourneyReceipt",
+    "sdkCheckpoint",
+    "consoleReceipt",
+    "sdkConsoleReceipt",
+    "consoleEvidence",
+    "studioRealModelHandoff",
+    "awsEcsRealModelReceipt",
+    "awsEcsRealModelEvidence",
+)
+
 ARC_CHECKS = (
     "candidate-image-install",
     "admin-configure-and-publish",
@@ -1017,6 +1036,27 @@ def validate_console_evidence(
     return evidence
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Refuses every redirect instead of following it.
+
+    urllib's default handler copies non-content headers -- including ``x-api-key`` --
+    onto the redirected request. A compromised or misconfigured candidate could
+    therefore redirect a privileged audit read to another origin and receive the
+    resolved admin secret. Validating the original ``base_url`` does not help, because
+    the redirect target is chosen after that check. These reads are always same-origin
+    against a candidate we already resolved, so a redirect is a failure, not a hop.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+        raise ArcError(
+            f"candidate returned an unexpected {code} redirect to another location; "
+            "privileged reads never follow redirects because that would forward the admin credential"
+        )
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirectHandler)
+
+
 def fetch_admin_json(base_url: str, path: str, admin_secret: str, label: str) -> dict[str, Any]:
     request = Request(
         f"{base_url}{path}",
@@ -1024,8 +1064,11 @@ def fetch_admin_json(base_url: str, path: str, admin_secret: str, label: str) ->
         method="GET",
     )
     try:
-        with urlopen(request, timeout=15) as response:
+        # Redirects are refused: see _NoRedirectHandler. Never swap this for urlopen().
+        with _NO_REDIRECT_OPENER.open(request, timeout=15) as response:
             raw = response.read(1024 * 1024 + 1)
+    except ArcError:
+        raise
     except (HTTPError, URLError, OSError, TimeoutError) as exc:
         raise ArcError(f"could not read {label} from the candidate") from exc
     if len(raw) > 1024 * 1024:
@@ -1273,13 +1316,24 @@ def run_sdk(command: list[str], env: dict[str, str]) -> int:
 
 
 def action_map(receipt: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index a completed SDK receipt by action id, rejecting duplicates.
+
+    A silent last-one-wins assignment would let a later passing duplicate hide an
+    earlier failed or evidence-free action while every required-group presence check
+    still passed. ``checkpoint_action_receipt_digests`` already rejects duplicates for
+    checkpoint actions; malformed runtime evidence stays fail-closed here too.
+    """
     result: dict[str, dict[str, Any]] = {}
     for stage in receipt.get("stages") or []:
         if not isinstance(stage, dict):
             continue
         for action in stage.get("actions") or []:
-            if isinstance(action, dict) and isinstance(action.get("id"), str):
-                result[action["id"]] = action
+            if not isinstance(action, dict) or not isinstance(action.get("id"), str):
+                continue
+            action_id = action["id"]
+            if action_id in result:
+                raise ArcError(f"SDK journey receipt duplicates action {action_id}")
+            result[action_id] = action
     return result
 
 
@@ -1616,19 +1670,7 @@ def resume(args: argparse.Namespace) -> None:
         "components": exact_component_shas(manifest, ARC_COMPONENTS),
         "endpoint": base_url,
         "checks": {check: "passed" for check in ARC_CHECKS},
-        "artifacts": {
-            "platformManifest": sha256_file(args.manifest),
-            "provisionBinding": sha256_file(args.provision_binding),
-            "secretlessHandoff": sha256_file(args.handoff),
-            "sdkJourneyReceipt": sha256_file(args.sdk_receipt),
-            "sdkCheckpoint": checkpoint["integrity"]["digest"],
-            "consoleReceipt": sha256_file(args.console_receipt),
-            "sdkConsoleReceipt": sha256_file(args.sdk_console_receipt),
-            "consoleEvidence": sha256_file(args.console_evidence),
-            "studioRealModelHandoff": sha256_file(args.real_model_handoff),
-            "awsEcsRealModelReceipt": sha256_file(args.real_model_receipt),
-            "awsEcsRealModelEvidence": sha256_file(args.real_model_evidence),
-        },
+        "artifacts": build_pre_teardown_artifacts(args, checkpoint),
         "journey": {
             "journeyId": journey["journeyId"],
             "releaseContract": journey["releaseContract"],
@@ -1638,6 +1680,33 @@ def resume(args: argparse.Namespace) -> None:
     }
     write_json(args.pre_teardown_evidence, evidence)
     print(f"AWS ECS AI delivery arc passed before teardown; evidence={args.pre_teardown_evidence}")
+
+
+def build_pre_teardown_artifacts(
+    args: argparse.Namespace, checkpoint: dict[str, Any]
+) -> dict[str, str]:
+    """Digest every artifact named in PRE_TEARDOWN_ARTIFACTS.
+
+    Keyed off the shared roster so the writer and ``finalize``'s validator cannot drift:
+    adding an artifact to the tuple without sourcing it here fails immediately.
+    """
+    sources: dict[str, str] = {
+        "platformManifest": sha256_file(args.manifest),
+        "provisionBinding": sha256_file(args.provision_binding),
+        "secretlessHandoff": sha256_file(args.handoff),
+        "sdkJourneyReceipt": sha256_file(args.sdk_receipt),
+        "sdkCheckpoint": checkpoint["integrity"]["digest"],
+        "consoleReceipt": sha256_file(args.console_receipt),
+        "sdkConsoleReceipt": sha256_file(args.sdk_console_receipt),
+        "consoleEvidence": sha256_file(args.console_evidence),
+        "studioRealModelHandoff": sha256_file(args.real_model_handoff),
+        "awsEcsRealModelReceipt": sha256_file(args.real_model_receipt),
+        "awsEcsRealModelEvidence": sha256_file(args.real_model_evidence),
+    }
+    missing = sorted(set(PRE_TEARDOWN_ARTIFACTS) - set(sources))
+    if missing:
+        raise ArcError(f"pre-teardown artifact roster has no source for {missing}")
+    return {name: sources[name] for name in PRE_TEARDOWN_ARTIFACTS}
 
 
 def validate_teardown(
@@ -1708,6 +1777,44 @@ def finalize(args: argparse.Namespace) -> None:
         raise ArcError("pre-teardown evidence is not bound to the exact release candidate")
     if pre.get("components") != exact_component_shas(manifest, ARC_COMPONENTS):
         raise ArcError("pre-teardown component identities differ from the manifest")
+    if pre.get("target") != "aws-ecs":
+        raise ArcError("pre-teardown evidence is not bound to the aws-ecs target")
+
+    expected_source = {
+        "repository": "honua-io/honua-devops",
+        "sha": manifest["components"]["honua-devops"]["sha"],
+    }
+    if pre.get("source") != expected_source:
+        raise ArcError("pre-teardown evidence source identity differs from the manifest")
+
+    require_public_https(str(pre.get("endpoint") or ""), "pre-teardown candidate endpoint")
+
+    journey = pre.get("journey")
+    if not isinstance(journey, dict):
+        raise ArcError("pre-teardown evidence carries no journey identity")
+    if journey.get("journeyId") != JOURNEY_ID or journey.get("releaseContract") != RELEASE_CONTRACT:
+        raise ArcError("pre-teardown journey identity does not match the release contract")
+    if not isinstance(journey.get("actionCount"), int) or journey["actionCount"] < 1:
+        raise ArcError("pre-teardown journey records no completed actions")
+    require_public_https(str(journey.get("shareUrl") or ""), "pre-teardown Console share URL")
+
+    # The exact artifact roster, not a subset. A file carrying a single digest must not be
+    # enough to seal both release receipts.
+    artifacts = pre.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ArcError("pre-teardown evidence carries no artifact digests")
+    if set(artifacts) != set(PRE_TEARDOWN_ARTIFACTS):
+        missing = sorted(set(PRE_TEARDOWN_ARTIFACTS) - set(artifacts))
+        unexpected = sorted(set(artifacts) - set(PRE_TEARDOWN_ARTIFACTS))
+        raise ArcError(
+            "pre-teardown artifact roster is incomplete or unexpected"
+            + (f"; missing={missing}" if missing else "")
+            + (f"; unexpected={unexpected}" if unexpected else "")
+        )
+    for name in PRE_TEARDOWN_ARTIFACTS:
+        if not SHA256.fullmatch(str(artifacts.get(name, ""))):
+            raise ArcError(f"pre-teardown artifact digest for {name} is not a SHA-256 digest")
+
     for check in ARC_CHECKS:
         if (pre.get("checks") or {}).get(check) != "passed":
             raise ArcError(f"pre-teardown evidence does not prove {check}=passed")

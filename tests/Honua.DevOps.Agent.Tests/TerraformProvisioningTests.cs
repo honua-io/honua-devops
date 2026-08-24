@@ -13,7 +13,8 @@ public sealed class TerraformProvisioningTests
         using TerraformTestRoot root = new();
         FakeProvisioningProcessRunner runner = new(
             Success("Terraform has been successfully initialized!"),
-            Success("Plan: 7 to add, 0 to change, 0 to destroy."));
+            Success("Plan: 7 to add, 0 to change, 0 to destroy."),
+            Success(TerraformShowOutput));
         using BackendGateway gateway = CreateGateway();
         HonuaOperationsToolkit toolkit = new(
             CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
@@ -30,13 +31,128 @@ public sealed class TerraformProvisioningTests
 
         Assert.Equal("terraform-plan-ready", response.Status);
         Assert.Contains("7 to add", response.Summary, StringComparison.Ordinal);
-        Assert.Equal(2, runner.Calls.Count);
+        Assert.Equal(3, runner.Calls.Count);
         Assert.All(runner.Calls, call => Assert.Equal("terraform", call.FileName));
         Assert.Equal("init", runner.Calls[0].Arguments[0]);
         Assert.Equal("plan", runner.Calls[1].Arguments[0]);
+        Assert.Equal("show", runner.Calls[2].Arguments[0]);
         Assert.DoesNotContain(runner.Calls, call => call.Arguments[0] == "apply");
         Assert.All(runner.Calls, call => Assert.Equal(root.AwsRoot, call.WorkingDirectory));
+
+        // The caller must be able to review WHAT it is confirming, not just three numbers.
+        Assert.Contains(response.Findings, finding => finding.Contains("aws_ecs_service.honua", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, finding => finding.Contains("aws_db_instance.honua", StringComparison.Ordinal));
+
+        // Replacements and deletions are called out explicitly, not buried in the roster.
+        string destructive = Assert.Single(
+            response.Findings,
+            finding => finding.StartsWith("DESTRUCTIVE changes in this plan:", StringComparison.Ordinal));
+        Assert.Contains("must be replaced aws_db_instance.honua", destructive, StringComparison.Ordinal);
+        Assert.Contains("will be destroyed aws_s3_bucket.stale", destructive, StringComparison.Ordinal);
+        Assert.Contains(
+            response.Findings,
+            finding => finding.StartsWith("Redacted plan digest", StringComparison.Ordinal));
+        Assert.Contains(response.BackendSteps!, step => step.Name == "terraform-show" && !step.MutatesState);
+
         DeleteSavedPlanFrom(runner.Calls[1]);
+    }
+
+    [Fact]
+    public async Task Plan_DerivesTheDefaultNamePrefixFromTheSelectedEnvironment()
+    {
+        // A staging plan without an explicit name_prefix must not target `honua-dev`
+        // infrastructure: that collides with (or reconciles) the existing development cell,
+        // including under a break-glass destroy.
+        using TerraformTestRoot root = new();
+        FakeProvisioningProcessRunner runner = new(
+            Success("initialized"),
+            Success("Plan: 1 to add, 0 to change, 0 to destroy."),
+            Success(TerraformShowOutput));
+        using BackendGateway gateway = CreateGateway();
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
+            gateway,
+            provisioningProcessRunner: runner);
+
+        OperationResponse response = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs",
+            "small",
+            "plan",
+            "{\"environment\":\"staging\"}",
+            confirmed: false,
+            confirmation: string.Empty);
+
+        Assert.Equal("terraform-plan-ready", response.Status);
+        ProcessCall plan = runner.Calls[1];
+        string varFileArgument = Assert.Single(
+            plan.Arguments,
+            argument => argument.StartsWith("-var-file=", StringComparison.Ordinal));
+        string variables = File.ReadAllText(varFileArgument["-var-file=".Length..]);
+
+        Assert.Contains("\"name_prefix\": \"honua-staging\"", variables, StringComparison.Ordinal);
+        Assert.DoesNotContain("honua-dev", variables, StringComparison.Ordinal);
+        DeleteSavedPlanFrom(plan);
+    }
+
+    [Fact]
+    public async Task Plan_KeepsAnExplicitNamePrefixOverTheEnvironmentDefault()
+    {
+        using TerraformTestRoot root = new();
+        FakeProvisioningProcessRunner runner = new(
+            Success("initialized"),
+            Success("Plan: 1 to add, 0 to change, 0 to destroy."),
+            Success(TerraformShowOutput));
+        using BackendGateway gateway = CreateGateway();
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
+            gateway,
+            provisioningProcessRunner: runner);
+
+        OperationResponse response = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs",
+            "small",
+            "plan",
+            "{\"environment\":\"staging\",\"name_prefix\":\"honua-cell-a\"}",
+            confirmed: false,
+            confirmation: string.Empty);
+
+        Assert.Equal("terraform-plan-ready", response.Status);
+        ProcessCall plan = runner.Calls[1];
+        string varFileArgument = Assert.Single(
+            plan.Arguments,
+            argument => argument.StartsWith("-var-file=", StringComparison.Ordinal));
+        string variables = File.ReadAllText(varFileArgument["-var-file=".Length..]);
+
+        Assert.Contains("\"name_prefix\": \"honua-cell-a\"", variables, StringComparison.Ordinal);
+        DeleteSavedPlanFrom(plan);
+    }
+
+    [Fact]
+    public async Task Plan_RefusesWithoutStartingAnythingWhenTerraformIsNotInstalled()
+    {
+        // The published MCP container ships only the operator binary, so this is the
+        // documented state there until Terraform and the honua-iac checkout are mounted.
+        using TerraformTestRoot root = new();
+        FakeProvisioningProcessRunner runner = new() { TerraformAvailable = false };
+        using BackendGateway gateway = CreateGateway();
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
+            gateway,
+            provisioningProcessRunner: runner);
+
+        OperationResponse response = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs",
+            "small",
+            "plan",
+            "{}",
+            confirmed: false,
+            confirmation: string.Empty);
+
+        Assert.Equal("terraform-unavailable", response.Status);
+        Assert.Empty(runner.Calls);
+        Assert.Contains(
+            response.Actions,
+            action => action.Contains("HONUA_DEVOPS_TERRAFORM_LOCAL_PATH=/honua-iac", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -45,7 +161,8 @@ public sealed class TerraformProvisioningTests
         using TerraformTestRoot root = new();
         FakeProvisioningProcessRunner runner = new(
             Success("initialized"),
-            Success("Plan: 3 to add, 1 to change, 0 to destroy."));
+            Success("Plan: 3 to add, 1 to change, 0 to destroy."),
+            Success(TerraformShowOutput));
         using BackendGateway gateway = CreateGateway();
         HonuaOperationsToolkit planner = new(
             CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
@@ -76,9 +193,10 @@ public sealed class TerraformProvisioningTests
             confirmation: challenge);
 
         Assert.Equal("infrastructure-provisioned", response.Status);
-        Assert.Equal(3, runner.Calls.Count);
+        Assert.Equal(4, runner.Calls.Count);
         ProcessCall plan = runner.Calls[1];
-        ProcessCall apply = runner.Calls[2];
+        ProcessCall apply = runner.Calls[3];
+        Assert.Equal("show", runner.Calls[2].Arguments[0]);
         string outArgument = Assert.Single(plan.Arguments, argument => argument.StartsWith("-out=", StringComparison.Ordinal));
         string savedPlan = outArgument["-out=".Length..];
         Assert.Equal(["apply", "-input=false", "-no-color", "-auto-approve", savedPlan], apply.Arguments);
@@ -339,6 +457,27 @@ public sealed class TerraformProvisioningTests
     private static ProvisioningProcessResult Success(string output)
         => new(0, output, string.Empty, false);
 
+    // A representative `terraform show` rendering of a saved plan: one create, one
+    // replacement, and one deletion, so the reviewable-evidence assertions cover the
+    // destructive cases as well as the benign one.
+    private const string TerraformShowOutput = """
+Terraform will perform the following actions:
+
+  # aws_ecs_service.honua will be created
+  + resource "aws_ecs_service" "honua" {
+    }
+
+  # aws_db_instance.honua must be replaced
+  -/+ resource "aws_db_instance" "honua" {
+    }
+
+  # aws_s3_bucket.stale will be destroyed
+  - resource "aws_s3_bucket" "stale" {
+    }
+
+Plan: 7 to add, 0 to change, 0 to destroy.
+""";
+
     private static ProvisioningProcessResult Failure(string error)
         => new(1, string.Empty, error, false);
 
@@ -349,6 +488,13 @@ public sealed class TerraformProvisioningTests
         internal List<ProcessCall> Calls { get; } = [];
 
         internal void Enqueue(ProvisioningProcessResult result) => _results.Enqueue(result);
+
+        // The fake launcher can always "run" what it is asked for; availability of the real
+        // terraform binary is covered by its own tests.
+        internal bool TerraformAvailable { get; set; } = true;
+
+        public bool CanRun(string fileName)
+            => !string.Equals(fileName, "terraform", StringComparison.Ordinal) || TerraformAvailable;
 
         public Task<ProvisioningProcessResult> RunAsync(
             string fileName,
@@ -387,6 +533,12 @@ public sealed class TerraformProvisioningTests
 
         internal int ApplyCalls { get; private set; }
 
+        public bool CanRun(string fileName)
+        {
+            _ = fileName;
+            return true;
+        }
+
         public async Task<ProvisioningProcessResult> RunAsync(
             string fileName,
             IReadOnlyList<string> arguments,
@@ -408,6 +560,10 @@ public sealed class TerraformProvisioningTests
                 string outputArgument = Assert.Single(arguments, argument => argument.StartsWith("-out=", StringComparison.Ordinal));
                 File.WriteAllText(outputArgument["-out=".Length..], "fake saved terraform plan");
                 return Success("Plan: 1 to add, 0 to change, 0 to destroy.");
+            }
+            if (command == "show")
+            {
+                return Success("  # aws_ecs_service.honua will be created");
             }
             if (command == "apply")
             {
