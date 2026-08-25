@@ -313,20 +313,6 @@ internal sealed partial class HonuaOperationsToolkit
             string nextAction = destroyPlan ? "destroy" : "apply";
             string challenge = $"{nextAction}:{canonicalStack}:{environment}:{planToken}";
 
-            ProvisioningLineage lineage = new(
-                savedPlan.Manifest.ProvisioningOperationId,
-                savedPlan.Manifest.PlanSha256,
-                approvalReceipt.ApprovalReceiptId,
-                ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
-                ActuatorReceiptReference: $"terraform://{savedPlan.Manifest.Stack}/{action}/{savedPlan.Manifest.PlanSha256}");
-            SaveProvisioningState(new ProvisioningState(
-                lineage,
-                savedPlan.Manifest.Stack,
-                savedPlan.Manifest.Environment,
-                action,
-                DateTimeOffset.UtcNow,
-                TeardownHandle: $"terraform://{savedPlan.Manifest.Stack}/{savedPlan.Manifest.Environment}/{savedPlan.Manifest.ProvisioningOperationId}"));
-
             return new OperationResponse(
                 Status: destroyPlan ? "terraform-destroy-plan-ready" : "terraform-plan-ready",
                 Summary: destroyPlan
@@ -1141,6 +1127,20 @@ internal sealed partial class HonuaOperationsToolkit
                     applyResult,
                     steps);
             }
+
+            ProvisioningLineage lineage = new(
+                savedPlan.Manifest.ProvisioningOperationId,
+                savedPlan.Manifest.PlanSha256,
+                approvalReceipt.ApprovalReceiptId,
+                ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
+                ActuatorReceiptReference: $"terraform://{savedPlan.Manifest.Stack}/{action}/{savedPlan.Manifest.PlanSha256}");
+            SaveProvisioningState(new ProvisioningState(
+                lineage,
+                savedPlan.Manifest.Stack,
+                savedPlan.Manifest.Environment,
+                action,
+                DateTimeOffset.UtcNow,
+                TeardownHandle: $"terraform://{savedPlan.Manifest.Stack}/{savedPlan.Manifest.Environment}/{savedPlan.Manifest.ProvisioningOperationId}"));
 
             return new OperationResponse(
                 Status: action == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
