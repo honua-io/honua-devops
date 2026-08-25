@@ -2,7 +2,7 @@
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 37 operator tools the interactive agent
+MCP-capable host) can call the same 35 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 In MCP mode the client LLM does the reasoning, so **no model provider
@@ -12,62 +12,83 @@ variables matter.
 
 ## Install without a .NET SDK
 
-Each `v*` GitHub Release contains self-contained archives and SHA-256 files for
-Linux x64, macOS x64/arm64, and Windows x64. Download the archive for the host,
-verify its adjacent checksum, extract it, and register the contained
-`Honua.DevOps.Agent` (`.exe` on Windows) directly:
+Pushing a `v*` tag runs [`.github/workflows/release-mcp.yml`](../.github/workflows/release-mcp.yml),
+which publishes, for that tag:
+
+- self-contained single-file archives for `linux-x64`, `osx-x64`, `osx-arm64`,
+  and `win-x64` as GitHub Release assets, each with an adjacent
+  `.sha256` file in `sha256sum -c` format;
+- a container image pushed to `ghcr.io/honua-io/honua-devops`, tagged with the
+  release version and its commit SHA. The release also carries a
+  `container-image.txt` asset recording the image digest to pin.
+
+The archives contain one executable and no .NET runtime dependency of any kind;
+the container's final layer is `runtime-deps` (native dependencies only, no SDK
+and no shared framework) running as a non-root user. Nothing below needs
+`dotnet` on `PATH`.
+
+> The first release is published when the first `v*` tag is pushed. Until then,
+> use the source-development path below. Substitute the tag you are installing
+> for `<version>` (for example `v2026.1.0`).
+
+### Binary
+
+Download with the GitHub CLI (`gh auth login` first — the repository is
+private, so an unauthenticated download will not resolve):
 
 ```bash
-sha256sum -c honua-devops-linux-x64.tar.gz.sha256
-tar -xzf honua-devops-linux-x64.tar.gz
-claude mcp add honua-devops -- "$PWD/Honua.DevOps.Agent" --mcp
+VERSION=<version>
+ASSET=honua-devops-linux-x64.tar.gz   # or osx-arm64 / osx-x64 / win-x64 (.zip)
+
+gh release download "$VERSION" \
+  --repo honua-io/honua-devops \
+  --pattern "$ASSET" \
+  --pattern "$ASSET.sha256"
+
+sha256sum -c "$ASSET.sha256"          # macOS: shasum -a 256 -c
+
+mkdir -p ~/.local/share/honua-devops
+tar -xzf "$ASSET" -C ~/.local/share/honua-devops
+
+claude mcp add honua-devops -- ~/.local/share/honua-devops/Honua.DevOps.Agent --mcp
 ```
 
-The repository also ships a multi-stage container whose final image contains a
-self-contained binary and no .NET SDK:
+On Windows the archive is a `.zip` and the executable is
+`Honua.DevOps.Agent.exe`.
+
+Verify the registration reached `tools/list`:
 
 ```bash
-docker build -t honua-devops:mcp .
-docker run --rm -i --env-file /abs/path/honua-devops.env honua-devops:mcp
+claude mcp list                       # honua-devops should report 35 tools
+~/.local/share/honua-devops/Honua.DevOps.Agent --list-tools | head -1
+# honua-devops exposes 35 operator tools:
 ```
 
-The container entry point already includes `--mcp`; keep stdin/stdout attached
-because they carry the MCP protocol. Mount an audit directory when using a
-`file://` audit target.
+Upgrade by repeating the download/verify/extract over the same directory with a
+new `VERSION`; the registration keeps pointing at the same path. Uninstall with
+`claude mcp remove honua-devops && rm -rf ~/.local/share/honua-devops`.
 
-### Terraform runtime contract for the container
+### Container
 
-The final image is chiseled and contains only the operator binary. It
-deliberately does **not** redistribute the Terraform binary and does not bundle a
-honua-iac checkout, so `provision_infrastructure` is unavailable there by default
-and returns a `terraform-unavailable` refusal that makes zero calls and starts no
-process.
-
-To enable provisioning from the container, mount both prerequisites and point the
-operator at them:
+Pin the digest recorded in the release's `container-image.txt` rather than a
+tag:
 
 ```bash
-docker run --rm -i \
-  --env-file /abs/path/honua-devops.env \
-  -v /usr/local/bin/terraform:/usr/local/bin/terraform:ro \
-  -v /abs/path/to/honua-iac:/honua-iac:ro \
-  -e PATH=/usr/local/bin:/usr/bin:/bin \
-  -e HONUA_DEVOPS_TERRAFORM_LOCAL_PATH=/honua-iac \
-  honua-devops:mcp
+IMAGE=ghcr.io/honua-io/honua-devops@sha256:<digest>
+docker pull "$IMAGE"
+
+claude mcp add honua-devops -- \
+  docker run --rm -i --env-file /abs/path/honua-devops.env "$IMAGE"
 ```
 
-`HONUA_DEVOPS_TERRAFORM_BIN` overrides the executable path when Terraform is
-mounted somewhere that is not on `PATH`. The honua-iac mount must contain
-`infrastructure/terraform/examples/aws/{main.tf,variables.tf}`; otherwise the tool
-refuses with `terraform-root-invalid`. Terraform needs writable state and plugin
-directories, so mount the checkout read-write (or set `TF_DATA_DIR`) when you
-intend to run `plan`/`apply` rather than only verifying the refusal.
-
-Every other tool works in the container without these mounts.
+The entry point already includes `--mcp`, so pass no extra arguments; `-i` is
+required because stdin/stdout carry the MCP protocol. Mount a writable
+directory when `HONUA_DEVOPS_AUDIT_HOOK_TARGET` uses a `file://` target.
+Uninstall with `claude mcp remove honua-devops && docker image rm "$IMAGE"`.
 
 ## Register with Claude Code
 
-Source-development path (requires the .NET 10 SDK):
+Source-development path (runs from source; requires the .NET 10 SDK):
 
 ```bash
 claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
@@ -95,12 +116,12 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 37 tools), or run the
+Verify with `claude mcp list` (the server should report 35 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --mcp
-# stderr: honua-devops MCP stdio server ready (tools=37, mode=plan, tier=plan, approval=pr-first, ...)
+# stderr: honua-devops MCP stdio server ready (tools=35, mode=plan, tier=plan, approval=pr-first, ...)
 ```
 
 ## Register with Codex CLI
@@ -175,7 +196,7 @@ bottlenecks) with prioritized remediation and validation checks.
 
 ## Exposed tools (1:1 with the interactive agent)
 
-All 37 tools registered by `CapabilityToolset` (the
+All 35 tools registered by `CapabilityToolset` (the
 `ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
 live MCP surface 1:1):
 
@@ -195,7 +216,6 @@ live MCP surface 1:1):
 `plan_azure_gp_substrate`, `plan_azure_gp_job_sizing`,
 `get_gitops_proposal`, `record_gitops_proposal_decision`,
 `get_devops_operation_status`, `build_ai_devops_brief`,
-`provision_infrastructure`, `install_handoff`,
 `explain_release_package`.
 
 > The mutating/decision tools `deploy_service_gitops` and
@@ -205,45 +225,6 @@ live MCP surface 1:1):
 > projection rather than acting. Recovery uses the health-gated fix-forward planner
 > `plan_forward_fix` (verify health -> propose a corrected revision -> re-deploy),
 > not rollback (see "Release posture" under the safety model).
-
-`provision_infrastructure` executes Terraform with a direct argument list over
-an allowlisted deployable root. For 2026.1 it accepts only `stack=aws-ecs`
-(mapped to the actual `honua-iac/infrastructure/terraform/examples/aws` root)
-and `size=small`. `plan` never applies. `apply` requires execute mode,
-execute-lower-env or break-glass tier, direct-allowed approval, a non-production
-environment, and the exact confirmation challenge returned by the tool. It
-accepts only the unexpired, hash-checked saved plan produced by the earlier
-`plan` call and passes that exact artifact to `terraform apply`.
-`destroy` adds a BreakGlass gate. Secret variables are rejected from the tool
-argument: keep them in a gitignored `terraform.tfvars` or process-scoped
-`TF_VAR_*` values.
-
-The `plan` response carries reviewable evidence, not just a change count: it runs
-`terraform show` against the saved plan and returns the per-resource change roster,
-an explicit list of any replacements and deletions, and a digest of the redacted
-plan text. Review that roster before repeating the call with the confirmation
-challenge. Terraform must be installed and on `PATH` (see "Terraform runtime
-contract for the container" above); when it is not, the tool refuses with
-`terraform-unavailable` before starting any process.
-
-When `environment` is supplied without an explicit `variablesJson.name_prefix`,
-the default prefix is derived from that environment (`environment=staging` plans
-`honua-staging`), so a staging plan cannot silently target the development cell's
-resources.
-
-After smoke checks, `install_handoff` writes a versioned, secretless proxy
-contract. It records `HONUA_BASE_URL`, `HONUA_MCP_REMOTE_URL`, and only the
-secret-store reference for `HONUA_ADMIN_KEY`; resolve the key into the client
-process environment at launch. The key itself is never read, returned, or
-written by the handoff tool. The contract also names three required AI
-capability families and fails closed when a post-install MCP `tools/list` probe
-does not expose them: the default-on `honua_admin_*` family (including
-honua_admin_server_status), the `analysis` profile's buffer, overlay,
-statistics, reproject, join, and export tools, and the `esri-gp` profile's list,
-describe, and execute-task tools. Cloud server configuration must include
-`Mcp__Profiles__0=base`, `Mcp__Profiles__1=analysis`, and
-`Mcp__Profiles__2=esri-gp`; admin is a default operation family rather than a
-profile switch.
 
 `honua_observe_diagnose_propose` is the primary day-2 operator entry point. It
 reads honua_ops_health, honua_ops_findings, honua_alert_events,

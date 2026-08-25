@@ -9,19 +9,29 @@
       Release channels publish self-contained, RID-specific single-file binaries. Listing the
       RIDs here makes packages.lock.json carry a `net10.0/<rid>` target for each, so those
       restores succeed in LOCKED mode. Without it a RID-specific restore cannot be satisfied
-      from the lock file, and the release build has to disable locked mode entirely, resolving
-      transitive packages that the committed lock file never represented and that the locked
+      from the lock file and the release build would have to disable locked mode entirely,
+      resolving transitive packages the committed lock file never represented and the locked
       test lanes never exercised.
     -->
     <RuntimeIdentifiers>linux-x64;osx-x64;osx-arm64;win-x64</RuntimeIdentifiers>
     <!--
-      Declared here rather than passed on release command lines. PublishSingleFile pulls in
-      Microsoft.NET.ILLink.Tasks, so passing it only at restore time produced a lock file
-      whose package set did not match an ordinary `dotnet restore` — every locked lane then
-      failed NU1004. Declaring it keeps the package graph identical for ordinary and release
-      restores alike. It affects `dotnet publish` only; build and test are unchanged.
+      Declared here rather than passed on the release command line. PublishSingleFile pulls in
+      Microsoft.NET.ILLink.Tasks, so passing it only at restore time produces a lock file whose
+      package set does not match an ordinary `dotnet restore` and every locked lane fails
+      NU1004. Declaring it keeps the package graph identical for ordinary and release restores.
+      It affects `dotnet publish` only; build and test behaviour is unchanged.
     -->
     <PublishSingleFile>true</PublishSingleFile>
+    <!--
+      Trimming stays OFF. The MCP tool surface is bound reflectively (ModelContextProtocol
+      AIFunctionFactory over the CapabilityToolset delegates) and the backend/provider payloads
+      round-trip through reflection-based System.Text.Json, so the trimmer cannot see the types
+      it would have to keep. IncludeNativeLibrariesForSelfExtract keeps the native
+      dependencies inside the single file instead of beside it.
+    -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,6 +45,16 @@
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.2" />
     <PackageReference Include="ModelContextProtocol.Core" Version="1.4.0" />
     <PackageReference Include="OpenAI" Version="2.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The published blind-eval scorecard contract lives in `contracts/` so downstream
+      consumers (honua-release evidence aggregation) can read it without building this
+      repo. It is embedded here so the blind-eval CLI mode validates every artifact it
+      writes against the same file, with no second copy to drift.
+    -->
+    <EmbeddedResource Include="../../contracts/blind-eval-scorecard.v1.schema.json" LogicalName="Honua.DevOps.Agent.contracts.blind-eval-scorecard.v1.schema.json" />
   </ItemGroup>
 
 </Project>

@@ -16,6 +16,6 @@ spec:
   gitOpsTool: honua-gitops
   terraform:
     repository: https://github.com/honua-io/honua-iac
-    ref: main
+    ref: trunk
     targets:
       - eks

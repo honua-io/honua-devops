@@ -36,6 +36,19 @@
       "requiredForRelease": true
     },
     {
+      "id": "bedrock",
+      "displayName": "Claude on Amazon Bedrock",
+      "role": "portability",
+      "provider": "bedrock",
+      "enabledEnv": "HONUA_EVAL_BEDROCK_ENABLED",
+      "commandEnv": "HONUA_EVAL_BEDROCK_COMMAND",
+      "modelEnv": "HONUA_DEVOPS_BEDROCK_MODEL",
+      "secretEnv": "HONUA_DEVOPS_BEDROCK_API_KEY",
+      "regionEnv": "HONUA_DEVOPS_BEDROCK_REGION",
+      "requiredForRelease": false,
+      "notes": "Deployment-portability lane for the shipped BedrockChatClientAdapter (ProviderKind.Bedrock, Converse API, AWS credential chain). It is not a second release authority: it hosts the same model family as the `claude` lane, so it tracks hosting/API-surface regressions rather than model-quality regressions. The API key is optional; without it the adapter uses the AWS credential chain."
+    },
+    {
       "id": "local-llama",
       "displayName": "Local Llama",
       "role": "portability",

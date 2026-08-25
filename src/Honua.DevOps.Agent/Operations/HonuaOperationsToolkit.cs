@@ -1883,11 +1883,17 @@ internal sealed partial class HonuaOperationsToolkit(
 
     [Description(
         "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls. " +
-        "The detected issue is classified into a REGISTERED remediation action before any readiness is reported: " +
-        "an operationId routes to a governed GitOps rollback, a drift signature routes to a read-only drift " +
-        "observation, and anything else returns `unsupported-action` with zero backend calls. `autoApply=true` " +
-        "cannot create a capability; only an actuation with a durable receipt and a successful mutating backend " +
-        "step returns `auto-remediation-applied`.")]
+        "Intent is classified into a REGISTERED remediation action from TYPED input only, before any readiness " +
+        "is reported — never from the prose in detectedIssue/desiredOutcome. Supply either `findingId` (preferred: " +
+        "a server-owned deterministic ops finding id `{rule}-{32 hex}`, or its bare rule id) or `remediationAction` " +
+        "(`gitops-rollback` or `drift-observe`). Mapped finding rules: `deploy-manual-intervention` -> " +
+        "gitops-rollback; `platform-release-skew` and `platform-release-runtime-divergence` -> drift-observe. " +
+        "A rollback additionally needs the durable deploy-control operation id, passed as an `operationId=<id>` " +
+        "token in detectedIssue/desiredOutcome; supplying that token alone remains supported for backward " +
+        "compatibility and is an explicit request to roll that operation back. An unmapped rule, an unregistered " +
+        "action name, a finding id and action name that disagree, or no typed intent at all returns " +
+        "`unsupported-action` with zero backend calls. `autoApply=true` cannot create a capability; only an " +
+        "actuation with a durable receipt and a successful mutating backend step returns `auto-remediation-applied`.")]
     public async Task<OperationResponse> AutoRemediationPlanAsync(
         string service,
         string environment,
@@ -1895,6 +1901,8 @@ internal sealed partial class HonuaOperationsToolkit(
         string desiredOutcome,
         bool autoApply,
         string edition,
+        string findingId = "",
+        string remediationAction = "",
         CancellationToken cancellationToken = default)
     {
         string normalizedEdition = NormalizeEdition(edition);
@@ -1910,24 +1918,25 @@ internal sealed partial class HonuaOperationsToolkit(
         string? operationId = TryExtractParameter($"{detectedIssue} {desiredOutcome}", "operationId") ??
                               TryExtractParameter($"{detectedIssue} {desiredOutcome}", "operation-id");
 
-        // ACTUATOR FIRST (issue #151). The remediation is classified into a REGISTERED action
-        // before any readiness is computed. A request this agent has no implementation for
-        // resolves to no actuator, and the honest answer is `unsupported-action` with zero
-        // backend calls — never `auto-remediation-ready` derived from `autoApply` and policy.
-        string? remediationAction = !string.IsNullOrWhiteSpace(operationId)
-            ? RemediationAction.GitOpsRollback
-            : Contains(sanitizedIssue, "drift") || Contains(sanitizedOutcome, "drift")
-                ? RemediationAction.DriftObserve
-                : null;
+        // ACTUATOR FIRST (issue #151), CLASSIFIED FROM TYPED INPUT (issue #156, REQ-002).
+        // The remediation is classified into a REGISTERED action before any readiness is
+        // computed, and the classification reads only typed intent — a server-owned finding
+        // id, an explicit action name, or an explicit operation id. It never inspects the
+        // free-text issue/outcome prose, so a description that merely mentions drift cannot
+        // conjure the drift actuator. A request this agent has no implementation for resolves
+        // to no actuator, and the honest answer is `unsupported-action` with zero backend
+        // calls — never `auto-remediation-ready` derived from `autoApply` and policy.
+        RemediationIntent intent = RemediationIntentMap.Resolve(findingId, remediationAction, operationId);
 
         string remediationTarget = $"{normalizedService}:{normalizedEnvironment}";
-        if (!ActuatorRegistry.TryResolveRemediation(remediationAction, out ActuatorDescriptor descriptor))
+        if (!ActuatorRegistry.TryResolveRemediation(intent.Action, out ActuatorDescriptor descriptor))
         {
             return BuildUnsupportedActuatorResponse(
                 tool: "honua_auto_remediation_plan",
-                action: sanitizedIssue,
+                action: intent.RequestLabel,
                 target: remediationTarget,
-                supported: [RemediationAction.GitOpsRollback, RemediationAction.DriftObserve]);
+                supported: RemediationAction.All,
+                reason: intent.Detail);
         }
 
         if (descriptor.Kind == ActuatorKind.Mutating &&
@@ -1987,6 +1996,7 @@ internal sealed partial class HonuaOperationsToolkit(
             $"Detected issue: {sanitizedIssue}.",
             $"Desired outcome: {sanitizedOutcome}.",
             $"Auto-apply requested: {autoApply}; resolved status: {status}.",
+            $"Intent source: {intent.Source.ToString().ToLowerInvariant()}. {intent.Detail}",
             $"Resolved actuator: {actuation.ActuatorId} ({descriptor.Kind.ToString().ToLowerInvariant()}) for action `{descriptor.Action}`.",
             $"Actuation outcome: {actuation.Outcome} (mutated={actuation.Mutated}).",
             $"Approval mode: {EffectivePolicy.ApprovalMode.ToConfigValue()}."
@@ -2246,12 +2256,13 @@ internal sealed partial class HonuaOperationsToolkit(
         string tool,
         string action,
         string target,
-        IReadOnlyCollection<string> supported)
+        IReadOnlyCollection<string> supported,
+        string? reason = null)
     {
-        ActuationResult result = ActuationResult.Unsupported(
-            action,
-            target,
-            $"No typed actuator is registered for `{action}`.");
+        string detail = string.IsNullOrWhiteSpace(reason)
+            ? $"No typed actuator is registered for `{action}`."
+            : reason;
+        ActuationResult result = ActuationResult.Unsupported(action, target, detail);
         ActuationResponseGuard.Validate(ActuationOutcome.UnsupportedAction, result);
 
         return new OperationResponse(
@@ -2261,6 +2272,7 @@ internal sealed partial class HonuaOperationsToolkit(
             [
                 $"Requested action: {action}.",
                 $"Target: {target}.",
+                detail,
                 "No typed actuator is registered, so no backend call was made and no state was changed.",
                 $"Registered actions: {string.Join(", ", supported)}."
             ],
@@ -2285,7 +2297,7 @@ internal sealed partial class HonuaOperationsToolkit(
                 null,
                 "unsupported-action",
                 ActuationOutcome.UnsupportedAction,
-                $"No registered actuator for `{action}`."));
+                detail));
     }
 
     private OperationEvidence BuildPlannerEvidence(

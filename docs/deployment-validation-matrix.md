@@ -1,11 +1,18 @@
 # Deployment Validation Matrix and Smoke Contract
 
-This matrix defines the first-pass deployment validation contract for April 1, 2026.
+This matrix defines the deployment validation contract for the current release
+train, `release/2026.1` (and its corrective successor cut `release/2026.1.1`),
+tracked by honua-io/honua-release#120.
+
+> The matrix was originally written as the first-pass contract for an April 1,
+> 2026 campaign gated on `release/apr-2026`. That branch and date are historical;
+> the runtime/mode rows and launch classes below carried forward unchanged to the
+> 2026.1 train.
 
 ## Matrix
 
 Legend:
-- `Must Pass`: launch gate for `release/apr-2026`
+- `Must Pass`: launch gate for `release/2026.1`
 - `Experimental`: can ship first-pass with caveats
 - `Deferred`: not a launch gate
 
@@ -89,7 +96,7 @@ Contract verification:
 
 ## Reuse
 
-This smoke contract is the shared endpoint-level validation step for the April deployment campaign.
+This smoke contract is the shared endpoint-level validation step for the 2026.1 deployment campaign.
 
 - `docs/manual-cloud-runbooks.md` uses it as the common apply -> smoke -> destroy validation step.
 - Later operator rollout and desired-state flows should reuse the same contract rather than inventing a second smoke path.

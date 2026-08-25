@@ -1,5 +1,11 @@
 name: Release MCP operator
 
+# Publishes the artifacts that let an operator register `honua-devops --mcp`
+# without a .NET SDK: self-contained single-file binaries per platform, their
+# SHA-256 checksums, and a multi-stage container image whose final layer carries
+# only the .NET runtime dependencies. Tag pushes publish; workflow_dispatch runs
+# the same build as a dry run and pushes nothing.
+
 on:
   push:
     tags:
@@ -8,6 +14,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
   publish-binary:
@@ -43,15 +52,15 @@ jobs:
         run: |
           $rid = '${{ matrix.rid }}'
           $publishDir = Join-Path $PWD "artifacts/publish/$rid"
-          # Locked restore. The csproj declares every release RuntimeIdentifier, so
-          # packages.lock.json carries a target for each and the restore resolves entirely
-          # from the committed lock file. Do NOT reintroduce --force-evaluate or
-          # RestoreLockedMode=false here: that would publish transitive package bytes the
-          # reviewed lock file never represented and the locked test lanes never exercised.
-          # Restore for all declared RIDs (passing --runtime narrows the set and no longer
-          # matches the lock file), then publish the single RID with --no-restore.
-          # PublishSingleFile is declared in the csproj so this restore resolves the same
-          # package graph as every other lane.
+
+          # Locked restore against the committed packages.lock.json, which carries a
+          # net10.0/<rid> target for every RuntimeIdentifier declared in the csproj.
+          # Do NOT reintroduce --force-evaluate or -p:RestoreLockedMode=false: that would
+          # publish package bytes the reviewed lock file never represented and the locked
+          # lanes never exercised. Restore for every declared RID (passing --runtime narrows
+          # the set and stops matching the lock file), then publish one RID with --no-restore.
+          # PublishSingleFile lives in the csproj so this resolves the same package graph as
+          # every other lane.
           dotnet restore src/Honua.DevOps.Agent/Honua.DevOps.Agent.csproj
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -61,68 +70,194 @@ jobs:
             --self-contained true `
             --no-restore `
             --output $publishDir `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:DebugType=None `
             -p:DebugSymbols=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Smoke the published binary
+        shell: pwsh
+        run: |
+          $rid = '${{ matrix.rid }}'
+          $publishDir = Join-Path $PWD "artifacts/publish/$rid"
+          $exe = if ($rid -like 'win-*') { 'Honua.DevOps.Agent.exe' } else { 'Honua.DevOps.Agent' }
+          $binary = Join-Path $publishDir $exe
+
+          if (-not (Test-Path $binary)) {
+            throw "Published binary not found at $binary."
+          }
+
+          # Cross-RID publishes cannot be executed on the build runner; only run the
+          # binary when it targets the runner's own platform.
+          $runnable =
+            ($rid -eq 'linux-x64' -and $IsLinux) -or
+            ($rid -eq 'win-x64' -and $IsWindows) -or
+            ($rid -eq 'osx-arm64' -and $IsMacOS)
+          if (-not $runnable) {
+            Write-Host "Skipping execution smoke for $rid on this runner."
+            exit 0
+          }
+
+          if (-not $IsWindows) { chmod +x $binary }
+          & $binary --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "--help failed for $rid." }
+
+          $tools = & $binary --list-tools
+          if ($LASTEXITCODE -ne 0) { throw "--list-tools failed for $rid." }
+          Write-Host ($tools | Select-Object -First 1)
+
+      - name: Package archive and checksum
+        shell: pwsh
+        run: |
+          $rid = '${{ matrix.rid }}'
+          $publishDir = Join-Path $PWD "artifacts/publish/$rid"
           $assetDir = Join-Path $PWD 'artifacts/release'
           New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
           $assetBase = "honua-devops-$rid"
+
           if ('${{ matrix.extension }}' -eq 'zip') {
             $asset = Join-Path $assetDir "$assetBase.zip"
-            Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $asset
+            Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $asset -Force
           } else {
             $asset = Join-Path $assetDir "$assetBase.tar.gz"
             tar -czf $asset -C $publishDir .
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+          # `<sha>  <name>` — the format `sha256sum -c` / `shasum -a 256 -c` expects.
           $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
-          "$hash  $([System.IO.Path]::GetFileName($asset))" |
-            Set-Content -NoNewline -Encoding utf8 "$asset.sha256"
+          $name = [System.IO.Path]::GetFileName($asset)
+          "$hash  $name" | Set-Content -Encoding ascii "$asset.sha256"
 
       - name: Upload release asset
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: honua-devops-${{ matrix.rid }}
           path: artifacts/release/*
           if-no-files-found: error
 
-  container-smoke:
+  publish-container:
+    name: Publish container
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Build SDK-free runtime container
-        run: docker build --tag honua-devops:mcp-release-check .
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # Immutable tags only. Docs pin a version or a digest, never a moving tag.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Build and push SDK-free runtime image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          # workflow_dispatch builds the image as a smoke check and pushes nothing.
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Buildx's inline SLSA attestation would publish an image index; keep the pushed
+          # artifact a plain manifest so the digest recorded below is the one operators pin,
+          # and attach provenance through actions/attest-build-provenance instead.
+          provenance: false
+
+      - name: Attest container provenance
+        if: ${{ startsWith(github.ref, 'refs/tags/') && (!github.event.repository.private || vars.ENABLE_GITHUB_ATTESTATIONS == 'true') }}
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record image digest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release
+          {
+            printf 'image: %s\n' "$IMAGE_NAME"
+            printf 'digest: %s\n' "$IMAGE_DIGEST"
+            printf 'pinned: %s@%s\n' "$IMAGE_NAME" "$IMAGE_DIGEST"
+          } > artifacts/release/container-image.txt
+          cat artifacts/release/container-image.txt
+
+      - name: Upload image digest
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: honua-devops-container
+          path: artifacts/release/*
+          if-no-files-found: error
 
   github-release:
+    name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [publish-binary, container-smoke]
+    needs: [publish-binary, publish-container]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download release assets
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        # Pinned past the Node 20 forced-migration breakage, and scoped to the
+        # binary/container artifacts: an unscoped download also pulls docker
+        # buildx's `*.dockerbuild` build-record artifact, which this job does
+        # not want and which the v4-era action failed to download at all
+        # ("Artifact download failed after 5 retries", twice, on v2026.1.0).
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts/release
+          pattern: honua-devops-*
+
+      - name: Flatten assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/upload
+          find artifacts/release -type f -exec mv -t artifacts/upload {} +
+          ls -l artifacts/upload
+
+      - name: Attest binary provenance
+        if: ${{ !github.event.repository.private || vars.ENABLE_GITHUB_ATTESTATIONS == 'true' }}
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: 'artifacts/upload/*.tar.gz,artifacts/upload/*.zip'
 
       - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        shell: pwsh
+          TAG: ${{ github.ref_name }}
+        shell: bash
         run: |
-          $tag = $env:GITHUB_REF_NAME
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --verify-tag --generate-notes --title $tag
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          Get-ChildItem artifacts/release -Recurse -File | ForEach-Object {
-            gh release upload $tag $_.FullName --clobber
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+          fi
+          gh release upload "$TAG" artifacts/upload/* --clobber

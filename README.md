@@ -13,7 +13,7 @@ This repository is the execution vehicle for the operator control system tracked
 - Operate Honua like a senior platform operator (install, configure, optimize, monitor, troubleshoot, upgrade).
 - Act as a solution engineer and architect to design and deploy Honua workloads to cloud environments.
 - Customize deployment topology per environment (WAF/no WAF, nginx proxy/no proxy, edge rate limiting posture, scaling shape).
-- Provide provider-pluggable AI runtime with at least `codex`, `claude`, and `local-llama` (NVIDIA NIM and other OpenAI-compatible local endpoints).
+- Provide provider-pluggable AI runtime with at least `codex`, `claude`, `local-llama` (NVIDIA NIM and other OpenAI-compatible local endpoints), and `bedrock` (Amazon Bedrock Converse).
 
 Mission: raise the technical and delivery bar high enough to disrupt the GIS professional services status quo.
 
@@ -32,7 +32,7 @@ open-core runtime promise.
 
 - .NET 10 console host
 - Microsoft Agent Framework (`Microsoft.Agents.AI`, `Microsoft.Agents.AI.OpenAI`)
-- OpenAI-compatible provider adapters (`codex`, `claude`, `local-llama`)
+- OpenAI-compatible provider adapters (`codex`, `claude`, `local-llama`) plus a native Amazon Bedrock Converse adapter (`bedrock`)
 - Built-in operations toolset (function tools for logs, metrics, troubleshooting, tuning, upgrades, GitOps deploys, customer requirement analysis)
 
 ## Built-In Capabilities
@@ -56,7 +56,8 @@ multi-stage container whose final image does not require the .NET SDK.
 
 ## Provider Configuration
 
-Set `HONUA_DEVOPS_PROVIDER` to `codex`, `claude`, or `local-llama` (defaults to `codex`).
+Set `HONUA_DEVOPS_PROVIDER` to `codex`, `claude`, `local-llama`, or `bedrock` (defaults to `codex`).
+`bedrock` also accepts the alias `aws-bedrock`.
 Reference defaults live in `.env.example`.
 `honua-devops` auto-loads `.env` and `.env.local` from the working directory, with process environment variables taking precedence and `.env.local` overriding `.env`.
 
@@ -77,6 +78,18 @@ Reference defaults live in `.env.example`.
 - `HONUA_DEVOPS_LOCAL_LLAMA_MODEL` (required, e.g. `meta/llama-3.3-70b-instruct`)
 - `HONUA_DEVOPS_LOCAL_LLAMA_API_KEY` (required, NIM developer-tier key or self-hosted API key)
 - `HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT` (required for hosted NIM; defaults to the OpenAI base URL otherwise)
+
+### Bedrock provider (Amazon Bedrock Converse)
+
+- `HONUA_DEVOPS_BEDROCK_MODEL` (required — a Bedrock model id or inference-profile id, e.g. a versioned `anthropic.*` id)
+- `HONUA_DEVOPS_BEDROCK_REGION` (optional, defaults to `us-west-2`)
+- `HONUA_DEVOPS_BEDROCK_API_KEY` (optional long-lived Bedrock bearer token; when unset the standard AWS credential chain is used — env vars, shared profile, IAM role, or Lambda ambient credentials)
+
+Unlike the other three providers, `bedrock` is not an OpenAI-compatible adapter:
+`BedrockChatClientAdapter` speaks the Bedrock Converse API directly, so there is
+no `_ENDPOINT` variable and no API key is required when the host already has AWS
+credentials. There is no default model — `HONUA_DEVOPS_BEDROCK_MODEL` must be set
+explicitly.
 
 `local-llama` is the integration surface for NVIDIA NIM (build.nvidia.com hosted, NVIDIA AI Enterprise self-hosted, or AWS Marketplace) and any other OpenAI-compatible local inference endpoint (vLLM, Ollama, TGI). The canonical Honua-tuned target is **Honua-GIS-32B** (parent epic `honua-io/honua-sdk-python#64`); the same three env vars point at it once the dedicated NIM endpoint ships from 64.10. See [docs/deployments/nvidia-nim.md](docs/deployments/nvidia-nim.md) for hosted setup, self-hosted Docker, AWS Marketplace notes, the Honua-GIS-32B model card, and troubleshooting.
 
@@ -305,6 +318,22 @@ record per tool call (stdout-targeted audit evidence moves to stderr because
 stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
 for Codex registration, required environment, worked examples, and the safety
 model notes.
+
+### Release artifacts (no .NET SDK required)
+
+Pushing a `v*` tag runs [`.github/workflows/release-mcp.yml`](.github/workflows/release-mcp.yml),
+which publishes for that tag:
+
+- self-contained single-file archives for `linux-x64`, `osx-x64`, `osx-arm64`,
+  and `win-x64` as GitHub Release assets, each with an adjacent `.sha256`
+  checksum file;
+- a container image on `ghcr.io/honua-io/honua-devops` whose final layer is
+  `runtime-deps` — native dependencies only, no SDK and no shared framework —
+  with the digest to pin recorded in the release's `container-image.txt` asset.
+
+`workflow_dispatch` builds the same artifacts as a dry run and publishes
+nothing. Install and registration commands are in
+[docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md#install-without-a-net-sdk).
 
 ## Customer Adoption
 

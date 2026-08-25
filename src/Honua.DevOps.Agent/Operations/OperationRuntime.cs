@@ -56,7 +56,7 @@ internal sealed record OperationRuntime(
         GitOpsTool: "honua-gitops",
         AllowedEnvironments: DefaultEnvironments,
         TerraformRepository: "honua-iac",
-        TerraformRef: "main",
+        TerraformRef: "trunk",
         TerraformLocalPath: string.Empty,
         TerraformDeploymentTargets: []);
 

@@ -1,17 +1,10 @@
 .git
 .github
-.honua
+.env
+.env.local
 artifacts
+test-results
 **/bin
 **/obj
-test-results
 *.user
 *.log
-
-# Operator secrets. `.gitignore` does not apply to Docker build contexts, so without
-# these the documented `./scripts/bootstrap-operator-env.sh` output (.env.local, which
-# holds provider and backend API keys) would be sent to the builder and retained in the
-# build-stage layer cache even though the final stage copies only the executable.
-.env
-.env.*
-!.env.example
