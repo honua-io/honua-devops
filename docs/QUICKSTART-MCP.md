@@ -219,7 +219,7 @@ live MCP surface 1:1):
 `provision_infrastructure`, `install_handoff`, `verify_install_handoff`,
 `explain_release_package`.
 
-### Governed provisioning and verified handoff
+## Governed provisioning and verified handoff
 
 `provision_infrastructure` returns a stable `provisioningOperationId`, exact
 saved-plan SHA-256, and one-time challenge. Apply/destroy additionally requires
