@@ -1,0 +1,10 @@
+.git
+.github
+.env
+.env.local
+artifacts
+test-results
+**/bin
+**/obj
+*.user
+*.log

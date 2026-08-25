@@ -303,6 +303,22 @@ stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-M
 for Codex registration, required environment, worked examples, and the safety
 model notes.
 
+### Release artifacts (no .NET SDK required)
+
+Pushing a `v*` tag runs [`.github/workflows/release-mcp.yml`](.github/workflows/release-mcp.yml),
+which publishes for that tag:
+
+- self-contained single-file archives for `linux-x64`, `osx-x64`, `osx-arm64`,
+  and `win-x64` as GitHub Release assets, each with an adjacent `.sha256`
+  checksum file;
+- a container image on `ghcr.io/honua-io/honua-devops` whose final layer is
+  `runtime-deps` — native dependencies only, no SDK and no shared framework —
+  with the digest to pin recorded in the release's `container-image.txt` asset.
+
+`workflow_dispatch` builds the same artifacts as a dry run and publishes
+nothing. Install and registration commands are in
+[docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md#install-without-a-net-sdk).
+
 ## Customer Adoption
 
 The recommended first install mode is to start directly from `honua-devops` as the customer-owned control repo, keep execution in `plan` mode with `pr-first` approval, and use the repo itself to store desired-state objects until a split-repo model is justified.

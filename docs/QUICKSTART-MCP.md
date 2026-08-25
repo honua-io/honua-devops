@@ -10,9 +10,85 @@ configuration is needed** (`HONUA_DEVOPS_PROVIDER`, `*_MODEL`, `*_API_KEY` for
 codex/claude/local-llama are all ignored). Only the backend and runtime-control
 variables matter.
 
+## Install without a .NET SDK
+
+Pushing a `v*` tag runs [`.github/workflows/release-mcp.yml`](../.github/workflows/release-mcp.yml),
+which publishes, for that tag:
+
+- self-contained single-file archives for `linux-x64`, `osx-x64`, `osx-arm64`,
+  and `win-x64` as GitHub Release assets, each with an adjacent
+  `.sha256` file in `sha256sum -c` format;
+- a container image pushed to `ghcr.io/honua-io/honua-devops`, tagged with the
+  release version and its commit SHA. The release also carries a
+  `container-image.txt` asset recording the image digest to pin.
+
+The archives contain one executable and no .NET runtime dependency of any kind;
+the container's final layer is `runtime-deps` (native dependencies only, no SDK
+and no shared framework) running as a non-root user. Nothing below needs
+`dotnet` on `PATH`.
+
+> The first release is published when the first `v*` tag is pushed. Until then,
+> use the source-development path below. Substitute the tag you are installing
+> for `<version>` (for example `v2026.1.0`).
+
+### Binary
+
+Download with the GitHub CLI (`gh auth login` first — the repository is
+private, so an unauthenticated download will not resolve):
+
+```bash
+VERSION=<version>
+ASSET=honua-devops-linux-x64.tar.gz   # or osx-arm64 / osx-x64 / win-x64 (.zip)
+
+gh release download "$VERSION" \
+  --repo honua-io/honua-devops \
+  --pattern "$ASSET" \
+  --pattern "$ASSET.sha256"
+
+sha256sum -c "$ASSET.sha256"          # macOS: shasum -a 256 -c
+
+mkdir -p ~/.local/share/honua-devops
+tar -xzf "$ASSET" -C ~/.local/share/honua-devops
+
+claude mcp add honua-devops -- ~/.local/share/honua-devops/Honua.DevOps.Agent --mcp
+```
+
+On Windows the archive is a `.zip` and the executable is
+`Honua.DevOps.Agent.exe`.
+
+Verify the registration reached `tools/list`:
+
+```bash
+claude mcp list                       # honua-devops should report 35 tools
+~/.local/share/honua-devops/Honua.DevOps.Agent --list-tools | head -1
+# honua-devops exposes 35 operator tools:
+```
+
+Upgrade by repeating the download/verify/extract over the same directory with a
+new `VERSION`; the registration keeps pointing at the same path. Uninstall with
+`claude mcp remove honua-devops && rm -rf ~/.local/share/honua-devops`.
+
+### Container
+
+Pin the digest recorded in the release's `container-image.txt` rather than a
+tag:
+
+```bash
+IMAGE=ghcr.io/honua-io/honua-devops@sha256:<digest>
+docker pull "$IMAGE"
+
+claude mcp add honua-devops -- \
+  docker run --rm -i --env-file /abs/path/honua-devops.env "$IMAGE"
+```
+
+The entry point already includes `--mcp`, so pass no extra arguments; `-i` is
+required because stdin/stdout carry the MCP protocol. Mount a writable
+directory when `HONUA_DEVOPS_AUDIT_HOOK_TARGET` uses a `file://` target.
+Uninstall with `claude mcp remove honua-devops && docker image rm "$IMAGE"`.
+
 ## Register with Claude Code
 
-Quick start (runs from source; requires the .NET 10 SDK):
+Source-development path (runs from source; requires the .NET 10 SDK):
 
 ```bash
 claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
