@@ -477,7 +477,7 @@ public sealed class TerraformProvisioningTests
         Assert.Equal("install-handoff-verified", verified.Status);
         Assert.NotNull(verifier.Request);
         Assert.Equal("@honua/mcp-server@2026.1.1", verifier.Request!.ProxyPackage);
-        string binding = await File.ReadAllTextAsync(System.IO.Path.Combine(handoffDirectory, "aws-ecs-provision-binding.json"));
+        string binding = await File.ReadAllTextAsync(System.IO.Path.Combine(handoffDirectory, "honua-devops-aws-ecs-provision-binding.json"));
         Assert.Contains(apply.ProvisioningLineage.ProvisioningOperationId, binding, StringComparison.Ordinal);
         Assert.Contains("approvalReceiptId", binding, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("handoffVerificationReceiptId", binding, StringComparison.OrdinalIgnoreCase);

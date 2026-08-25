@@ -747,7 +747,7 @@ internal sealed partial class HonuaOperationsToolkit
 
         string directory = Path.GetDirectoryName(fullPath)!;
         string receiptPath = Path.Combine(directory, "honua-install-verification.receipt.json");
-        string bindingPath = Path.Combine(directory, "aws-ecs-provision-binding.json");
+        string bindingPath = Path.Combine(directory, "honua-devops-aws-ecs-provision-binding.json");
         if (!overwrite && (File.Exists(receiptPath) || File.Exists(bindingPath)))
         {
             return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
@@ -785,7 +785,7 @@ internal sealed partial class HonuaOperationsToolkit
         };
         string bindingBytes = JsonSerializer.Serialize(new
         {
-            schemaVersion = "honua.aws-ecs-provision-binding/v1",
+            schemaVersion = "honua.devops.aws-ecs-provision-binding/v1",
             lineage = completedLineage,
             endpoint = request.BaseUrl,
             candidateReference = request.CandidateReference,
@@ -1133,6 +1133,7 @@ internal sealed partial class HonuaOperationsToolkit
                 savedPlan.Manifest.PlanSha256,
                 approvalReceipt.ApprovalReceiptId,
                 ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
+                ApplyAuditEventId: Guid.NewGuid().ToString("n"),
                 ActuatorReceiptReference: $"terraform://{savedPlan.Manifest.Stack}/{action}/{savedPlan.Manifest.PlanSha256}");
             SaveProvisioningState(new ProvisioningState(
                 lineage,

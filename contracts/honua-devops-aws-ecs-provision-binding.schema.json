@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/schemas/honua-devops-aws-ecs-provision-binding.v1.json",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "lineage",
+    "endpoint",
+    "candidateReference",
+    "proxyArtifact",
+    "secretReferenceSha256",
+    "handoffSha256",
+    "verificationReceiptId",
+    "verificationReceiptSha256",
+    "teardownHandle"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "honua.devops.aws-ecs-provision-binding/v1" },
+    "lineage": {
+      "type": "object",
+      "required": [
+        "provisioningOperationId",
+        "planSha256",
+        "approvalReceiptId",
+        "approvalReceiptSha256",
+        "applyAuditEventId",
+        "actuatorReceiptReference",
+        "handoffReceiptSha256",
+        "handoffVerificationReceiptId",
+        "handoffVerificationReceiptSha256",
+        "rootProvisioningOperationId"
+      ],
+      "properties": {
+        "provisioningOperationId": { "type": "string", "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$" },
+        "planSha256": { "$ref": "#/$defs/sha256" },
+        "approvalReceiptId": { "type": "string", "minLength": 1 },
+        "approvalReceiptSha256": { "$ref": "#/$defs/sha256" },
+        "applyAuditEventId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "actuatorReceiptReference": { "type": "string", "minLength": 1 },
+        "handoffReceiptSha256": { "$ref": "#/$defs/sha256" },
+        "handoffVerificationReceiptId": { "type": "string", "pattern": "^urn:sha256:[0-9a-f]{64}$" },
+        "handoffVerificationReceiptSha256": { "$ref": "#/$defs/sha256" },
+        "rootProvisioningOperationId": { "type": "string", "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$" },
+        "serverOperationId": { "type": ["string", "null"] },
+        "serverProposalId": { "type": ["string", "null"] },
+        "serverDecisionReference": { "type": ["string", "null"] },
+        "serverExecutionId": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "endpoint": { "type": "string", "format": "uri" },
+    "candidateReference": { "type": "string", "minLength": 1 },
+    "proxyArtifact": {
+      "type": "object",
+      "required": ["package", "integrity"],
+      "properties": {
+        "package": { "type": "string", "pattern": "^@honua/mcp-server@[0-9]+\\.[0-9]+\\.[0-9]+" },
+        "integrity": { "type": "string", "pattern": "^sha(256|384|512)-" }
+      },
+      "additionalProperties": false
+    },
+    "secretReferenceSha256": { "$ref": "#/$defs/sha256" },
+    "handoffSha256": { "$ref": "#/$defs/sha256" },
+    "verificationReceiptId": { "type": "string", "pattern": "^urn:sha256:[0-9a-f]{64}$" },
+    "verificationReceiptSha256": { "$ref": "#/$defs/sha256" },
+    "teardownHandle": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "additionalProperties": false
+}

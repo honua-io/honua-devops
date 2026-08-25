@@ -134,6 +134,13 @@ internal static class ToolCallAuditor
             }
         }
 
+        if (string.Equals(call.ToolName, "provision_infrastructure", StringComparison.Ordinal)
+            && status is "infrastructure-provisioned" or "infrastructure-destroyed"
+            && !string.IsNullOrWhiteSpace(provisioningLineage?.ApplyAuditEventId))
+        {
+            auditEventId = provisioningLineage.ApplyAuditEventId;
+        }
+
         AuditRecord record = new(
             Timestamp: DateTimeOffset.UtcNow,
             SessionId: context.SessionId,
