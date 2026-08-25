@@ -1,0 +1,171 @@
+name: Blocked-Label Sweep
+
+# Execution-state truth (honua-devops#167, first slice): re-verify every open
+# `state/blocked` label against the LIVE state of the blockers it cites, and
+# publish the result to the job summary.
+#
+# READ-ONLY. This lane mutates nothing — no comments, no label changes, no issue
+# edits. The sweeper's `--enforce` flag is a guard that refuses unless
+# `ENFORCE_SWEEP=true` is set, and refuses even then because no mutation path is
+# implemented yet. It is deliberately not passed anywhere in this workflow.
+#
+# When enforcement lands in a later slice it must run under a distinct BOT
+# IDENTITY, not `github.token` and not a human PAT: every comment and label flip
+# the sweep performs has to be attributable to the machine that performed it, per
+# the acceptance criteria of #167 ("sweep actions are all logged and attributable
+# to the bot identity"). The bot's token replaces SWEEPER_GH_TOKEN at that point.
+#
+# TOKEN / SCOPE
+#   `SWEEPER_GH_TOKEN` (repository or organization secret) — required for the
+#   CROSS-REPO sweep. Cited blockers live in honua-server, honua-sdk-js,
+#   honua-iac, honua-demo-infra and others, and `github.token` is scoped to this
+#   repository alone, so without it every cross-repo citation resolves as
+#   "unresolved" and the report is noise.
+#     * Classic PAT: `repo` scope (these repositories are private).
+#     * Fine-grained PAT or GitHub App installation token: Read-only
+#       "Issues" + "Metadata" + "Pull requests" on every repository named in
+#       SWEEP_REPOS and on every repository their issues cite.
+#   Without the secret the workflow falls back to `github.token` and sweeps only
+#   `honua-io/honua-devops`, saying so in the summary. It never fails for a
+#   missing secret.
+#
+# Configure the target set with the `SWEEP_REPOS` repository variable (a
+# space-separated list of `owner/repo`) or the `repos` dispatch input.
+
+on:
+  schedule:
+    # Daily, offset off the hour to avoid the Actions rush.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: "Space-separated owner/repo targets. Blank uses the SWEEP_REPOS variable or the built-in default."
+        type: string
+        required: false
+        default: ""
+      label:
+        description: "Blocked label to verify."
+        type: string
+        required: false
+        default: "state/blocked"
+  # The harness itself is gated on PRs that touch it, offline and unauthenticated.
+  pull_request:
+    paths:
+      - "scripts/sweep-blocked-labels.py"
+      - "scripts/smoke-blocked-label-sweep.sh"
+      - ".github/workflows/blocked-label-sweep.yml"
+      - "docs/blocked-label-convention.md"
+  push:
+    branches: [trunk]
+    paths:
+      - "scripts/sweep-blocked-labels.py"
+      - "scripts/smoke-blocked-label-sweep.sh"
+      - ".github/workflows/blocked-label-sweep.yml"
+      - "docs/blocked-label-convention.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blocked-label-sweep-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harness-selftest:
+    name: Sweeper syntax + offline self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: |
+          python3 -m py_compile scripts/sweep-blocked-labels.py
+          bash -n scripts/smoke-blocked-label-sweep.sh
+
+      - name: Self-test (citation grammar + stub-gh sweep + enforcement guard)
+        run: ./scripts/smoke-blocked-label-sweep.sh
+
+  sweep:
+    name: Dry-run sweep
+    needs: harness-selftest
+    # Never on a pull request: a PR from a fork must not reach a token, and the
+    # harness self-test above is the PR-safe floor.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Cross-repo reads need more than github.token; see the header comment.
+      GH_TOKEN: ${{ secrets.SWEEPER_GH_TOKEN || github.token }}
+      CROSS_REPO: ${{ secrets.SWEEPER_GH_TOKEN != '' }}
+      SWEEP_LABEL: ${{ inputs.label || 'state/blocked' }}
+      DISPATCH_REPOS: ${{ inputs.repos || '' }}
+      VAR_REPOS: ${{ vars.SWEEP_REPOS || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target repositories
+        id: targets
+        run: |
+          set -euo pipefail
+          if [[ -n "$DISPATCH_REPOS" ]]; then
+            repos="$DISPATCH_REPOS"
+          elif [[ -n "$VAR_REPOS" ]]; then
+            repos="$VAR_REPOS"
+          elif [[ "$CROSS_REPO" == "true" ]]; then
+            repos="honua-io/honua-devops honua-io/honua-studio"
+          else
+            # Same-repo-only mode: github.token cannot read another repository's
+            # issues, so sweeping one would report noise instead of truth.
+            repos="${GITHUB_REPOSITORY}"
+            echo "::notice::SWEEPER_GH_TOKEN is not configured; sweeping ${GITHUB_REPOSITORY} only. Cross-repo blocker citations will resolve as unresolved."
+          fi
+          echo "repos=${repos}" >>"$GITHUB_OUTPUT"
+          echo "Targets: ${repos}"
+
+      # No `continue-on-error` and no `|| true`. A dry run exits 0 whether or not
+      # it finds anything, so a non-zero exit here means the sweep could not run
+      # (no auth, no gh) and that must be visible, not swallowed.
+      - name: Sweep (dry run — reads only, mutates nothing)
+        env:
+          # Through the environment, never template interpolation: the target list
+          # is operator-supplied and must not be able to become shell.
+          SWEEP_TARGETS: ${{ steps.targets.outputs.repos }}
+        run: |
+          set -euo pipefail
+          args=()
+          for repo in $SWEEP_TARGETS; do
+            args+=(--repo "$repo")
+          done
+          python3 scripts/sweep-blocked-labels.py \
+            "${args[@]}" \
+            --label "$SWEEP_LABEL" \
+            --output artifacts/blocked-label-sweep/report.md \
+            --json-out artifacts/blocked-label-sweep/report.json
+
+      - name: Publish report to the job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -f artifacts/blocked-label-sweep/report.md ]]; then
+            if [[ "$CROSS_REPO" != "true" ]]; then
+              {
+                echo "> [!NOTE]"
+                echo "> \`SWEEPER_GH_TOKEN\` is not configured, so this run swept \`${GITHUB_REPOSITORY}\` only and could not resolve cross-repo blocker citations."
+                echo
+              } >>"$GITHUB_STEP_SUMMARY"
+            fi
+            cat artifacts/blocked-label-sweep/report.md >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "The sweep produced no report; see the step log." >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blocked-label-sweep-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/blocked-label-sweep/
+          if-no-files-found: warn

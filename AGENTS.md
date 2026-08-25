@@ -153,8 +153,8 @@ Each tool call emits one JSONL audit record.
 - `src/Honua.DevOps.Agent/` — the console host (only production project).
 - `tests/Honua.DevOps.Agent.Tests/` — xUnit tests + `fixtures/`.
 - `scripts/` — Bash bootstrap/validation/smoke/SLO scripts + Python helpers
-  (`generate-client-compat-scoreboard.py`, `run-multi-model-operator-evals.py`);
-  `scripts/fault-injection/`.
+  (`generate-client-compat-scoreboard.py`, `run-multi-model-operator-evals.py`,
+  `sweep-blocked-labels.py`); `scripts/fault-injection/`.
 - `desired-state/` — starter control-repo layout: `bundles`, `releases`,
   `promotions`, `platform-stacks`, `execution-policies`, `conventions.env`,
   `README.md`.
@@ -168,9 +168,11 @@ Each tool call emits one JSONL audit record.
 
 ## Conventions & Gotchas
 
-- CI inventory — `.github/workflows/` holds exactly 15 workflows. All of them run
-  on `pull_request`, `push` to `trunk`, and `workflow_dispatch`; `demo-e2e.yml`
-  additionally runs on a schedule.
+- CI inventory — `.github/workflows/` holds exactly 17 workflows. All but
+  `release-mcp.yml` run on `pull_request`, `push` to `trunk`, and
+  `workflow_dispatch` (`blocked-label-sweep.yml` filters those two by path);
+  `demo-e2e.yml`, `multi-model-operator-evals.yml`, and
+  `blocked-label-sweep.yml` additionally run on a schedule.
 
   .NET lanes:
   - `devops-agent-tests.yml` (`DevOps Agent Tests`) — the top-level build+test
@@ -205,8 +207,21 @@ Each tool call emits one JSONL audit record.
   `scripts/compat-train-rc-aggregate.sh` (honua-devops#41) — see
   `docs/compat-train-release-validation.md`.
 
-  There is no release/publish workflow in this repo; packaging a runnable
-  `--mcp` artifact is tracked by honua-devops#148.
+  Hygiene lanes:
+  - `blocked-label-sweep.yml` — daily re-verification of every open
+    `state/blocked` label against the live state of the blockers it cites
+    (`scripts/sweep-blocked-labels.py`, honua-devops#167). READ-ONLY: the sweep
+    publishes a markdown report to the job summary and mutates nothing; the
+    script's `--enforce` flag refuses without `ENFORCE_SWEEP=true` and refuses
+    even with it, because no mutation path is implemented yet. Cross-repo reads
+    need `SWEEPER_GH_TOKEN`; without it the lane sweeps this repo only. The
+    PR-safe floor is `scripts/smoke-blocked-label-sweep.sh` (offline, stub `gh`).
+    See `docs/blocked-label-convention.md`.
+
+  Release lane — `release-mcp.yml` builds and publishes the `--mcp` artifacts
+  (per-RID single-file binaries, checksums, GHCR image) on a `v*` tag push, and
+  runs the identical build as a dry run on `workflow_dispatch` without pushing
+  (honua-devops#148).
 - NuGet locked-restore mode is active when `packages.lock.json` is present;
   changing package versions requires updating the lock file.
 - Default-safe posture: keep `plan` mode + `pr-first` approval unless a task
