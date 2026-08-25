@@ -57,6 +57,97 @@ public class ActuatorTruthTests
         Assert.Null(response.BackendSteps);
     }
 
+    // Issue #156 REQ-002. The old classifier substring-matched "drift" in the free text, so a
+    // prose description was enough to select the drift actuator. Intent is now typed: an
+    // unmapped server rule refuses even when the description is full of the old trigger word.
+    [Fact]
+    public async Task AutoRemediation_UnmappedFindingWithDriftWordingInProse_RefusesWithoutBackendCall()
+    {
+        TestHttpMessageHandler handler = Handler();
+        HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "staging",
+            detectedIssue: "manifest drift detected: drift everywhere, drift drift",
+            desiredOutcome: "observe the drift and converge desired state",
+            autoApply: true,
+            edition: "enterprise",
+            findingId: "serving-latency-slo-breach-9a1b2c3d4e5f60718293a4b5c6d7e8f9");
+
+        Assert.Equal(ActuationOutcome.UnsupportedAction, response.Status);
+        Assert.Empty(handler.CapturedRequests);
+        Assert.Null(response.BackendSteps);
+        Assert.Contains(
+            response.Findings,
+            finding => finding.Contains("serving-latency-slo-breach", StringComparison.Ordinal));
+    }
+
+    // Free-text prose with no typed intent at all is not a classification either.
+    [Fact]
+    public async Task AutoRemediation_DriftProseWithoutTypedIntent_RefusesWithoutBackendCall()
+    {
+        TestHttpMessageHandler handler = Handler();
+        HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "staging",
+            detectedIssue: "manifest drift detected",
+            desiredOutcome: "converge desired state",
+            autoApply: true,
+            edition: "enterprise");
+
+        Assert.Equal(ActuationOutcome.UnsupportedAction, response.Status);
+        Assert.Empty(handler.CapturedRequests);
+        Assert.Null(response.BackendSteps);
+    }
+
+    // A finding id and an action name that disagree are ambiguous; the agent refuses rather
+    // than picking a winner, and it refuses before any backend call.
+    [Fact]
+    public async Task AutoRemediation_FindingIdAndActionDisagree_RefusesWithoutBackendCall()
+    {
+        TestHttpMessageHandler handler = Handler();
+        HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "staging",
+            detectedIssue: "operationId=deploy-123",
+            desiredOutcome: "restore health",
+            autoApply: true,
+            edition: "enterprise",
+            findingId: "platform-release-skew-0123456789abcdef0123456789abcdef",
+            remediationAction: RemediationAction.GitOpsRollback);
+
+        Assert.Equal(ActuationOutcome.UnsupportedAction, response.Status);
+        Assert.Empty(handler.CapturedRequests);
+        Assert.Null(response.BackendSteps);
+    }
+
+    // The rollback family actuates a NAMED durable operation. Without that identity the
+    // request stays unresolved instead of reaching the rollback actuator with an empty target.
+    [Fact]
+    public async Task AutoRemediation_RollbackFindingWithoutOperationId_RefusesWithoutBackendCall()
+    {
+        TestHttpMessageHandler handler = Handler();
+        HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "staging",
+            detectedIssue: "deploy stuck",
+            desiredOutcome: "recover the deployment",
+            autoApply: true,
+            edition: "enterprise",
+            findingId: "deploy-manual-intervention-fedcba9876543210fedcba9876543210");
+
+        Assert.Equal(ActuationOutcome.UnsupportedAction, response.Status);
+        Assert.Empty(handler.CapturedRequests);
+        Assert.Null(response.BackendSteps);
+    }
+
     // ---- Supported action, no mutation requested or permitted ----
 
     [Fact]
@@ -108,7 +199,8 @@ public class ActuatorTruthTests
             detectedIssue: "manifest drift detected",
             desiredOutcome: "converge desired state",
             autoApply: true,
-            edition: "enterprise");
+            edition: "enterprise",
+            findingId: "platform-release-skew-0123456789abcdef0123456789abcdef");
 
         Assert.Equal("auto-remediation-approval-required", response.Status);
         Assert.Empty(handler.CapturedRequests);
@@ -138,8 +230,17 @@ public class ActuatorTruthTests
         Assert.All(handler.CapturedRequests, request => Assert.Equal("GET", request.Method));
     }
 
-    [Fact]
-    public async Task AutoRemediation_DriftObserve_ReportsObservedWithNoMutatingStep()
+    [Theory]
+    // Both release-divergence rules resolve to the read-only drift report...
+    [InlineData("platform-release-skew-0123456789abcdef0123456789abcdef", "")]
+    [InlineData("platform-release-runtime-divergence-0123456789abcdef0123456789abcdef", "")]
+    // ...a bare rule id carries the same classification as the full finding id...
+    [InlineData("platform-release-skew", "")]
+    // ...and the explicit typed action name reaches the same actuator.
+    [InlineData("", RemediationAction.DriftObserve)]
+    public async Task AutoRemediation_DriftObserve_ReportsObservedWithNoMutatingStep(
+        string findingId,
+        string remediationAction)
     {
         TestHttpMessageHandler handler = Handler();
         HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());
@@ -147,13 +248,79 @@ public class ActuatorTruthTests
         OperationResponse response = await toolkit.AutoRemediationPlanAsync(
             service: "roads-api",
             environment: "staging",
-            detectedIssue: "manifest drift detected",
+            detectedIssue: "declared release is not co-versioned",
             desiredOutcome: "converge desired state",
             autoApply: true,
-            edition: "enterprise");
+            edition: "enterprise",
+            findingId: findingId,
+            remediationAction: remediationAction);
 
         Assert.Equal("auto-remediation-observed", response.Status);
         Assert.All(response.BackendSteps!, step => Assert.False(step.MutatesState));
+        Assert.Contains(
+            response.Findings,
+            finding => finding.Contains("honua.manifest-drift.read", StringComparison.Ordinal));
+    }
+
+    // The mapped rollback family reaches the mutating deploy-control actuator, with its
+    // durable receipt and a successful mutating backend step — nothing less claims applied.
+    [Fact]
+    public async Task AutoRemediation_DeployManualInterventionFinding_RoutesToGovernedRollback()
+    {
+        TestHttpMessageHandler handler = new(request =>
+            request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/rollback", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { operationId = "deploy-123", status = "RolledBack" })
+                : TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "deploy-123",
+                    status = "Succeeded",
+                    metadataRelease = new { rollbackPlan = new { @class = "MetadataOnly", isDataAffecting = false } }
+                }));
+
+        HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "staging",
+            detectedIssue: "operationId=deploy-123",
+            desiredOutcome: "recover the stuck deployment",
+            autoApply: true,
+            edition: "enterprise",
+            findingId: "deploy-manual-intervention-fedcba9876543210fedcba9876543210");
+
+        Assert.Equal("auto-remediation-applied", response.Status);
+        Assert.Contains(response.BackendSteps!, step => step.MutatesState && step.Success);
+        Assert.Contains(
+            response.Findings,
+            finding => finding.Contains("honua.deploy-operation.rollback", StringComparison.Ordinal));
+        Assert.Contains(
+            response.Findings,
+            finding => finding.Contains("deploy-manual-intervention", StringComparison.Ordinal));
+    }
+
+    // Resolving intent from a server-owned finding id changes WHICH actuator is selected and
+    // nothing else: rollback stays disabled in the default posture, and the shared capability
+    // refusal still lands before any backend call.
+    [Fact]
+    public async Task AutoRemediation_RollbackFindingUnderDefaultPosture_StaysCapabilityRefused()
+    {
+        TestHttpMessageHandler handler = Handler();
+        HonuaOperationsToolkit toolkit = Toolkit(
+            handler,
+            ExecuteRuntime() with { RollbackEnabled = false },
+            DirectAllowedPolicy());
+
+        OperationResponse response = await toolkit.AutoRemediationPlanAsync(
+            service: "roads-api",
+            environment: "staging",
+            detectedIssue: "operationId=deploy-123",
+            desiredOutcome: "recover the stuck deployment",
+            autoApply: true,
+            edition: "enterprise",
+            findingId: "deploy-manual-intervention-fedcba9876543210fedcba9876543210");
+
+        Assert.Equal(ActuationOutcome.ExperimentalDisabled, response.Status);
+        Assert.Empty(handler.CapturedRequests);
     }
 
     // ---- Every executed claim carries the full evidence ----

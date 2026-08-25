@@ -83,4 +83,7 @@ internal static class RemediationAction
 {
     internal const string GitOpsRollback = "gitops-rollback";
     internal const string DriftObserve = "drift-observe";
+
+    // The complete registered vocabulary, in a stable order, for operator-facing refusals.
+    internal static readonly IReadOnlyList<string> All = [GitOpsRollback, DriftObserve];
 }
