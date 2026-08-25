@@ -25,10 +25,22 @@ Two failure modes follow directly, and both are what the sweeper looks for:
 ## Citation grammar
 
 A citation is a **marker** followed by one or more **references**. The references
-may sit on the marker's own line, or — when the marker line carries none, as with
-a `## Dependencies` heading — on the lines that follow it, blank lines included.
+normally sit on the marker's own line. They may instead sit on the lines that
+follow it — blank lines included — but only when the marker line *introduces* a
+list, meaning nothing follows the marker on that line or the line ends in `:`:
+
+```markdown
+## Dependencies
+
+- #40 (live agent loop)
+- sdk-js#1397
+```
+
 A markdown heading always ends the run, so a marker never reaches into the next
-section.
+section, and a marker buried mid-sentence — "that makes honua-server a hard
+**dependency** of authoring in every host." — introduces nothing. Without that
+restriction the next paragraph's references get read as blockers and an issue
+can be called stale on the strength of prose.
 
 ### Markers
 

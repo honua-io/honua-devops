@@ -192,9 +192,20 @@ def _citation_regions(text: str) -> list[str]:
             if _has_reference(region):
                 regions.append(region)
                 continue
-            # A marker line with no reference of its own may introduce a list.
-            regions.extend(_continuation_regions(lines, index))
+            # A marker line with no reference of its own may introduce a list —
+            # but only if it reads as an introduction. "## Dependencies",
+            # "Blocked by:" and "Cross-repo dependencies these ride on:" do;
+            # "...a hard dependency of authoring in every host." does not, and
+            # letting it reach into the next paragraph invents blockers out of
+            # prose.
+            if _introduces_a_list(region):
+                regions.extend(_continuation_regions(lines, index))
     return regions
+
+
+def _introduces_a_list(region: str) -> bool:
+    trimmed = region.strip()
+    return not trimmed or trimmed.endswith(":")
 
 
 def _continuation_regions(lines: list[str], start: int) -> list[str]:
@@ -801,6 +812,23 @@ def self_test() -> int:
     check(
         "a marker never reaches into the next section",
         _cites("## Dependencies\n\n## Acceptance\n\n- #40 is not a dependency here\n", aliases),
+        [],
+    )
+    check(
+        "a trailing colon introduces a list",
+        _cites("Cross-repo dependencies these ride on:\n\n- server#3188 catalog styles\n", aliases),
+        [("honua-io/honua-server", 3188)],
+    )
+    # Regression: honua-sdk-js#1348 says "makes honua-server a hard dependency of
+    # authoring in every host." Treating that as an introduction pulled the NEXT
+    # paragraph's reference in and reported the issue as STALE on prose alone.
+    check(
+        "mid-sentence prose does not introduce a list",
+        _cites(
+            "That makes honua-server a hard dependency of authoring in every host.\n\n"
+            "honua-server#3254 records model routing as a client choice.\n",
+            aliases,
+        ),
         [],
     )
 
