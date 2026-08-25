@@ -14,7 +14,8 @@ namespace Honua.DevOps.Agent.Operations.Observability;
 internal sealed class OpsObserveDiagnoseProposeLoop(
     OperationRuntime runtime,
     BackendGateway gateway,
-    ActuationSpine? spine = null)
+    ActuationSpine? spine = null,
+    TimeProvider? timeProvider = null)
 {
     private readonly ActuationSpine _spine = spine ?? new ActuationSpine(runtime, OperatorPolicy.OperatorPolicy.Default);
 
@@ -26,6 +27,16 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
     private const int MaxEvidenceRefsPerFinding = 12;
     private const int MaxTextCharacters = 2048;
     private const int MaxReferenceCharacters = 512;
+    private static readonly TimeSpan MaximumGeneratedAtAge = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumFutureClockSkew = TimeSpan.FromMinutes(1);
+    private static readonly HashSet<string> EvidenceReasonCodeVocabulary = new(StringComparer.Ordinal)
+    {
+        "source-not-configured", "source-unavailable", "never-succeeded", "missing-observation-time",
+        "future-observation-time", "invalid-time-window", "stale-observation", "stale-last-success",
+        "partial-result", "incomplete-replica-coverage", "page-truncated", "backend-unverified",
+        "component-coverage-unknown", "malformed-evidence"
+    };
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     internal async Task<OpsLoopReport> RunAsync(
         string findingId,
@@ -44,7 +55,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         string? normalizedFindingId = NormalizeOptional(findingId, 256, nameof(findingId));
         string? normalizedSeverity = NormalizeSeverity(severity);
         string? normalizedRule = NormalizeOptional(rule, 128, nameof(rule));
-        DateTimeOffset to = DateTimeOffset.UtcNow;
+        DateTimeOffset to = _timeProvider.GetUtcNow();
         DateTimeOffset from = to.AddHours(-boundedLookbackHours);
         List<string> limitations = [];
         List<string> toolsUsed = [];
@@ -124,8 +135,55 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
                 cancellationToken)
             .ConfigureAwait(false);
 
+        string overallHealth;
+        IReadOnlyList<OpsLoopAlertEvidence> alerts;
+        IReadOnlyList<OpsLoopEventEvidence> events;
+        try
+        {
+            overallHealth = ReadRequiredString(health, "overallStatus", "honua_ops_health");
+            alerts = ParseAlerts(alertsPayload, boundedPageSize);
+            events = ParseEvents(eventsPayload, boundedPageSize);
+        }
+        catch (HonuaMcpContractException exception)
+        {
+            limitations.Add($"Required MCP payload failed closed at `{exception.Operation}`: {Redaction.Scrub(exception.Message)}");
+            return EmptyUnavailableReport(boundedPageSize, boundedLookbackHours, toolsUsed, limitations);
+        }
+
+        EvidenceEvaluation evidence = EvaluateEvidence(
+            to,
+            ("honua_ops_health", health, true),
+            ("honua_ops_findings", findingsPayload, true),
+            ("honua_alert_events", alertsPayload, false),
+            ("honua_operate_events", eventsPayload, false));
+
+        bool legacyPartial = ReadOptionalBoolean(eventsPayload, "partialResult") == true;
+        IReadOnlyList<string> legacySourceErrors = ReadPrivacySafeSourceErrors(eventsPayload);
+        if (legacyPartial || legacySourceErrors.Count > 0)
+        {
+            evidence = evidence with
+            {
+                Status = "partial",
+                SuppressionReason = legacyPartial ? "partial-result" : "source-errors-present"
+            };
+        }
+
+        if (evidence.Status != "complete-fresh")
+        {
+            limitations.Add($"Proposal routing was suppressed by telemetry evidence posture `{evidence.Status}` ({evidence.SuppressionReason}).");
+            if (legacySourceErrors.Count > 0)
+            {
+                limitations.Add($"Operate timeline reported source errors for: {string.Join(", ", legacySourceErrors)}.");
+            }
+        }
+
         SupportedKindsResult supportedKinds;
-        if (proposeRecommendedAction && runtime.ExecutionTier >= ExecutionTier.Propose)
+        if (evidence.Status != "complete-fresh")
+        {
+            supportedKinds = new SupportedKindsResult(false, []);
+            limitations.Add("Executor discovery was suppressed because required telemetry evidence was not complete and fresh.");
+        }
+        else if (proposeRecommendedAction && runtime.ExecutionTier >= ExecutionTier.Propose)
         {
             supportedKinds = await DiscoverSupportedKindsAsync(
                     client,
@@ -142,27 +200,12 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
                 : "Executor discovery was skipped because no proposal was requested; the read phase called read-only MCP tools only.");
         }
 
-        string overallHealth;
-        IReadOnlyList<OpsLoopAlertEvidence> alerts;
-        IReadOnlyList<OpsLoopEventEvidence> events;
-        try
-        {
-            overallHealth = ReadRequiredString(health, "overallStatus", "honua_ops_health");
-            alerts = ParseAlerts(alertsPayload, boundedPageSize);
-            events = ParseEvents(eventsPayload, boundedPageSize);
-        }
-        catch (HonuaMcpContractException exception)
-        {
-            limitations.Add($"Required MCP payload failed closed at `{exception.Operation}`: {Redaction.Scrub(exception.Message)}");
-            return EmptyUnavailableReport(boundedPageSize, boundedLookbackHours, toolsUsed, limitations);
-        }
-
         if (ReadOptionalString(alertsPayload, "nextCursor") is not null)
         {
             limitations.Add("Alert history has another page; this invocation retained only the bounded first page.");
         }
 
-        if (ReadOptionalBoolean(eventsPayload, "partialResult") == true)
+        if (legacyPartial)
         {
             limitations.Add("The server reported a partial Operate timeline result; source diagnostics remain server-owned.");
         }
@@ -203,8 +246,8 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
 
         List<OpsLoopFindingReport> findings = parsedFindings.Findings.ToList();
 
-        string status = "diagnosed";
-        if (proposeRecommendedAction)
+        string status = evidence.Status == "complete-fresh" ? "diagnosed" : "evidence-incomplete";
+        if (proposeRecommendedAction && evidence.Status == "complete-fresh")
         {
             status = await TryProposeOneAsync(
                     findings,
@@ -243,6 +286,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             OperateTimeline: events,
             DeployOperations: deployOperations,
             McpToolsUsed: toolsUsed.Distinct(StringComparer.Ordinal).ToArray(),
+            EvidencePosture: evidence.ToReport(to),
             Bounds: new OpsLoopBounds(
                 boundedPageSize,
                 boundedLookbackHours,
@@ -251,6 +295,139 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
                 MaxTextCharacters,
                 parsedFindings.Truncated),
             Limitations: limitations);
+    }
+
+    private static EvidenceEvaluation EvaluateEvidence(
+        DateTimeOffset now,
+        params (string Tool, JsonElement Payload, bool RequireGeneratedAt)[] payloads)
+    {
+        List<OpsLoopEvidenceSourcePosture> sources = [];
+        foreach ((string tool, JsonElement payload, bool requireGeneratedAt) in payloads)
+        {
+            if (requireGeneratedAt && !TryReadFreshTimestamp(payload, "generatedAt", now, MaximumGeneratedAtAge, out _, out string? timestampProblem))
+            {
+                return new EvidenceEvaluation(timestampProblem == "stale" ? "stale" : "malformed", timestampProblem, sources);
+            }
+
+            if (!payload.TryGetProperty("evidencePosture", out JsonElement envelope) || envelope.ValueKind != JsonValueKind.Object)
+            {
+                return new EvidenceEvaluation("backend-unverified", $"{tool}:missing-evidence-posture", sources);
+            }
+            if (ReadOptionalString(envelope, "schemaVersion") != "1.0")
+            {
+                return new EvidenceEvaluation("malformed", $"{tool}:unsupported-envelope-schema", sources);
+            }
+            if (!TryReadFreshTimestamp(envelope, "generatedAt", now, MaximumGeneratedAtAge, out _, out string? envelopeTimestampProblem))
+            {
+                return new EvidenceEvaluation(envelopeTimestampProblem == "stale" ? "stale" : "malformed", $"{tool}:envelope-{envelopeTimestampProblem}", sources);
+            }
+            if (!envelope.TryGetProperty("sources", out JsonElement sourceItems) || sourceItems.ValueKind != JsonValueKind.Array || sourceItems.GetArrayLength() == 0)
+            {
+                return new EvidenceEvaluation("malformed", $"{tool}:missing-sources", sources);
+            }
+
+            HashSet<string> envelopeSourceIds = new(StringComparer.Ordinal);
+            foreach (JsonElement source in sourceItems.EnumerateArray())
+            {
+                string? sourceId = ReadOptionalString(source, "sourceId");
+                string? backendKind = ReadOptionalString(source, "backendKind");
+                string? backendId = ReadOptionalString(source, "backendId");
+                string? completeness = ReadOptionalString(source, "completeness");
+                bool reasonCodesWellFormed = source.TryGetProperty("reasonCodes", out JsonElement reasons) &&
+                    reasons.ValueKind == JsonValueKind.Array && reasons.GetArrayLength() <= 16 &&
+                    reasons.EnumerateArray().All(reason => reason.ValueKind == JsonValueKind.String &&
+                        EvidenceReasonCodeVocabulary.Contains(reason.GetString()!));
+                IReadOnlyList<string> reasonCodes = reasonCodesWellFormed ? ReadStringArray(source, "reasonCodes", 16) : ["malformed-evidence"];
+                int? maximumAgeSeconds = ReadOptionalInt32(source, "maximumObservationAgeSeconds");
+                DateTimeOffset observedAt = default;
+                string? problem = maximumAgeSeconds is > 0 and <= 604800 ? null : "invalid-maximum-age";
+                string? lastSuccessProblem = problem;
+                bool observedFresh = maximumAgeSeconds is > 0 and <= 604800 &&
+                    TryReadFreshTimestamp(source, "observedAt", now, TimeSpan.FromSeconds(maximumAgeSeconds.Value), out observedAt, out problem);
+                bool lastSuccessFresh = maximumAgeSeconds is > 0 and <= 604800 &&
+                    TryReadFreshTimestamp(source, "lastSuccessfulAt", now, TimeSpan.FromSeconds(maximumAgeSeconds.Value), out _, out lastSuccessProblem);
+                bool safeIdentity = IsPrivacySafeIdentity(sourceId) && IsPrivacySafeIdentity(backendKind) && IsPrivacySafeIdentity(backendId);
+                bool uniqueSource = sourceId is not null && envelopeSourceIds.Add(sourceId);
+                sources.Add(new OpsLoopEvidenceSourcePosture(
+                    IsPrivacySafeIdentity(sourceId) ? sourceId! : "unknown",
+                    IsPrivacySafeIdentity(backendKind) ? backendKind! : "unverified",
+                    IsPrivacySafeIdentity(backendId) ? backendId! : "unverified",
+                    observedAt == default ? null : observedAt.ToString("O", CultureInfo.InvariantCulture),
+                    observedAt == default ? null : Math.Max(0, (long)(now - observedAt).TotalSeconds),
+                    completeness ?? "malformed",
+                    reasonCodes));
+                if (!safeIdentity || !uniqueSource || !reasonCodesWellFormed ||
+                    backendKind == "unverified" || backendId == "unverified" || completeness != "complete" || reasonCodes.Count > 0 ||
+                    !observedFresh || !lastSuccessFresh)
+                {
+                    string reason = problem ?? lastSuccessProblem ?? (backendKind == "unverified" || backendId == "unverified" ? "backend-unverified" : "incomplete-source");
+                    return new EvidenceEvaluation(reason == "stale" ? "stale" : reason == "future" ? "malformed" : "backend-unverified", $"{tool}:{sourceId ?? "unknown"}:{reason}", sources);
+                }
+            }
+            if (ReadOptionalBoolean(envelope, "actionable") != true ||
+                !string.Equals(ReadOptionalString(envelope, "completeness"), "complete", StringComparison.Ordinal))
+            {
+                return new EvidenceEvaluation("backend-unverified", $"{tool}:non-actionable-envelope", sources);
+            }
+        }
+        return new EvidenceEvaluation("complete-fresh", null, sources);
+    }
+
+    private static bool TryReadFreshTimestamp(JsonElement parent, string property, DateTimeOffset now, TimeSpan maximumAge, out DateTimeOffset parsed, out string? problem)
+    {
+        parsed = default;
+        problem = null;
+        string? value = ReadOptionalString(parent, property);
+        if (value is null || !DateTimeOffset.TryParseExact(value, "O", CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed) || parsed.Offset != TimeSpan.Zero)
+        {
+            problem = value is null ? "missing-timestamp" : "malformed-timestamp";
+            return false;
+        }
+        if (parsed > now + MaximumFutureClockSkew)
+        {
+            problem = "future";
+            return false;
+        }
+        if (now - parsed > maximumAge)
+        {
+            problem = "stale";
+            return false;
+        }
+        return true;
+    }
+
+    private static IReadOnlyList<string> ReadPrivacySafeSourceErrors(JsonElement payload)
+    {
+        if (!payload.TryGetProperty("sourceErrors", out JsonElement errors) || errors.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        return errors.EnumerateArray()
+            .Select((error, index) => error.ValueKind == JsonValueKind.Object &&
+                    IsPrivacySafeIdentity(ReadOptionalString(error, "sourceId"))
+                ? ReadOptionalString(error, "sourceId")!
+                : $"reported-source-{index + 1}")
+            .Distinct(StringComparer.Ordinal)
+            .Take(16)
+            .ToArray();
+    }
+
+    private static int? ReadOptionalInt32(JsonElement parent, string property) =>
+        parent.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int parsed)
+            ? parsed
+            : null;
+
+    private static bool IsPrivacySafeIdentity(string? value) =>
+        value is { Length: > 0 and <= 96 } && value.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
+
+    private sealed record EvidenceEvaluation(string Status, string? SuppressionReason, IReadOnlyList<OpsLoopEvidenceSourcePosture> Sources)
+    {
+        internal OpsLoopEvidencePosture ToReport(DateTimeOffset evaluatedAt) => new(
+            Status,
+            evaluatedAt.ToString("O", CultureInfo.InvariantCulture),
+            Sources,
+            SuppressionReason);
     }
 
     private async Task<string> TryProposeOneAsync(
@@ -760,6 +937,11 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             OperateTimeline: [],
             DeployOperations: [],
             McpToolsUsed: toolsUsed.Distinct(StringComparer.Ordinal).ToArray(),
+            EvidencePosture: new OpsLoopEvidencePosture(
+                "unavailable",
+                DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+                [],
+                "required-read-failed"),
             Bounds: new OpsLoopBounds(
                 pageSize,
                 lookbackHours,

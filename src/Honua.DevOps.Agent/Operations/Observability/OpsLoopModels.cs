@@ -70,6 +70,21 @@ internal sealed record OpsLoopDeployEvidence(
     string? CurrentPhase,
     string UpdatedAt);
 
+internal sealed record OpsLoopEvidenceSourcePosture(
+    string SourceId,
+    string BackendKind,
+    string BackendId,
+    string? ObservedAt,
+    long? EvaluatedAgeSeconds,
+    string Completeness,
+    IReadOnlyList<string> ReasonCodes);
+
+internal sealed record OpsLoopEvidencePosture(
+    string Status,
+    string EvaluatedAt,
+    IReadOnlyList<OpsLoopEvidenceSourcePosture> Sources,
+    string? SuppressionReason);
+
 internal sealed record OpsLoopReport(
     string Status,
     string ObservabilitySource,
@@ -84,5 +99,6 @@ internal sealed record OpsLoopReport(
     IReadOnlyList<OpsLoopEventEvidence> OperateTimeline,
     IReadOnlyList<OpsLoopDeployEvidence> DeployOperations,
     IReadOnlyList<string> McpToolsUsed,
+    OpsLoopEvidencePosture EvidencePosture,
     OpsLoopBounds Bounds,
     IReadOnlyList<string> Limitations);

@@ -9,6 +9,21 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class OpsObserveDiagnoseProposeLoopTests
 {
     [Fact]
+    public void EmulatorFixtures_DistinguishMcpReachabilityFromBackendCompleteness()
+    {
+        string fixtureRoot = Path.Combine(AppContext.BaseDirectory, "fixtures", "ops-loop");
+        using JsonDocument complete = JsonDocument.Parse(File.ReadAllText(Path.Combine(fixtureRoot, "complete.json")));
+        using JsonDocument partial = JsonDocument.Parse(File.ReadAllText(Path.Combine(fixtureRoot, "reachable-partial.json")));
+
+        Assert.True(complete.RootElement.GetProperty("mcpReachable").GetBoolean());
+        Assert.True(partial.RootElement.GetProperty("mcpReachable").GetBoolean());
+        Assert.True(complete.RootElement.GetProperty("evidencePosture").GetProperty("actionable").GetBoolean());
+        Assert.False(partial.RootElement.GetProperty("evidencePosture").GetProperty("actionable").GetBoolean());
+        Assert.True(partial.RootElement.GetProperty("partialResult").GetBoolean());
+        Assert.NotEmpty(partial.RootElement.GetProperty("sourceErrors").EnumerateArray());
+    }
+
+    [Fact]
     public async Task RunAsync_ActionableFinding_UsesBoundedMcpEvidenceAndFindingIdProposal()
     {
         McpOpsServerEmulator emulator = new();
@@ -189,6 +204,44 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
         Assert.DoesNotContain("secret upstream host detail", limitation, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("missing-timestamp", "malformed")]
+    [InlineData("malformed-timestamp", "malformed")]
+    [InlineData("stale", "stale")]
+    [InlineData("future", "malformed")]
+    [InlineData("stale-source", "stale")]
+    [InlineData("backend-unverified", "backend-unverified")]
+    [InlineData("partial", "partial")]
+    [InlineData("source-error", "partial")]
+    public async Task RunAsync_IncompleteEvidence_PreservesDiagnosticsAndSuppressesAllRouting(
+        string fixture,
+        string expectedPosture)
+    {
+        McpOpsServerEmulator emulator = new(evidenceFixture: fixture);
+        TestHttpMessageHandler handler = new(emulator.Respond);
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
+        OpsObserveDiagnoseProposeLoop loop = new(CreateRuntime(ExecutionTier.Propose), gateway);
+
+        OpsLoopReport report = await loop.RunAsync(
+            findingId: string.Empty,
+            severity: string.Empty,
+            rule: string.Empty,
+            lookbackHours: 24,
+            pageSize: 25,
+            proposeRecommendedAction: true,
+            CancellationToken.None);
+
+        Assert.Equal("evidence-incomplete", report.Status);
+        Assert.Equal(expectedPosture, report.EvidencePosture.Status);
+        Assert.NotEmpty(report.Findings);
+        Assert.Null(Assert.Single(report.Findings).Proposal);
+        Assert.Equal(0, emulator.ExecutorDiscoveryCallCount);
+        Assert.Equal(0, emulator.ProposalCallCount);
+        Assert.Contains(report.Limitations, value => value.Contains("suppressed", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(report.Limitations, value => value.Contains("secret backend detail", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task RunAsync_SessionCleanupTimesOut_PreservesCompletedReadResult()
     {
@@ -308,9 +361,11 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
     private sealed class McpOpsServerEmulator(
         bool failHealthRead = false,
         bool cancelDelete = false,
-        string proposalStatus = "ProposalCreated")
+        string proposalStatus = "ProposalCreated",
+        string evidenceFixture = "complete")
     {
         internal int ProposalCallCount { get; private set; }
+        internal int ExecutorDiscoveryCallCount { get; private set; }
 
         internal HttpResponseMessage Respond(HttpRequestMessage request)
         {
@@ -364,6 +419,10 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
 
             Assert.Equal("tools/call", method);
             string tool = root.GetProperty("params").GetProperty("name").GetString()!;
+            if (tool == "honua_propose_operation")
+            {
+                ExecutorDiscoveryCallCount++;
+            }
             object structured = tool switch
             {
                 "honua_ops_health" when failHealthRead => new
@@ -373,7 +432,8 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
                 },
                 "honua_ops_health" => new
                 {
-                    generatedAt = "2026-07-10T00:00:00Z",
+                    generatedAt = GeneratedAt(),
+                    evidencePosture = EvidencePosture("health-checks"),
                     overallStatus = "Degraded",
                     health = new { status = "Degraded" },
                     servingLatency = new { protocols = Array.Empty<object>() },
@@ -384,7 +444,8 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
                 },
                 "honua_ops_findings" => new
                 {
-                    generatedAt = "2026-07-10T00:00:00Z",
+                    generatedAt = GeneratedAt(),
+                    evidencePosture = EvidencePosture("ops-findings"),
                     findings = new object[]
                     {
                         Finding(),
@@ -393,6 +454,7 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
                 },
                 "honua_alert_events" => new
                 {
+                    evidencePosture = EvidencePosture("alert-events"),
                     items = new[]
                     {
                         new
@@ -414,6 +476,7 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
                 },
                 "honua_operate_events" => new
                 {
+                    evidencePosture = EvidencePosture("operate-events"),
                     items = new[]
                     {
                         new
@@ -428,7 +491,10 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
                             resourceRef = "deploy-operation:op-7"
                         }
                     },
-                    partialResult = false
+                    partialResult = evidenceFixture == "partial",
+                    sourceErrors = evidenceFixture == "source-error"
+                        ? new object[] { new { sourceId = "operate-events", code = "source-unavailable", detail = "secret backend detail" } }
+                        : Array.Empty<object>()
                 },
                 "honua_platform_release_status" => new
                 {
@@ -481,6 +547,46 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
             };
 
             return JsonRpcToolResult(root, structured, failHealthRead && tool == "honua_ops_health");
+        }
+
+        private string? GeneratedAt() => evidenceFixture switch
+        {
+            "missing-timestamp" => null,
+            "malformed-timestamp" => "not-a-timestamp",
+            "stale" => DateTimeOffset.UtcNow.AddMinutes(-10).ToString("O"),
+            "future" => DateTimeOffset.UtcNow.AddMinutes(10).ToString("O"),
+            _ => DateTimeOffset.UtcNow.ToString("O")
+        };
+
+        private object EvidencePosture(string sourceId)
+        {
+            DateTimeOffset observedAt = evidenceFixture == "stale-source"
+                ? DateTimeOffset.UtcNow.AddMinutes(-10)
+                : DateTimeOffset.UtcNow;
+            string backendKind = evidenceFixture == "backend-unverified" ? "unverified" : "durableStore";
+            string completeness = evidenceFixture is "partial" or "source-error" ? "partial" : "complete";
+            bool actionable = evidenceFixture is not ("partial" or "source-error" or "backend-unverified" or "stale-source");
+            return new
+            {
+                schemaVersion = "1.0",
+                generatedAt = DateTimeOffset.UtcNow.ToString("O"),
+                completeness,
+                actionable,
+                sources = new[]
+                {
+                    new
+                    {
+                        sourceId,
+                        backendKind,
+                        backendId = backendKind == "unverified" ? "unverified" : $"{sourceId}-primary",
+                        observedAt = observedAt.ToString("O"),
+                        lastSuccessfulAt = observedAt.ToString("O"),
+                        completeness,
+                        maximumObservationAgeSeconds = 300,
+                        reasonCodes = completeness == "complete" ? Array.Empty<string>() : new[] { "partial-result" }
+                    }
+                }
+            };
         }
 
         private static object Finding() => new

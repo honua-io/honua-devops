@@ -58,6 +58,11 @@ public sealed class OpsLoopAuditTests
             OperateTimeline: [],
             DeployOperations: [],
             McpToolsUsed: ["honua_ops_health", "honua_ops_findings"],
+            EvidencePosture: new OpsLoopEvidencePosture(
+                "complete-fresh",
+                "2026-07-10T00:00:00.0000000+00:00",
+                [],
+                null),
             Bounds: new OpsLoopBounds(25, 24, 50, 12, 2048, false),
             Limitations: []);
 
@@ -70,7 +75,7 @@ public sealed class OpsLoopAuditTests
         AuditRecord record = Assert.Single(sink.Records);
         Assert.Equal("proposal-created", record.Status);
         Assert.True(record.Mutated);
-        Assert.Equal("Honua MCP ops loop: health=Degraded, findings=1, proposals=1.", record.Summary);
+        Assert.Equal("Honua MCP ops loop: health=Degraded, evidence=complete-fresh, findings=1, proposals=1.", record.Summary);
     }
 
     private sealed class CapturingAuditSink : IAuditSink

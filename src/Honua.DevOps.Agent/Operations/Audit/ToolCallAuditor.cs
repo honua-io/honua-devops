@@ -79,7 +79,7 @@ internal static class ToolCallAuditor
         {
             status = opsLoop.Status;
             summary = Redaction.Scrub(
-                $"Honua MCP ops loop: health={opsLoop.OverallHealth ?? "unknown"}, findings={opsLoop.Findings.Count}, proposals={opsLoop.Findings.Count(finding => finding.Proposal is not null)}.");
+                $"Honua MCP ops loop: health={opsLoop.OverallHealth ?? "unknown"}, evidence={opsLoop.EvidencePosture.Status}, findings={opsLoop.Findings.Count}, proposals={opsLoop.Findings.Count(finding => finding.Proposal is not null)}.");
             mutated = opsLoop.Findings.Any(finding =>
                 finding.Proposal?.GatewayStatus is
                     "ProposalCreated" or
