@@ -200,6 +200,21 @@ internal static class CapabilityToolset
                 "build_ai_devops_brief",
                 "Build an advisory AI DevOps brief with affected resources, raw evidence references, suggested actions (with requiresApproval/mutatesState flags), confidence, owner, status, and workflow links. Advisory only with auto-apply disabled; mutating suggestions require an explicit governed submit/rollback."),
             CreateTool(
+                (string stack, string size, string action, string variablesJson, bool confirmed, string confirmation, string approvalReceiptJson)
+                    => toolkit.ProvisionInfrastructureAsync(stack, size, action, variablesJson, confirmed, confirmation, approvalReceiptJson),
+                "provision_infrastructure",
+                "Provision a Honua cloud cell from the allowlisted honua-iac Terraform roots. 2026.1 supports stack=aws-ecs and size=small. action=plan returns a stable provisioningOperationId, saved-plan digest, and tokenized challenge. apply/destroy requires that exact saved plan plus approvalReceiptJson containing a signed honua.devops.provision-approval/v1 receipt from a configured trusted issuer, bound to the exact operation, plan, action, stack, and environment. variablesJson accepts only non-secret allowlisted Terraform values."),
+            CreateTool(
+                (string stack, string baseUrl, string adminKeySecretRef, string outputDirectory, bool overwrite, string provisioningOperationId)
+                    => toolkit.InstallHandoffAsync(stack, baseUrl, adminKeySecretRef, outputDirectory, overwrite, provisioningOperationId),
+                "install_handoff",
+                "Write a secretless, unverified CLI and honua-mcp-proxy handoff after provisioning. Requires the exact provisioningOperationId and operator-configured manifest pins for candidate, proxy version, and integrity. Returns install-handoff-written, never ready; verification is a separate evidence-producing step. Leave baseUrl empty to read only the honua_url Terraform output."),
+            CreateTool(
+                (string handoffConfigPath, bool overwrite)
+                    => toolkit.VerifyInstallHandoffAsync(handoffConfigPath, overwrite),
+                "verify_install_handoff",
+                "Run the exact emitted pinned proxy command, resolve the admin secret reference only into its child environment, verify HTTPS health, Admin authentication, MCP initialize, the paged required Admin/analysis/esri-gp roster, and a harmless Admin status call. On complete success only, writes a content-addressed verification receipt and DevOps-produced aws-ecs provision binding joined to the stable provisioningOperationId."),
+            CreateTool(
                 (string releasePackageJson, string mode, string correlationId)
                     => releaseExplainer.ExplainReleasePackageAsync(releasePackageJson, mode, correlationId),
                 "explain_release_package",

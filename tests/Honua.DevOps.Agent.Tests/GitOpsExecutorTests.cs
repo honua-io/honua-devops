@@ -137,7 +137,15 @@ public class GitOpsExecutorTests
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/op-7f3", StringComparison.Ordinal))
             {
-                return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Succeeded" });
+                // A terminal success carries the authoritative actuator receipt bound to this
+                // operation. Without it the executor reports `indeterminate` rather than
+                // success — see the receipt-gate tests below.
+                return TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-7f3",
+                    status = "Succeeded",
+                    actuatorReceipt = new { receiptId = "rcpt-7f3", operationId = "op-7f3" }
+                });
             }
 
             return TestHttpMessageHandler.JsonOk(new { status = "ok" });
@@ -157,6 +165,69 @@ public class GitOpsExecutorTests
             request.Method == "POST" && request.Uri.EndsWith("/op-7f3/submit", StringComparison.Ordinal));
         Assert.Contains(result.BackendSteps, step => step.Name == "deploy-operation-submit" && step.MutatesState);
         Assert.Contains(result.BackendSteps, step => step.Name.StartsWith("deploy-operation-poll", StringComparison.Ordinal));
+    }
+
+    // ---- The actuator-receipt gate: success must be certified, never assumed. ----
+
+    [Fact]
+    public async Task ExecuteSyncAsync_TerminalSuccessWithoutAReceipt_IsIndeterminateAndStillReportsTheMutation()
+    {
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Planned" });
+            }
+
+            // Terminal success, but the control plane returned no actuator receipt.
+            return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Succeeded" });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor);
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, result.Status);
+        Assert.Contains("actuator-receipt-missing-or-mismatched", result.BlockingReasons);
+
+        // The submit succeeded and the operation reached a terminal state, so backend state
+        // may have changed. The status stays fail-closed; the mutation attempt is reported.
+        Assert.True(result.Mutated);
+        Assert.Contains(result.BackendSteps, step => step.Name == "deploy-operation-submit" && step.MutatesState);
+    }
+
+    [Fact]
+    public async Task ExecuteSyncAsync_ReceiptBoundToADifferentOperation_IsIndeterminate()
+    {
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-7f3", status = "Planned" });
+            }
+
+            return TestHttpMessageHandler.JsonOk(new
+            {
+                operationId = "op-7f3",
+                status = "Succeeded",
+                actuatorReceipt = new { receiptId = "rcpt-other", operationId = "op-somewhere-else" }
+            });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor);
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, result.Status);
+        Assert.Contains("actuator-receipt-missing-or-mismatched", result.BlockingReasons);
     }
 
     [Fact]
@@ -502,7 +573,12 @@ public class GitOpsExecutorTests
 
             return path.EndsWith("/deploy/operations", StringComparison.Ordinal)
                 ? TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Planned" })
-                : TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Succeeded" });
+                : TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-1",
+                    status = "Succeeded",
+                    actuatorReceipt = new { receiptId = "rcpt-1", operationId = "op-1" }
+                });
         });
         using BackendGateway gateway = CreateGateway(handler);
         GitOpsExecutor executor = new(
@@ -568,7 +644,12 @@ public class GitOpsExecutorTests
             request.RequestUri!.AbsolutePath.EndsWith("/deploy/operations", StringComparison.Ordinal)
                 && request.Method == HttpMethod.Post
                 ? TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Planned" })
-                : TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Succeeded" }));
+                : TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-1",
+                    status = "Succeeded",
+                    actuatorReceipt = new { receiptId = "rcpt-1", operationId = "op-1" }
+                }));
         using BackendGateway gateway = CreateGateway(handler);
         GitOpsExecutor executor = new(
             CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),

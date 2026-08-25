@@ -22,7 +22,7 @@ internal static partial class Redaction
     private static partial Regex AuthorizationHeaderPattern();
 
     [GeneratedRegex(
-        @"^(?i)(api[_-]?key|x[_-]?api[_-]?key|scoped[_-]?key|authorization|access[_-]?token|token|secret|password|passwd)$",
+        @"^(?i)(api[_-]?key|x[_-]?api[_-]?key|scoped[_-]?key|authorization|access[_-]?token|token|secret|password|passwd|vars(?:json)?|variables(?:json)?)$",
         RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveKeyNamePattern();
 

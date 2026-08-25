@@ -253,7 +253,7 @@ internal sealed class BugReportWebhookHandler
         AuditRecord record = new(
             Timestamp: _now(),
             SessionId: _auditContext.SessionId,
-            OperationId: Guid.NewGuid().ToString("n"),
+            AuditEventId: Guid.NewGuid().ToString("n"),
             ToolName: AuditToolName,
             Arguments: arguments,
             Status: status,

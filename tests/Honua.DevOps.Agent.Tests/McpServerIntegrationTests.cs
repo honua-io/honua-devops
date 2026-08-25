@@ -207,6 +207,9 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         "get_gitops_proposal",
         "get_devops_operation_status",
         "build_ai_devops_brief",
+        "provision_infrastructure",
+        "install_handoff",
+        "verify_install_handoff",
         "explain_release_package"
     ];
 

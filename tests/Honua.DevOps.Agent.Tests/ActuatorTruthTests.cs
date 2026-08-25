@@ -330,7 +330,15 @@ public class ActuatorTruthTests
     {
         TestHttpMessageHandler handler = new(request =>
             request.Method == HttpMethod.Post
-                ? TestHttpMessageHandler.JsonOk(new { operationId = "op-9", status = "Succeeded" })
+                ? TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-9",
+                    status = "Succeeded",
+                    // A terminal success must carry the authoritative actuator receipt bound
+                    // to this operation; without it the executor fails closed to
+                    // `indeterminate` and no execution claim is possible.
+                    actuatorReceipt = new { receiptId = "rcpt-9", operationId = "op-9" }
+                })
                 : TestHttpMessageHandler.JsonOk(new { operationId = "op-9", status = "Submitted" }));
 
         HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());

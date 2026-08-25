@@ -254,9 +254,9 @@ internal sealed class BackendGateway : IDisposable
         List<BackendCallResult> combinedCalls =
         [
             manifestSnapshot.CallResult,
-            capabilitiesSnapshot.CallResult,
-            applyResult
+            capabilitiesSnapshot.CallResult
         ];
+        combinedCalls.Add(applyResult);
         if (deployPreflightResult is not null)
         {
             combinedCalls.Add(deployPreflightResult);

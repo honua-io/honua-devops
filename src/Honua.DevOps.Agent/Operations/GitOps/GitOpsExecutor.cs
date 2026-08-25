@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations.Actuation;
@@ -165,11 +167,21 @@ internal sealed class GitOpsExecutor(
         BackendCallResult preflight = await _gateway.RequestDeployPreflightAsync(includeDiagnostics: true, cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-preflight", preflight, mutatesState: false));
 
+        // Stamp the sealed lineage onto the server-visible parameters so the durable operation
+        // records the same identity the spine authorized. The digest is taken FROM the grant
+        // rather than recomputed here: one source of truth, so the value the server stores
+        // cannot drift from the value that gated the mutation.
+        Dictionary<string, string> lineageParameters = new(parameters, StringComparer.Ordinal)
+        {
+            ["honua.devops/request-digest"] = operationGrant.RequestDigest,
+            ["honua.devops/idempotency-key"] = operationGrant.IdempotencyKey
+        };
+
         BackendCallResult plan = await _gateway.PlanDeployOperationAsync(
             _runtime.DeployTargetId!,
             desiredRevision,
             currentRevision,
-            parameters,
+            lineageParameters,
             cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-plan", plan, mutatesState: false));
 
@@ -185,7 +197,7 @@ internal sealed class GitOpsExecutor(
             idempotencyKey,
             correlationId,
             priority,
-            parameters,
+            lineageParameters,
             operationGrant,
             cancellationToken);
         bool operationRecorded = created.CallResult.IsSuccess && created.Payload is not null;
@@ -442,6 +454,8 @@ internal sealed class GitOpsExecutor(
         }
 
         string? status = submitted.Payload is null ? null : DeployOperationReader.ReadStatus(submitted.Payload.RootElement);
+        string? receiptId = submitted.Payload is null ? null : DeployOperationReader.ReadActuatorReceiptId(submitted.Payload.RootElement);
+        string? receiptOperationId = submitted.Payload is null ? null : DeployOperationReader.ReadActuatorReceiptOperationId(submitted.Payload.RootElement);
         findings.Add($"Operation `{operationId}` submitted (status {status ?? "unknown"}).");
 
         // Poll to a terminal status with capped exponential backoff up to the configured
@@ -475,6 +489,8 @@ internal sealed class GitOpsExecutor(
             if (polled.CallResult.IsSuccess && polled.Payload is not null)
             {
                 status = DeployOperationReader.ReadStatus(polled.Payload.RootElement);
+                receiptId = DeployOperationReader.ReadActuatorReceiptId(polled.Payload.RootElement) ?? receiptId;
+                receiptOperationId = DeployOperationReader.ReadActuatorReceiptOperationId(polled.Payload.RootElement) ?? receiptOperationId;
             }
         }
 
@@ -511,6 +527,37 @@ internal sealed class GitOpsExecutor(
         else
         {
             findings.Add($"Terminal status for `{operationId}`: {status ?? "unknown"}.");
+        }
+
+        if (resultStatus == GitOpsExecutionStatus.Succeeded &&
+            (string.IsNullOrWhiteSpace(receiptId) ||
+             (!string.IsNullOrWhiteSpace(receiptOperationId) &&
+              !string.Equals(receiptOperationId, operationId, StringComparison.Ordinal))))
+        {
+            findings.Add($"Operation `{operationId}` reached success without an authoritative actuator receipt bound to that operation; result is indeterminate.");
+            findings.Add(
+                "The submit succeeded and the operation polled to a terminal state, so backend state may have changed; " +
+                "treat this as an unverified mutation and reconcile against the deploy-control operation before retrying.");
+            return new GitOpsExecutionResult(
+                Status: GitOpsExecutionStatus.Indeterminate,
+                OperationId: operationId,
+                ServerStatus: status,
+                // The submit already succeeded and the operation reached a terminal state, so
+                // cloud state may well have changed — only the receipt evidence is missing.
+                // Reporting Mutated=false here would tell MCP consumers nothing happened and
+                // would contradict the in-progress/terminal paths, which mark a successful
+                // submission as mutated. The status stays fail-closed; the mutation attempt
+                // is reported truthfully.
+                Mutated: true,
+                Decision: decision,
+                BackendSteps: steps,
+                Findings: findings,
+                BlockingReasons: ["actuator-receipt-missing-or-mismatched"]);
+        }
+
+        if (resultStatus == GitOpsExecutionStatus.Succeeded)
+        {
+            findings.Add($"Authoritative actuator receipt `{receiptId}` is bound to operation `{operationId}`.");
         }
 
         return new GitOpsExecutionResult(

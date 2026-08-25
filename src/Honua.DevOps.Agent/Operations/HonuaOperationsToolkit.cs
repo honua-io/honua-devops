@@ -27,7 +27,9 @@ internal sealed partial class HonuaOperationsToolkit(
     BackendGateway gateway,
     OperatorPolicyModel? policy = null,
     SupportGateway? supportGateway = null,
-    string? defaultEdition = null)
+    string? defaultEdition = null,
+    IProvisioningProcessRunner? provisioningProcessRunner = null,
+    IInstallHandoffVerifier? installHandoffVerifier = null)
 {
     // One actuation spine per toolkit instance (issue #153). It is the single write
     // authority for this session: every mutating backend call is issued under a grant it
@@ -39,7 +41,7 @@ internal sealed partial class HonuaOperationsToolkit(
 
     internal string SessionEdition => string.IsNullOrWhiteSpace(defaultEdition) ? "community" : defaultEdition!.Trim().ToLowerInvariant();
 
-    [Description("Search the operator's audit journal for recent operations. Returns operationId, timestamp, tool, status, summary, mutated flag, and execution tier. Use this to look up an operationId for rollback, recall what was run in a prior session, or summarize recent activity. Filter by tool name (exact match), mutatedOnly (true to skip read-only calls), or statusContains (substring match). Returns up to `limit` most-recent matches.")]
+    [Description("Search the operator's diagnostic audit journal. Returns auditEventId, timestamp, tool, status, summary, mutated flag, and execution tier. auditEventId identifies one audit emission and is not a canonical runtime operationId. Filter by tool name (exact match), mutatedOnly (true to skip read-only calls), or statusContains (substring match). Returns up to `limit` most-recent matches.")]
     public Task<OperationSearchResult> FindRecentOperationsAsync(
         string toolFilter,
         bool mutatedOnly,
@@ -706,6 +708,7 @@ internal sealed partial class HonuaOperationsToolkit(
             GitOpsExecutionStatus.InProgress => "execute-in-progress",
             GitOpsExecutionStatus.RolledBack => "rolled-back",
             GitOpsExecutionStatus.Failed => "execute-failed",
+            GitOpsExecutionStatus.Indeterminate => "indeterminate",
             GitOpsExecutionStatus.ApprovalRequired => "approval-required",
             GitOpsExecutionStatus.ContractUnavailable => "contract-unavailable",
             _ => "execute-enabled"
@@ -2978,7 +2981,8 @@ internal sealed partial class HonuaOperationsToolkit(
     // Steps for the PLANNING path only. Every one of them is non-mutating by construction:
     // `ApplyResult` here is the dryRun-pinned manifest preview, not a write, so it is named
     // and flagged as such (issue #153). The real `manifest-apply` step is contributed by the
-    // typed actuator, and only when it actually applied desired state.
+    // typed actuator, and only when it actually applied desired state. The audit `Mutated`
+    // flag is derived from these steps, so a preview must never be flagged mutating.
     private static IReadOnlyList<OperationBackendStep> BuildGitOpsBackendSteps(
         GitOpsDeployBackendResult backendResult)
     {

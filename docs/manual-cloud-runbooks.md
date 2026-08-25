@@ -117,6 +117,11 @@ Local smoke verification for the contract itself:
 ./scripts/smoke-contract-smoke.sh
 ```
 
+The 2026.1 release candidate requires more than this smoke. For the AWS ECS
+cell, run the candidate-bound [AI delivery-arc producer](aws-ecs-ai-delivery-arc.md)
+after readiness and before the existing teardown path, then finalize its two
+release receipts only after cleanup verification succeeds.
+
 ## Admin UI Verification
 
 After the endpoint-level smoke passes, perform a manual control-plane verification pass:

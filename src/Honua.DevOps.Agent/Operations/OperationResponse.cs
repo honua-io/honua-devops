@@ -22,6 +22,7 @@ internal sealed record OperationResponse(
     IReadOnlyList<string> Actions,
     IReadOnlyList<string> ValidationChecks,
     IReadOnlyList<string> Risks,
+    [property: JsonPropertyName("provisioningLineage")] ProvisioningLineage? ProvisioningLineage = null,
     [property: JsonIgnore] OperationEvidence? Evidence = null,
     [property: JsonIgnore] GitOpsPlan? GitOpsPlan = null,
     [property: JsonIgnore] ReleaseOrchestrationPlan? ReleaseOrchestration = null,

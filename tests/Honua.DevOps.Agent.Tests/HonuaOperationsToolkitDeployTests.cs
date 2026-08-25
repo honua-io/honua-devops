@@ -240,7 +240,14 @@ public class HonuaOperationsToolkitDeployTests
 
             if (request.Method == HttpMethod.Post && path.EndsWith("/submit", StringComparison.Ordinal))
             {
-                return TestHttpMessageHandler.JsonOk(new { operationId = "op-promote", status = "Succeeded" });
+                // Terminal success carries the actuator receipt bound to this operation;
+                // without it the executor fails closed to `indeterminate`.
+                return TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-promote",
+                    status = "Succeeded",
+                    actuatorReceipt = new { receiptId = "rcpt-promote", operationId = "op-promote" }
+                });
             }
 
             return TestHttpMessageHandler.JsonOk(new { status = "ok" });
@@ -509,24 +516,30 @@ public class HonuaOperationsToolkitDeployTests
             changeSummary: "promote validated release",
             cancellationToken: CancellationToken.None);
 
-        CapturedRequest applyRequest = Assert.Single(
-            handler.CapturedRequests,
-            request => request.Method == HttpMethod.Post.Method);
-        using JsonDocument requestJson = JsonDocument.Parse(applyRequest.Body!);
-        string serialized = requestJson.RootElement.ToString();
-
         // No deploy target is configured here, so the actuation cannot enter the deploy-control
         // lifecycle and reports contract-unavailable (no operation id is invented) while the
         // write-enabled plan/evidence below are still produced. With a target this becomes
         // awaiting-approval/execute-succeeded (covered by the dedicated executor tests).
         Assert.Equal("contract-unavailable", response.Status);
 
+        CapturedRequest previewRequest = Assert.Single(
+            handler.CapturedRequests,
+            request => request.Method == HttpMethod.Post.Method
+                && request.Uri.Contains("/manifest/apply", StringComparison.Ordinal));
+        using JsonDocument requestJson = JsonDocument.Parse(previewRequest.Body!);
+        string serialized = requestJson.RootElement.ToString();
+
         // Issue #153: the only /manifest/apply on the planning path is the dryRun-pinned
         // preview. The real apply is a step of the typed actuator and therefore never runs
-        // here, where no durable operation could be created in the first place.
+        // here, where no durable operation could be created in the first place. Previously a
+        // `"dryRun":false` apply was sent at exactly this point, before any durable operation
+        // or approval existed.
         Assert.Contains("\"dryRun\":true", serialized, StringComparison.Ordinal);
         Assert.Contains("\"honua.devops/execution-tier\":\"promote-prod\"", serialized, StringComparison.Ordinal);
         Assert.Contains("\"promotionRef\"", serialized, StringComparison.Ordinal);
+        Assert.NotNull(response.BackendSteps);
+        Assert.DoesNotContain(response.BackendSteps!, step => step.MutatesState);
+
         Assert.NotNull(response.Evidence);
         Assert.NotNull(response.GitOpsPlan);
         Assert.NotNull(response.ReleaseOrchestration);

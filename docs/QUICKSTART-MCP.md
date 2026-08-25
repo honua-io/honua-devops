@@ -2,7 +2,7 @@
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 35 operator tools the interactive agent
+MCP-capable host) can call the same 38 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 In MCP mode the client LLM does the reasoning, so **no model provider
@@ -59,9 +59,9 @@ On Windows the archive is a `.zip` and the executable is
 Verify the registration reached `tools/list`:
 
 ```bash
-claude mcp list                       # honua-devops should report 35 tools
+claude mcp list                       # honua-devops should report 38 tools
 ~/.local/share/honua-devops/Honua.DevOps.Agent --list-tools | head -1
-# honua-devops exposes 35 operator tools:
+# honua-devops exposes 38 operator tools:
 ```
 
 Upgrade by repeating the download/verify/extract over the same directory with a
@@ -116,12 +116,12 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 35 tools), or run the
+Verify with `claude mcp list` (the server should report 38 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --mcp
-# stderr: honua-devops MCP stdio server ready (tools=35, mode=plan, tier=plan, approval=pr-first, ...)
+# stderr: honua-devops MCP stdio server ready (tools=38, mode=plan, tier=plan, approval=pr-first, ...)
 ```
 
 ## Register with Codex CLI
@@ -196,7 +196,7 @@ bottlenecks) with prioritized remediation and validation checks.
 
 ## Exposed tools (1:1 with the interactive agent)
 
-All 35 tools registered by `CapabilityToolset` (the
+All 38 tools registered by `CapabilityToolset` (the
 `ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
 live MCP surface 1:1):
 
@@ -216,7 +216,47 @@ live MCP surface 1:1):
 `plan_azure_gp_substrate`, `plan_azure_gp_job_sizing`,
 `get_gitops_proposal`, `record_gitops_proposal_decision`,
 `get_devops_operation_status`, `build_ai_devops_brief`,
+`provision_infrastructure`, `install_handoff`, `verify_install_handoff`,
 `explain_release_package`.
+
+## Governed provisioning and verified handoff
+
+`provision_infrastructure` returns a stable `provisioningOperationId`, exact
+saved-plan SHA-256, and one-time challenge. Apply/destroy additionally requires
+`approvalReceiptJson` using schema `honua.devops.provision-approval/v1`. The
+receipt issuer must appear in `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS`
+(`issuer=base64-hmac-key`, semicolon-separated; keys are secret-injected, never
+committed). Its base64 HMAC-SHA256 signature covers these newline-separated
+UTF-8 fields in order:
+
+`schemaVersion`, `approvalReceiptId`, `issuer`, `keyId` (first 16 hex chars of
+SHA-256 over the decoded key), `provisioningOperationId`, lowercase
+`planSha256`, `action`, `stack`, `environment`, `decision`, UTC `issuedAtUtc`
+and UTC `expiresAtUtc` in round-trip (`O`) format. Receipts must say `approved`,
+expire within one hour, and match the exact saved plan. Missing, expired,
+substituted, untrusted, malformed, or replayed receipts start no Terraform
+apply process.
+
+Handoff emission also requires immutable release inputs:
+
+```dotenv
+HONUA_DEVOPS_MCP_PROXY_PACKAGE=@honua/mcp-server@<exact-version>
+HONUA_DEVOPS_MCP_PROXY_INTEGRITY=sha512-<registry-integrity>
+HONUA_DEVOPS_CANDIDATE_REFERENCE=<exact-server-revision>
+```
+
+`install_handoff` consumes the exact `provisioningOperationId` and locally
+persisted DevOps apply evidence. It returns `install-handoff-written`, never
+ready. `verify_install_handoff` then resolves the secret reference only into
+the child proxy environment, checks npm integrity, HTTPS readiness,
+authenticated candidate identity, MCP initialize, paged `tools/list`, the
+Admin/analysis/esri-gp roster, and `honua_admin_server_status`. Only complete
+success writes `honua-install-verification.receipt.json` and the DevOps-owned
+`honua-devops-aws-ecs-provision-binding.json`; partial verification writes no
+ready binding. `secret://NAME`, AWS Secrets Manager references, and Azure Key
+Vault references resolve through the process environment, `aws`, or `az`
+respectively without placing credential material in arguments, handoff files,
+receipts, or audit records.
 
 > The mutating/decision tools `deploy_service_gitops` and
 > `record_gitops_proposal_decision` stay behind the same execution-mode/tier and
