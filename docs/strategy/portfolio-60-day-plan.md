@@ -1,6 +1,24 @@
 # Honua portfolio — 60-day strategic plan
 
-**Status:** execution tracker — backlog filed, status reconciled 2026-05-23
+> ## ⚠️ SUPERSEDED — historical snapshot, do not plan from this document
+>
+> This plan's 60-day window opened 2026-05-21 and **closed ~2026-07-20**. Its
+> status was last reconciled 2026-05-23; every repo row, issue count, and
+> "current" statement below reflects the 2026-05-20 scan and is stale.
+>
+> **The current program is the 2026.1 terminal AI delivery arc**, tracked in
+> honua-io/honua-release#120 (install -> services + GP -> maps/dashboards ->
+> governed publish), with the corrective successor cut labelled
+> `release/2026.1.1`.
+>
+> **The current gates in this repo** (honua-devops) are #147, #148, #150, and
+> #152 — not the honua-devops row in §2/Appendix A below, which is wrong.
+>
+> Everything below is retained unedited as a record of what was believed in
+> May 2026. It is not maintained.
+
+**Status:** SUPERSEDED (window closed ~2026-07-20) — original status line:
+execution tracker, backlog filed, status reconciled 2026-05-23
 **Date:** 2026-05-21
 **Scope:** all 15 active Honua repos (excluding worktrees)
 **Inputs:** live capability inventory + open-issue scan completed 2026-05-20

@@ -87,12 +87,30 @@ That means:
 
 This is intentionally the first engine slice, not the finished execution subsystem.
 
-Current gaps:
+Current gaps, each with its tracking status as of 2026-08-24. "UNTRACKED" means
+no open issue covers it — do not read it as planned work.
 
-- no standalone CLI entrypoint for `honua-gitops` yet
-- no persistent reconciliation loop yet
-- no pause/resume/approve backend implementation yet
-- diff and drift are still evidence/planning-first, not full actuation
+- **No standalone CLI entrypoint for `honua-gitops`.** UNTRACKED. The originating
+  epic honua-devops#14 closed without one; the engine is reachable only as agent
+  function tools or over MCP (`--mcp`). honua-devops#148 packages a runnable
+  `--mcp` artifact but does not add a `honua-gitops` CLI.
+- **No persistent reconciliation loop.** UNTRACKED as a honua-devops feature. The
+  current architecture puts reconcile state on the server side (see
+  honua-devops#57, which spans PR, CI, reconcile, and rollback under one
+  server-owned operation id), so a devops-resident loop may never be built. If
+  that decision is intentional, this line should be retired rather than tracked.
+- **No pause/resume/approve backend implementation.** UNTRACKED. Approval today
+  is the `pr-first` / execution-tier gate plus the Console proposal bridge
+  (`create_gitops_proposal` / `record_gitops_proposal_decision`); there is no
+  pause/resume state machine and no open issue for one.
+- **Diff and drift are evidence/planning-first, not full actuation.** Partially
+  tracked. The write seam landed in honua-devops#151/#153; the actuator
+  vocabulary that would make drift remediation real is honua-devops#156
+  (`ActuatorRegistry.Remediations` currently holds exactly two entries:
+  `gitops-rollback`, which is gated off unless rollback is explicitly enabled,
+  and the read-only `drift-observe`). Turning a GitOps *diff* into an
+  applied change through a PR is honua-devops#57. No open issue covers
+  autonomous drift correction, and none is intended in the default posture.
 
 ## What Landed
 

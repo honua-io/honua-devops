@@ -24,8 +24,10 @@ submit, or roll back deploy operations on its own.
 - MCP server mode: `ModelContextProtocol.Core` 1.4.0 (official MCP C# SDK) hosting
   the toolset over stdio via `--mcp`; `Microsoft.Extensions.AI` is pinned to match
   the abstractions floor it pulls in.
-- Provider-pluggable AI runtime over OpenAI-compatible adapters: `codex`,
-  `claude`, `local-llama` (NVIDIA NIM / vLLM / Ollama / TGI). Default `codex`.
+- Provider-pluggable AI runtime. Three OpenAI-compatible adapters — `codex`,
+  `claude`, `local-llama` (NVIDIA NIM / vLLM / Ollama / TGI) — plus `bedrock`,
+  a native Amazon Bedrock Converse adapter (`BedrockChatClientAdapter`, via
+  `AWSSDK.BedrockRuntime`). Default `codex`.
 - Tests: xUnit 2.9.3, `Microsoft.NET.Test.Sdk` 17.14.1, `coverlet.collector`,
   `YamlDotNet` 16.3.0.
 - Build uses NuGet lock files (`RestorePackagesWithLockFile=true`, locked mode
@@ -43,10 +45,15 @@ submit, or roll back deploy operations on its own.
   overrides `.env`. Reference defaults live in `.env.example`.
 - Bootstrap a local `.env.local`:
   `./scripts/bootstrap-operator-env.sh --provider codex`
-- Provider selection: `HONUA_DEVOPS_PROVIDER` = `codex` | `claude` | `local-llama`.
-  Each provider needs its `_MODEL` and `_API_KEY` env vars (e.g.
-  `HONUA_DEVOPS_CODEX_MODEL`, `HONUA_DEVOPS_CODEX_API_KEY`); endpoints optional
-  except hosted NIM for `local-llama`. See README "Provider Configuration".
+- Provider selection: `HONUA_DEVOPS_PROVIDER` = `codex` | `claude` | `local-llama`
+  | `bedrock` (alias `aws-bedrock`).
+  The three OpenAI-compatible providers each need their `_MODEL` and `_API_KEY`
+  env vars (e.g. `HONUA_DEVOPS_CODEX_MODEL`, `HONUA_DEVOPS_CODEX_API_KEY`);
+  endpoints optional except hosted NIM for `local-llama`. `bedrock` needs only
+  `HONUA_DEVOPS_BEDROCK_MODEL`; `HONUA_DEVOPS_BEDROCK_REGION` (default
+  `us-west-2`) and `HONUA_DEVOPS_BEDROCK_API_KEY` are optional, and without the
+  key it falls back to the AWS credential chain. See README "Provider
+  Configuration".
 
 ## Commands
 
@@ -111,7 +118,8 @@ builds the tool set via `CapabilityToolset.Create(...)`, and runs the chosen
 agent provider.
 
 - `Providers/` — `AgentProviderFactory`, `ProviderConfiguration`, `ProviderKind`
-  resolve the OpenAI-compatible adapter for codex/claude/local-llama.
+  resolve the OpenAI-compatible adapter for codex/claude/local-llama, or
+  `BedrockChatClientAdapter` (Bedrock Converse) for bedrock.
 - `Operations/` — the operator capability surface. Key types:
   `CapabilityToolset` (registers function tools), `HonuaOperationsToolkit`,
   `BackendGateway`/`SupportGateway` (HTTP), `OperationResponse(+Builder)` and
@@ -160,23 +168,45 @@ Each tool call emits one JSONL audit record.
 
 ## Conventions & Gotchas
 
-- No top-level `dotnet build`/`dotnet test` CI workflow exists. The .NET build
-  is exercised by `Supply Chain Baseline` (`supply-chain-baseline.yml`: restore +
-  Release build + SBOM + Trivy gate + Helm provenance) and `Desired State
-  Validation` (`desired-state-validation.yml`: restore + `validate-desired-state.sh`).
-  Other workflows are smoke/contract/eval lanes (`devops-baseline-contracts.yml`,
-  `operator-bootstrap-smoke.yml`, `secrets-lifecycle-contracts.yml`,
-  `slo-enforcement-baseline.yml`, `client-compatibility-scoreboard.yml`,
-  `multi-model-operator-evals.yml`, `backup-restore-gameday.yml`,
-  `console-release-promotion.yml`: `bash -n` + `smoke-console-release-gate.sh` for
-  the honua-console release gate / preview planner — see
-  `docs/console-release-promotion.md`). The compatibility-train lanes
-  (`compat-train-conformance-gate.yml`, `compat-train-release-validation.yml`) plus
-  the one-dispatch RC orchestrator `compat-train-rc-validation.yml` chain the
-  existing per-repo/per-surface jobs (conformance producer -> live-evidence gate ->
-  manifest validation -> live probe) into one aggregated RC evidence bundle via
+- CI inventory — `.github/workflows/` holds exactly 15 workflows. All of them run
+  on `pull_request`, `push` to `trunk`, and `workflow_dispatch`; `demo-e2e.yml`
+  additionally runs on a schedule.
+
+  .NET lanes:
+  - `devops-agent-tests.yml` (`DevOps Agent Tests`) — the top-level build+test
+    lane: `dotnet restore`, `dotnet build --configuration Release --no-restore`,
+    then `dotnet test` over `tests/Honua.DevOps.Agent.Tests`. Live/integration
+    tests self-gate on `HONUA_DEVOPS_LIVE_*` and no-op without credentials, so
+    the whole suite runs here.
+  - `supply-chain-baseline.yml` — restore + Release build + SBOM + Trivy gate +
+    `helm-provenance-check.sh`.
+  - `desired-state-validation.yml` — restore + `validate-desired-state.sh` +
+    `smoke-desired-state-scaffold.sh`.
+  - `operator-bootstrap-smoke.yml` — restore + `smoke-bootstrap-operator-env.sh`
+    + `smoke-customer-bootstrap.sh`.
+
+  Script/contract/eval smoke lanes (`bash -n` plus the named smoke script, no
+  network or secrets):
+  - `devops-baseline-contracts.yml`, `secrets-lifecycle-contracts.yml`,
+    `slo-enforcement-baseline.yml`, `client-compatibility-scoreboard.yml`,
+    `multi-model-operator-evals.yml`, `backup-restore-gameday.yml`.
+  - `console-release-promotion.yml` — `smoke-console-release-gate.sh` for the
+    honua-console release gate / preview planner; see
+    `docs/console-release-promotion.md`.
+  - `demo-e2e.yml` — two tiers: always-on `smoke-demo-e2e.sh` (offline), plus an
+    opt-in/scheduled live read-path run of `run-demo-e2e.sh` against the demo
+    environment; see `docs/demo-e2e-verification.md`.
+
+  Compatibility-train lanes — `compat-train-conformance-gate.yml` and
+  `compat-train-release-validation.yml`, plus the RC orchestrator
+  `compat-train-rc-validation.yml`, chain the per-repo/per-surface jobs
+  (conformance producer -> live-evidence gate -> manifest validation -> live
+  probe) into one aggregated RC evidence bundle via
   `scripts/compat-train-rc-aggregate.sh` (honua-devops#41) — see
   `docs/compat-train-release-validation.md`.
+
+  There is no release/publish workflow in this repo; packaging a runnable
+  `--mcp` artifact is tracked by honua-devops#148.
 - NuGet locked-restore mode is active when `packages.lock.json` is present;
   changing package versions requires updating the lock file.
 - Default-safe posture: keep `plan` mode + `pr-first` approval unless a task
