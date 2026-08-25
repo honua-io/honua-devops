@@ -19,7 +19,7 @@ Current bootstrap packaging is intentionally simple:
 - source checkout of `honua-devops`
 - local or CI execution through `dotnet run`
 - environment-driven configuration through `.env`
-- customer-owned Terraform source from `honua-terraform` or an approved fork/path
+- customer-owned Terraform source from `honua-iac` or an approved fork/path
 
 Current non-goals:
 
@@ -141,7 +141,7 @@ Adoption guidance:
 1. Clone `honua-devops` into a customer-owned repo boundary.
 2. Run `scripts/bootstrap-operator-env.sh` to write a local `.env.local`, or copy selected values from `.env.example` into `.env` or `.env.local`.
 3. Set provider credentials and the Honua + OTEL backend URLs.
-4. Point `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` at `honua-terraform` or the approved customer fork.
+4. Point `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` at `honua-iac` or the approved customer fork.
 5. Keep `HONUA_DEVOPS_EXECUTION_MODE=plan` and `HONUA_DEVOPS_APPROVAL_MODE=pr-first` for initial adoption.
 6. Run preflight before any operator-assisted workflow.
 

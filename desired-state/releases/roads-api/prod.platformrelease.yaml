@@ -15,7 +15,7 @@ spec:
   changeSummary: Promote validated roads-api revision into prod.
   gitOpsTool: honua-gitops
   terraform:
-    repository: https://github.com/honua-io/honua-terraform
-    ref: main
+    repository: https://github.com/honua-io/honua-iac
+    ref: trunk
     targets:
       - eks

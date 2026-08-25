@@ -9,8 +9,8 @@ metadata:
 spec:
   environment: prod
   terraform:
-    repository: https://github.com/honua-io/honua-terraform
-    ref: main
+    repository: https://github.com/honua-io/honua-iac
+    ref: trunk
     targets:
       - eks
   secretRefs:

@@ -57,9 +57,9 @@ public class ProductionEnvironmentClassificationTests
             ExecutionTier.Plan,
             "honua-gitops",
             AllowedEnvironments: ["dev", "staging", "production"],
-            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRepository: "https://github.com/honua-io/honua-iac",
             TerraformRef: "main",
-            TerraformLocalPath: "/tmp/honua-terraform",
+            TerraformLocalPath: "/tmp/honua-iac",
             TerraformDeploymentTargets: ["eks"]);
 
         Assert.True(runtime.IsProductionEnvironment("production"));

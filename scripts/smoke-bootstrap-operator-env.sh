@@ -30,7 +30,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$WORKDIR/honua-terraform"
+mkdir -p "$WORKDIR/honua-iac"
 PORT_FILE="$WORKDIR/mock-server.port"
 
 python3 - "$PORT_FILE" >"$WORKDIR/mock-server.log" 2>&1 <<'PY' &
@@ -89,7 +89,7 @@ echo "Bootstrapping operator env smoke file in: $WORKDIR/.env.local"
 "$REPO_ROOT/scripts/bootstrap-operator-env.sh" \
   --provider codex \
   --output "$WORKDIR/.env.local" \
-  --terraform-local-path "$WORKDIR/honua-terraform" \
+  --terraform-local-path "$WORKDIR/honua-iac" \
   --honua-api-base-url "$MOCK_BASE_URL" \
   --otel-base-url "$MOCK_BASE_URL" \
   --run-preflight \

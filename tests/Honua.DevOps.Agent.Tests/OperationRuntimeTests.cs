@@ -102,6 +102,38 @@ public class OperationRuntimeTests
         Assert.Contains("HONUA_DEVOPS_DEPLOY_TARGET_ID", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Load_DefaultsTerraformSourceToHonuaIac()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+
+        OperationRuntime runtime = OperationRuntime.Load();
+
+        Assert.Equal("https://github.com/honua-io/honua-iac", runtime.TerraformRepository);
+        Assert.Equal("trunk", runtime.TerraformRef);
+        Assert.EndsWith(
+            Path.DirectorySeparatorChar + "honua-iac",
+            runtime.TerraformLocalPath,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_KeepsExplicitTerraformSourceOverrides()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+        environment.Set("HONUA_DEVOPS_TERRAFORM_REPO", "https://github.example/acme/infra");
+        environment.Set("HONUA_DEVOPS_TERRAFORM_REF", "release/2026.1");
+        environment.Set("HONUA_DEVOPS_TERRAFORM_LOCAL_PATH", "/srv/acme-infra");
+
+        OperationRuntime runtime = OperationRuntime.Load();
+
+        Assert.Equal("https://github.example/acme/infra", runtime.TerraformRepository);
+        Assert.Equal("release/2026.1", runtime.TerraformRef);
+        Assert.Equal("/srv/acme-infra", runtime.TerraformLocalPath);
+    }
+
     private static void ResetRuntimeVariables(TestEnvironmentVariableScope environment)
     {
         string[] variableNames =

@@ -68,9 +68,9 @@ public class ServiceBundleDriftDetectionTests
                 Action: "sync",
                 ChangeSummary: "drift test",
                 GitOpsTool: "honua-gitops",
-                TerraformRepository: "https://github.com/honua-io/honua-terraform",
+                TerraformRepository: "https://github.com/honua-io/honua-iac",
                 TerraformRef: "main",
-                TerraformLocalPath: "/tmp/honua-terraform",
+                TerraformLocalPath: "/tmp/honua-iac",
                 DryRun: true,
                 ExecutionMode: ExecutionMode.Plan,
                 ExecutionTier: ExecutionTier.Plan)))
