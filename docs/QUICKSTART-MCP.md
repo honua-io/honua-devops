@@ -279,6 +279,17 @@ That server endpoint reconstructs the intentionally hidden execution payload and
 applies the existing operation gateway, autonomy, and Console approval policy;
 the DevOps brain never synthesizes a payload or approves/executes the operation.
 
+Before executor discovery or proposal routing, the loop validates both required
+`generatedAt` values and every required server `evidencePosture` envelope. Response
+timestamps may be at most five minutes old and one minute into the future; each
+source must also satisfy its server-published `maximumObservationAgeSeconds`.
+Missing/malformed/future/stale timestamps, non-actionable or unverified backends,
+`partialResult=true`, and non-empty `sourceErrors` return `evidence-incomplete`,
+preserve bounded diagnostics, and make zero executor/proposal calls. Required MCP
+transport or payload failure returns `observability-unavailable` with empty
+actionable findings. `OpsLoopReport.EvidencePosture` records privacy-safe source
+identity, observation time, evaluated age, completeness, and suppression reason.
+
 ## Safety model over MCP
 
 The MCP layer is a thin adapter over `CapabilityToolset`; **no gate is

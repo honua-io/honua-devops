@@ -1,0 +1,22 @@
+{
+  "mcpReachable": true,
+  "generatedAt": "2026-08-25T20:00:00.0000000+00:00",
+  "evidencePosture": {
+    "schemaVersion": "1.0",
+    "generatedAt": "2026-08-25T20:00:00.0000000+00:00",
+    "completeness": "complete",
+    "actionable": true,
+    "sources": [{
+      "sourceId": "operate-events",
+      "backendKind": "durableStore",
+      "backendId": "operate-events-primary",
+      "observedAt": "2026-08-25T20:00:00.0000000+00:00",
+      "lastSuccessfulAt": "2026-08-25T20:00:00.0000000+00:00",
+      "completeness": "complete",
+      "maximumObservationAgeSeconds": 300,
+      "reasonCodes": []
+    }]
+  },
+  "partialResult": false,
+  "sourceErrors": []
+}
