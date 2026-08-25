@@ -97,6 +97,103 @@ public class BlindEvalLaneTests
             Normalize(embedded));
     }
 
+    // Guard for the validator's fail-closed contract. `JsonSchemaValidator` enforces a
+    // keyword subset; if the contract ever grows a keyword outside that subset, this
+    // fails here with a clear message instead of the validator quietly under-checking
+    // artifacts at write time and leaving "schema-validated" a false claim.
+    [Fact]
+    public void EmbeddedContract_UsesOnlySupportedSchemaKeywords()
+    {
+        IReadOnlyList<string> unsupported =
+            JsonSchemaValidator.CheckSchemaSupport(BlindEvalScorecardSerializer.ReadSchema());
+
+        Assert.True(
+            unsupported.Count == 0,
+            $"`{BlindEvalScorecardSerializer.SchemaRelativePath}` uses schema constructs "
+            + "JsonSchemaValidator does not enforce, so scorecards would only be partially "
+            + "validated on write. Either implement the keyword in JsonSchemaValidator (and add "
+            + "it to SupportedKeywords) or express the constraint with a supported keyword. "
+            + $"Unsupported: {string.Join("; ", unsupported)}");
+    }
+
+    [Theory]
+    [InlineData("oneOf", "[{\"type\":\"string\"}]")]
+    [InlineData("anyOf", "[{\"type\":\"string\"}]")]
+    [InlineData("not", "{\"type\":\"integer\"}")]
+    [InlineData("format", "\"email\"")]
+    [InlineData("maxLength", "2")]
+    [InlineData("exclusiveMinimum", "0")]
+    [InlineData("maxItems", "1")]
+    [InlineData("patternProperties", "{\"^x\":{\"type\":\"string\"}}")]
+    public void Validator_FailsClosed_OnUnsupportedKeyword(string keyword, string keywordJson)
+    {
+        // The instance satisfies every keyword the validator DOES implement, so a pass
+        // here would mean the unsupported keyword was silently skipped.
+        string schema = $$"""
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "a": { "type": "string", "{{keyword}}": {{keywordJson}} }
+          }
+        }
+        """;
+
+        IReadOnlyList<string> errors = JsonSchemaValidator.Validate("""{"a":"ok"}""", schema);
+
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, error => error.Contains(keyword, StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("unsupported", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Validator_FailsClosed_OnObjectFormAdditionalPropertiesAndRefSiblings()
+    {
+        IReadOnlyList<string> objectForm = JsonSchemaValidator.Validate(
+            """{"a":"ok"}""",
+            """{ "type": "object", "additionalProperties": { "type": "string" } }""");
+
+        Assert.Contains(objectForm, error => error.Contains("additionalProperties", StringComparison.Ordinal));
+
+        IReadOnlyList<string> refSiblings = JsonSchemaValidator.Validate(
+            """{"a":"ok"}""",
+            """
+            {
+              "type": "object",
+              "properties": { "a": { "$ref": "#/$defs/text", "minLength": 99 } },
+              "$defs": { "text": { "type": "string" } }
+            }
+            """);
+
+        Assert.Contains(refSiblings, error => error.Contains("$ref", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validator_AllowsNonValidatingAnnotations()
+    {
+        IReadOnlyList<string> errors = JsonSchemaValidator.Validate(
+            """{"a":"ok"}""",
+            """
+            {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "$id": "https://honua.io/contracts/test.schema.json",
+              "title": "test",
+              "description": "annotations must not be mistaken for unsupported keywords",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "a": { "type": "string", "default": "x", "examples": ["y"] } }
+            }
+            """);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void SupportedKeywordsAndAnnotations_DoNotOverlap()
+    {
+        Assert.Empty(JsonSchemaValidator.SupportedKeywords.Intersect(JsonSchemaValidator.AllowedAnnotations));
+    }
+
     [Theory]
     [InlineData("commitSha")]
     [InlineData("modelId")]

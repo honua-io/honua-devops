@@ -10,20 +10,82 @@ namespace Honua.DevOps.Agent.Operations.Eval;
 /// taking a new NuGet dependency (the repo restores in locked mode).
 /// </summary>
 /// <remarks>
-/// Supported keywords: <c>$ref</c> (local <c>#/...</c> pointers only), <c>type</c>
-/// (string or array of strings), <c>const</c>, <c>enum</c>, <c>required</c>,
-/// <c>properties</c>, <c>additionalProperties</c> (boolean form), <c>items</c>,
-/// <c>minItems</c>, <c>minLength</c>, <c>minimum</c>, <c>maximum</c>, and
-/// <c>pattern</c>. Anything else in a schema document is ignored, so schemas under
-/// <c>contracts/</c> must stay inside this subset — <c>JsonSchemaValidatorTests</c>
-/// pins the behavior.
+/// <para>
+/// Supported keywords: <c>$ref</c> (local <c>#/...</c> pointers only), <c>$defs</c>,
+/// <c>type</c> (string or array of strings), <c>const</c>, <c>enum</c>,
+/// <c>required</c>, <c>properties</c>, <c>additionalProperties</c> (boolean form
+/// only), <c>items</c>, <c>minItems</c>, <c>minLength</c>, <c>minimum</c>,
+/// <c>maximum</c>, and <c>pattern</c>.
+/// </para>
+/// <para>
+/// <b>Fail-closed contract.</b> This validator never silently ignores a keyword it
+/// does not implement. Before any instance is checked, the schema document is walked
+/// and every property is required to be either a supported keyword or a
+/// non-validating annotation on the explicit allowlist (<c>$schema</c>, <c>$id</c>,
+/// <c>$comment</c>, <c>title</c>, <c>description</c>, <c>examples</c>,
+/// <c>default</c>, <c>deprecated</c>, <c>readOnly</c>, <c>writeOnly</c>). Anything
+/// else — <c>oneOf</c>, <c>format</c>, <c>maxLength</c>, <c>exclusiveMinimum</c>, an
+/// object-form <c>additionalProperties</c>, a <c>$ref</c> with validation siblings —
+/// is reported as a validation error and the instance check does not run. The
+/// default posture for an unrecognized keyword is refusal, so "schema-validated on
+/// write" can never quietly degrade into "partially validated" when a contract
+/// outgrows this subset. <c>BlindEvalLaneTests</c> additionally walks the embedded
+/// contract at test time, so such a schema edit fails <c>dotnet test</c> rather than
+/// waiting until an artifact is written.
+/// </para>
 /// </remarks>
 internal static class JsonSchemaValidator
 {
     private static readonly TimeSpan PatternTimeout = TimeSpan.FromSeconds(1);
 
+    /// <summary>Keywords this validator actually enforces.</summary>
+    internal static readonly IReadOnlySet<string> SupportedKeywords = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "$ref",
+        "$defs",
+        "type",
+        "const",
+        "enum",
+        "required",
+        "properties",
+        "additionalProperties",
+        "items",
+        "minItems",
+        "minLength",
+        "minimum",
+        "maximum",
+        "pattern"
+    };
+
+    /// <summary>
+    /// Non-validating annotations that are safe to ignore. Nothing may be added here
+    /// that can change whether an instance is valid.
+    /// </summary>
+    internal static readonly IReadOnlySet<string> AllowedAnnotations = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "$schema",
+        "$id",
+        "$comment",
+        "title",
+        "description",
+        "examples",
+        "default",
+        "deprecated",
+        "readOnly",
+        "writeOnly"
+    };
+
     internal static IReadOnlyList<string> Validate(JsonElement instance, JsonElement schema)
     {
+        // Fail closed: refuse to report "valid" against a schema carrying keywords
+        // this validator does not enforce. A partially-understood schema would make
+        // the artifact pipeline's validation claim false without failing anything.
+        IReadOnlyList<string> unsupported = CheckSchemaSupport(schema);
+        if (unsupported.Count > 0)
+        {
+            return unsupported;
+        }
+
         List<string> errors = [];
         ValidateNode(instance, schema, schema, "$", errors);
         return errors;
@@ -34,6 +96,97 @@ internal static class JsonSchemaValidator
         using JsonDocument instance = JsonDocument.Parse(instanceJson);
         using JsonDocument schema = JsonDocument.Parse(schemaJson);
         return Validate(instance.RootElement, schema.RootElement);
+    }
+
+    /// <summary>
+    /// Walks a schema document and reports every construct this validator cannot
+    /// enforce. An empty result means the schema is fully covered by the subset.
+    /// </summary>
+    internal static IReadOnlyList<string> CheckSchemaSupport(JsonElement schema)
+    {
+        List<string> errors = [];
+        CheckSchemaNode(schema, "#", errors);
+        return errors;
+    }
+
+    internal static IReadOnlyList<string> CheckSchemaSupport(string schemaJson)
+    {
+        using JsonDocument schema = JsonDocument.Parse(schemaJson);
+        return CheckSchemaSupport(schema.RootElement);
+    }
+
+    private static void CheckSchemaNode(JsonElement schema, string path, List<string> errors)
+    {
+        if (schema.ValueKind != JsonValueKind.Object)
+        {
+            // Boolean schemas and tuple-form `items` arrays are valid JSON Schema but
+            // are not implemented here, so they are refused rather than skipped.
+            errors.Add($"unsupported schema form `{schema.ValueKind}` at {path}; expected an object schema.");
+            return;
+        }
+
+        bool hasRef = schema.TryGetProperty("$ref", out _);
+
+        foreach (JsonProperty property in schema.EnumerateObject())
+        {
+            string name = property.Name;
+            string childPath = $"{path}/{name}";
+
+            if (AllowedAnnotations.Contains(name))
+            {
+                continue;
+            }
+
+            if (!SupportedKeywords.Contains(name))
+            {
+                errors.Add($"unsupported schema keyword `{name}` at {path}.");
+                continue;
+            }
+
+            // `$ref` short-circuits to the referenced schema here, so a sibling
+            // validation keyword would be dropped on the floor. Refuse the shape.
+            if (hasRef && name != "$ref")
+            {
+                errors.Add(
+                    $"unsupported schema keyword `{name}` alongside `$ref` at {path}; "
+                    + "sibling keywords next to `$ref` are not applied.");
+                continue;
+            }
+
+            switch (name)
+            {
+                case "properties":
+                case "$defs":
+                    if (property.Value.ValueKind != JsonValueKind.Object)
+                    {
+                        errors.Add($"`{name}` at {path} must be an object of subschemas.");
+                        break;
+                    }
+
+                    foreach (JsonProperty subSchema in property.Value.EnumerateObject())
+                    {
+                        CheckSchemaNode(subSchema.Value, $"{childPath}/{subSchema.Name}", errors);
+                    }
+
+                    break;
+
+                case "items":
+                    CheckSchemaNode(property.Value, childPath, errors);
+                    break;
+
+                case "additionalProperties":
+                    // Only the boolean form is enforced; the object (subschema) form
+                    // would silently permit unvalidated properties.
+                    if (property.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    {
+                        errors.Add(
+                            $"unsupported `additionalProperties` form at {path}; "
+                            + "only the boolean form is enforced.");
+                    }
+
+                    break;
+            }
+        }
     }
 
     private static void ValidateNode(
