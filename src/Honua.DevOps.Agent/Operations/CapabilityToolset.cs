@@ -145,10 +145,10 @@ internal static class CapabilityToolset
                 "honua_runbook_execute",
                 "Prepare or execute approved operational runbooks with Enterprise and execution-tier gates."),
             CreateTool(
-                (string service, string environment, string detectedIssue, string desiredOutcome, bool autoApply, string edition)
-                    => toolkit.AutoRemediationPlanAsync(service, environment, detectedIssue, desiredOutcome, autoApply, edition),
+                (string service, string environment, string detectedIssue, string desiredOutcome, bool autoApply, string edition, string findingId, string remediationAction)
+                    => toolkit.AutoRemediationPlanAsync(service, environment, detectedIssue, desiredOutcome, autoApply, edition, findingId, remediationAction),
                 "honua_auto_remediation_plan",
-                "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls."),
+                "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls. Intent is classified from TYPED input only, never from the detectedIssue/desiredOutcome prose: pass findingId (preferred - a server-owned deterministic ops finding id `{rule}-{32 hex}`, or its bare rule id) or remediationAction (`gitops-rollback` or `drift-observe`). Mapped finding rules: `deploy-manual-intervention` -> gitops-rollback; `platform-release-skew` and `platform-release-runtime-divergence` -> drift-observe. A rollback also needs the durable deploy-control operation id as an `operationId=<id>` token in detectedIssue/desiredOutcome; that token alone still resolves to a rollback for backward compatibility. Unmapped rule, unregistered action, disagreeing findingId/remediationAction, or no typed intent returns `unsupported-action` with zero backend calls."),
             CreateTool(
                 (string workItemId, string kind, string currentState, string lowerEnvironment, string publishEnvironment, string previewUrl, string edition)
                     => toolkit.PlanDeliverableLifecycleAsync(workItemId, kind, currentState, lowerEnvironment, publishEnvironment, previewUrl, edition),
