@@ -2,7 +2,7 @@
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 36 operator tools the interactive agent
+MCP-capable host) can call the same 38 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 In MCP mode the client LLM does the reasoning, so **no model provider
@@ -59,9 +59,9 @@ On Windows the archive is a `.zip` and the executable is
 Verify the registration reached `tools/list`:
 
 ```bash
-claude mcp list                       # honua-devops should report 36 tools
+claude mcp list                       # honua-devops should report 38 tools
 ~/.local/share/honua-devops/Honua.DevOps.Agent --list-tools | head -1
-# honua-devops exposes 36 operator tools:
+# honua-devops exposes 38 operator tools:
 ```
 
 Upgrade by repeating the download/verify/extract over the same directory with a
@@ -116,12 +116,12 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 36 tools), or run the
+Verify with `claude mcp list` (the server should report 38 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --mcp
-# stderr: honua-devops MCP stdio server ready (tools=35, mode=plan, tier=plan, approval=pr-first, ...)
+# stderr: honua-devops MCP stdio server ready (tools=38, mode=plan, tier=plan, approval=pr-first, ...)
 ```
 
 ## Register with Codex CLI
@@ -196,7 +196,7 @@ bottlenecks) with prioritized remediation and validation checks.
 
 ## Exposed tools (1:1 with the interactive agent)
 
-All 36 tools registered by `CapabilityToolset` (the
+All 38 tools registered by `CapabilityToolset` (the
 `ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
 live MCP surface 1:1):
 
@@ -216,6 +216,7 @@ live MCP surface 1:1):
 `plan_azure_gp_substrate`, `plan_azure_gp_job_sizing`,
 `get_gitops_proposal`, `record_gitops_proposal_decision`,
 `get_devops_operation_status`, `build_ai_devops_brief`,
+`provision_infrastructure`, `install_handoff`, `verify_install_handoff`,
 `explain_release_package`.
 
 > The mutating/decision tools `deploy_service_gitops` and
