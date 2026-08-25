@@ -81,6 +81,13 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         {
             return Failed("handoff-auth-failed", "The authenticated Admin identity probe failed.", steps);
         }
+        if (!identityBytes.Contains(request.CandidateReference, StringComparison.OrdinalIgnoreCase))
+        {
+            return Failed(
+                "candidate-identity-mismatch",
+                "The authenticated server identity does not contain the manifest-pinned candidate reference.",
+                steps);
+        }
 
         ProcessStartInfo start = new(request.Command)
         {
