@@ -20,4 +20,14 @@
     <PackageReference Include="OpenAI" Version="2.8.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The published blind-eval scorecard contract lives in `contracts/` so downstream
+      consumers (honua-release evidence aggregation) can read it without building this
+      repo. It is embedded here so the blind-eval CLI mode validates every artifact it
+      writes against the same file, with no second copy to drift.
+    -->
+    <EmbeddedResource Include="../../contracts/blind-eval-scorecard.v1.schema.json" LogicalName="Honua.DevOps.Agent.contracts.blind-eval-scorecard.v1.schema.json" />
+  </ItemGroup>
+
 </Project>

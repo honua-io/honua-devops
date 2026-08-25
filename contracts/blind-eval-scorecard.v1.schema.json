@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/contracts/honua-devops/blind-eval-scorecard.v1.schema.json",
+  "title": "Honua DevOps blind fault-injection evaluation scorecard",
+  "description": "Immutable per-run artifact produced by `honua-devops --eval-blind`. Carries digests and scores only: no prompts, no model transcripts, no credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "runId",
+    "lane",
+    "provider",
+    "modelId",
+    "faultSet",
+    "evaluationMode",
+    "commitSha",
+    "startedAt",
+    "completedAt",
+    "harness",
+    "thresholds",
+    "scenarios",
+    "aggregate"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "kind": {
+      "const": "honua-devops.blind-eval-scorecard"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque per-run identifier."
+    },
+    "lane": {
+      "type": "string",
+      "enum": ["live", "fixture"],
+      "description": "`live` = answers came from a credentialed provider. `fixture` = answers came from a local fixture adapter (contract/known-bad testing only, never release evidence)."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider id (codex | claude | local-llama | bedrock) or `fixture:<name>` for the fixture lane."
+    },
+    "modelId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model identifier the provider was configured with."
+    },
+    "faultSet": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Fault-set selector this run replayed (`smoke`, `all`, `category:<value>`, or an explicit comma-separated scenario id list)."
+    },
+    "evaluationMode": {
+      "type": "string",
+      "enum": ["read-only", "guided-write", "execute-lower-env"]
+    },
+    "commitSha": {
+      "type": "string",
+      "minLength": 7,
+      "description": "Commit the harness and fault catalog were read from."
+    },
+    "startedAt": {
+      "type": "string",
+      "minLength": 20,
+      "description": "RFC 3339 UTC timestamp."
+    },
+    "completedAt": {
+      "type": "string",
+      "minLength": 20,
+      "description": "RFC 3339 UTC timestamp."
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promptBuilder", "grader", "graderVersion", "faultCatalogSize"],
+      "properties": {
+        "promptBuilder": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grader": {
+          "type": "string",
+          "minLength": 1
+        },
+        "graderVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "faultCatalogSize": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passRate"],
+      "properties": {
+        "passRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/scenarioScore"
+      }
+    },
+    "aggregate": {
+      "$ref": "#/$defs/aggregate"
+    }
+  },
+  "$defs": {
+    "scenarioScore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarioId",
+        "scenarioName",
+        "category",
+        "remediationScope",
+        "promptDigest",
+        "responseDigest",
+        "responseChars",
+        "latencySeconds",
+        "diagnosisCorrect",
+        "evidenceQuality",
+        "remediationSafe",
+        "policyCompliant",
+        "rollbackGuidanceCorrect",
+        "recoveryVerified",
+        "serviceHealthRestored",
+        "compositeScore",
+        "result",
+        "failureModes"
+      ],
+      "properties": {
+        "scenarioId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scenarioName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remediationScope": {
+          "type": "string",
+          "enum": ["advisory-only", "read-only-diagnosis", "write-capable"]
+        },
+        "promptDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the blind prompt. The prompt text itself is never written to the artifact."
+        },
+        "responseDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the raw model answer. The answer text itself is never written to the artifact."
+        },
+        "responseChars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latencySeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "diagnosisCorrect": {
+          "type": "boolean"
+        },
+        "evidenceQuality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "remediationSafe": {
+          "type": "boolean"
+        },
+        "policyCompliant": {
+          "type": "boolean"
+        },
+        "rollbackGuidanceCorrect": {
+          "type": "boolean"
+        },
+        "recoveryVerified": {
+          "type": "boolean"
+        },
+        "serviceHealthRestored": {
+          "type": "boolean"
+        },
+        "compositeScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "result": {
+          "type": "string",
+          "enum": ["pass", "fail", "error"]
+        },
+        "failureModes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Set only when the scenario could not be run to completion (transport/config failure). Never carries provider response text."
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenariosTotal",
+        "scenariosPassed",
+        "scenariosFailed",
+        "scenariosErrored",
+        "passRate",
+        "meanCompositeScore",
+        "result"
+      ],
+      "properties": {
+        "scenariosTotal": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "scenariosPassed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scenariosFailed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scenariosErrored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "meanCompositeScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "result": {
+          "type": "string",
+          "enum": ["pass", "fail"]
+        }
+      }
+    }
+  }
+}

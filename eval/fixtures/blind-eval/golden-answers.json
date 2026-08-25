@@ -1,0 +1,118 @@
+{
+  "name": "golden",
+  "modelId": "fixture-golden-v1",
+  "description": "Reference-quality answers for the `smoke` fault set. Used to prove the blind-eval lane scores a competent operator answer as PASS. Fixture answers are contract evidence only — never model-behavior evidence.",
+  "answers": {
+    "FAULT-001": {
+      "rootCause": "The Postgres password secret was rotated to an invalid credential, so the application can no longer authenticate to the database.",
+      "evidenceCited": [
+        "FATAL: password authentication failed surfaced through Npgsql.PostgresException",
+        "connection refused from the database endpoint",
+        "error_rate spike while db_connection_pool_active drops to 0",
+        "request_duration_seconds increases across database-backed routes",
+        "readiness probe fails while the liveness probe may still pass initially"
+      ],
+      "remediationSteps": [
+        "Restore the previous secret version in the secrets manager",
+        "Restart the workload after the secret update so the connection pool re-authenticates"
+      ],
+      "rollbackPlan": "If the restore is wrong, re-apply the newer secret version in the secrets manager and restart the workload again.",
+      "verificationSteps": [
+        "Verify the secret version is correct in the secrets manager",
+        "Confirm the connection pool recovers and error_rate returns to baseline"
+      ]
+    },
+    "FAULT-002": {
+      "rootCause": "The database security group no longer admits application traffic, so every Postgres connection from the app subnet times out; this is a network connectivity block, not a credential problem.",
+      "evidenceCited": [
+        "timeout expired and connection timed out in application logs",
+        "could not connect to server",
+        "db_connection_errors increases while active_connections drops",
+        "request_duration_seconds spikes on database-backed routes",
+        "readiness probe fails after connection pool drains while liveness may pass"
+      ],
+      "remediationSteps": [
+        "Re-add the security group ingress rule that admits the application security group on the Postgres port",
+        "Verify VPC peering and subnet routing between the application and database tiers"
+      ],
+      "rollbackPlan": "Remove the ingress rule again through Terraform or the AWS CLI if the change widens exposure beyond the application security group.",
+      "verificationSteps": [
+        "Verify connectivity restored from an application task to the database endpoint",
+        "Confirm the connection pool recovers and db_connection_errors returns to zero"
+      ]
+    },
+    "FAULT-003": {
+      "rootCause": "The Redis auth token no longer matches the value the application presents, so every cache connection is rejected at authentication and the cache is effectively unavailable.",
+      "evidenceCited": [
+        "NOAUTH Authentication required and ERR invalid password in the logs",
+        "StackExchange.Redis.RedisConnectionException on cache calls",
+        "cache_hit_ratio drops to 0 while cache_errors increases",
+        "request_duration_seconds increases on cached endpoints",
+        "readiness probe may pass because the cache is optional, with degraded performance"
+      ],
+      "remediationSteps": [
+        "Update the Redis auth token so it matches the value the application presents",
+        "Restart the application after the credential fix so pooled connections re-authenticate"
+      ],
+      "rollbackPlan": "Restore the previous Redis auth token and restart the application if the updated token is rejected.",
+      "verificationSteps": [
+        "Verify cache connectivity from the application",
+        "Confirm the hit ratio recovers and cache_errors returns to zero"
+      ]
+    },
+    "FAULT-004": {
+      "rootCause": "The configured Redis endpoint hostname does not resolve, so this is a DNS misconfiguration of the cache endpoint rather than an authentication or capacity failure.",
+      "evidenceCited": [
+        "No such host is known and DNS resolution failed in the logs",
+        "SocketException raised on every cache call",
+        "cache_errors increases alongside dns_resolution_failures increases",
+        "readiness probe may pass if the cache is non-critical"
+      ],
+      "remediationSteps": [
+        "Correct the REDIS_ENDPOINT environment variable to the real cache hostname",
+        "Verify DNS resolution from the workload network before redeploying"
+      ],
+      "rollbackPlan": "Restore the previous Redis endpoint value in the environment config if the corrected hostname is also unreachable.",
+      "verificationSteps": [
+        "Verify DNS resolution of the cache hostname from inside the workload",
+        "Confirm cache connectivity and that dns_resolution_failures stops increasing"
+      ]
+    },
+    "FAULT-005": {
+      "rootCause": "The ingress load balancer target group points at the wrong backend port, so the ALB has no healthy upstream and returns 502 for every external request.",
+      "evidenceCited": [
+        "upstream connect error and no healthy upstream",
+        "502 status from ALB on external requests",
+        "alb_healthy_host_count drops to 0 while 5xx_count increases",
+        "external health check fails while internal health checks may still pass"
+      ],
+      "remediationSteps": [
+        "Correct the target group port configuration to the container listen port",
+        "Verify the ALB listener rules forward to the corrected target group"
+      ],
+      "rollbackPlan": "Restore the previous target group port via Terraform if the corrected port also fails to register healthy targets.",
+      "verificationSteps": [
+        "Verify ALB target health transitions to healthy after the port correction",
+        "Confirm 5xx_count returns to baseline on the external listener"
+      ]
+    },
+    "FAULT-006": {
+      "rootCause": "A readiness regression in the newly deployed revision makes the ALB target unhealthy, so the rolling deployment stalls and traffic is served by the previous revision at reduced capacity.",
+      "evidenceCited": [
+        "health check failed followed by target deregistration",
+        "ECS task stopped during the rollout",
+        "healthy_host_count drops while ecs_task_failures increases",
+        "readiness probe returns 5xx or timeout"
+      ],
+      "remediationSteps": [
+        "Rollback to the previous task definition revision to restore capacity",
+        "Fix the readiness endpoint and redeploy once the regression is understood"
+      ],
+      "rollbackPlan": "ECS service rollback to the previous task definition, which is the known-healthy revision.",
+      "verificationSteps": [
+        "Verify the new task definition passes health checks in a lower environment first",
+        "Confirm healthy_host_count returns to the expected target count"
+      ]
+    }
+  }
+}

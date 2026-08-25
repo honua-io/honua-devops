@@ -1,3 +1,5 @@
+using System.Globalization;
+using Honua.DevOps.Agent.Operations.Troubleshooting;
 using Honua.DevOps.Agent.Providers;
 
 namespace Honua.DevOps.Agent.Configuration;
@@ -15,7 +17,8 @@ internal sealed record CliOptions(
     bool IntakeListen,
     bool BugReportListen,
     bool Mcp,
-    string? AwaitApproval)
+    string? AwaitApproval,
+    BlindEvalCliOptions? EvalBlind)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
@@ -31,6 +34,13 @@ internal sealed record CliOptions(
     private const string BugReportListenFlag = "--bugreport-listen";
     private const string McpFlag = "--mcp";
     private const string AwaitApprovalFlag = "--await-approval";
+    private const string EvalBlindFlag = "--eval-blind";
+    private const string EvalFaultSetFlag = "--eval-fault-set";
+    private const string EvalModeFlag = "--eval-mode";
+    private const string EvalOutputFlag = "--eval-output";
+    private const string EvalCommitFlag = "--eval-commit";
+    private const string EvalPassThresholdFlag = "--eval-pass-threshold";
+    private const string EvalFixtureFlag = "--eval-fixture";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
 
     internal const string HelpText = """
@@ -58,6 +68,19 @@ Options:
   --mcp                       Run the operator toolset as an MCP stdio server (for Claude Code, Codex,
                               and other MCP clients). No model provider key is required; gates and
                               audit follow the same HONUA_DEVOPS_* runtime controls. See docs/QUICKSTART-MCP.md.
+  --eval-blind                Run the blind fault-injection evaluation corpus against the configured
+                              provider, score it with the DiagnosisScorecard harness, and write a
+                              schema-validated scorecard artifact. Exits 0 = pass, 1 = fail,
+                              2 = run could not complete. Never skips. See docs/multi-model-operator-evals.md.
+  --eval-fault-set <set>      Fault set to replay: `smoke` (default, 6 scenarios), `all`,
+                              `category:<fault-category>`, or a comma-separated scenario id list.
+  --eval-mode <mode>          Evaluation mode: read-only (default), guided-write, execute-lower-env.
+  --eval-output <path>        Scorecard artifact path (default artifacts/blind-eval/scorecard.json).
+  --eval-commit <sha>         Commit SHA to pin the scorecard to. Defaults to HONUA_DEVOPS_EVAL_COMMIT_SHA,
+                              then GITHUB_SHA, then `unknown`.
+  --eval-pass-threshold <r>   Aggregate pass-rate threshold in [0,1] (default 0.80).
+  --eval-fixture <path>       Answer from a local fixture file instead of a provider. Records
+                              lane=`fixture` in the scorecard: contract evidence, never model evidence.
   --await-approval <id>       Wait for a paused deploy-control operation to leave AwaitingApproval.
                               Polls the honua-server deploy-control operation until an operator approves
                               it in Console (Submitted/terminal) or HONUA_DEVOPS_APPROVAL_TIMEOUT_SECONDS
@@ -106,6 +129,8 @@ Examples:
   honua-devops --bugreport-listen
   honua-devops --mcp
   honua-devops --await-approval 7d2b9f...
+  honua-devops --eval-blind --provider bedrock --eval-fault-set smoke --eval-output scorecard.json
+  honua-devops --eval-blind --eval-fixture eval/fixtures/blind-eval/known-bad-answers.json
 """;
 
     internal static CliOptions Parse(string[] args)
@@ -123,6 +148,13 @@ Examples:
         bool bugReportListen = false;
         bool mcp = false;
         string? awaitApproval = null;
+        bool evalBlind = false;
+        string? evalFaultSet = null;
+        string? evalMode = null;
+        string? evalOutput = null;
+        string? evalCommit = null;
+        string? evalPassThreshold = null;
+        string? evalFixture = null;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -220,6 +252,48 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(EvalBlindFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                evalBlind = true;
+                continue;
+            }
+
+            if (argument.Equals(EvalFaultSetFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                evalFaultSet = RequireValue(args, ref index, EvalFaultSetFlag, "a fault set selector");
+                continue;
+            }
+
+            if (argument.Equals(EvalModeFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                evalMode = RequireValue(args, ref index, EvalModeFlag, "read-only, guided-write, or execute-lower-env");
+                continue;
+            }
+
+            if (argument.Equals(EvalOutputFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                evalOutput = RequireValue(args, ref index, EvalOutputFlag, "an output file path");
+                continue;
+            }
+
+            if (argument.Equals(EvalCommitFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                evalCommit = RequireValue(args, ref index, EvalCommitFlag, "a commit SHA");
+                continue;
+            }
+
+            if (argument.Equals(EvalPassThresholdFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                evalPassThreshold = RequireValue(args, ref index, EvalPassThresholdFlag, "a pass rate between 0 and 1");
+                continue;
+            }
+
+            if (argument.Equals(EvalFixtureFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                evalFixture = RequireValue(args, ref index, EvalFixtureFlag, "a fixture file path");
+                continue;
+            }
+
             if (argument.Equals(LimitFlag, StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 >= args.Length || !int.TryParse(args[index + 1], out int parsedLimit) || parsedLimit < 1)
@@ -233,7 +307,7 @@ Examples:
             }
 
             throw new InvalidOperationException(
-                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {BugReportListenFlag}, {McpFlag}, {AwaitApprovalFlag}, or {HelpFlag}.");
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {BugReportListenFlag}, {McpFlag}, {AwaitApprovalFlag}, {EvalBlindFlag}, or {HelpFlag}.");
         }
 
         if (help || listTools || listOperations || showOperation is not null || mcp)
@@ -251,7 +325,8 @@ Examples:
                 intakeListen,
                 bugReportListen,
                 mcp,
-                awaitApproval);
+                awaitApproval,
+                EvalBlind: null);
         }
 
         string selectedProvider = providerValue ??
@@ -262,6 +337,17 @@ Examples:
         {
             throw new InvalidOperationException(
                 $"Invalid provider `{selectedProvider}`. Supported values: codex, claude, local-llama, bedrock.");
+        }
+
+        BlindEvalCliOptions? blindEval = evalBlind
+            ? BlindEvalCliOptions.Resolve(evalFaultSet, evalMode, evalOutput, evalCommit, evalPassThreshold, evalFixture)
+            : null;
+
+        if (!evalBlind && (evalFaultSet is not null || evalMode is not null || evalOutput is not null
+                           || evalCommit is not null || evalPassThreshold is not null || evalFixture is not null))
+        {
+            throw new InvalidOperationException(
+                $"The --eval-* options require {EvalBlindFlag}.");
         }
 
         return new CliOptions(
@@ -277,6 +363,121 @@ Examples:
             intakeListen,
             bugReportListen,
             mcp,
-            awaitApproval);
+            awaitApproval,
+            blindEval);
+    }
+
+    private static string RequireValue(string[] args, ref int index, string flag, string expectation)
+    {
+        if (index + 1 >= args.Length)
+        {
+            throw new InvalidOperationException($"{flag} requires {expectation}.");
+        }
+
+        return args[++index];
+    }
+}
+
+/// <summary>
+/// Resolved options for the `--eval-blind` lane. Defaults fall back to environment
+/// variables so a scheduled workflow can configure the lane without threading flags
+/// through every step, and so the commit SHA can be supplied by CI (the binary has no
+/// way to know which commit it was built from).
+/// </summary>
+internal sealed record BlindEvalCliOptions(
+    string FaultSet,
+    EvaluationMode Mode,
+    string OutputPath,
+    string CommitSha,
+    double PassThreshold,
+    string? FixturePath)
+{
+    private const string EvalFaultSetEnvironmentVariable = "HONUA_DEVOPS_EVAL_FAULT_SET";
+    private const string EvalOutputEnvironmentVariable = "HONUA_DEVOPS_EVAL_OUTPUT";
+    private const string EvalCommitEnvironmentVariable = "HONUA_DEVOPS_EVAL_COMMIT_SHA";
+    private const string EvalPassThresholdEnvironmentVariable = "HONUA_DEVOPS_EVAL_PASS_THRESHOLD";
+    private const string GitHubShaEnvironmentVariable = "GITHUB_SHA";
+
+    internal const string DefaultFaultSet = "smoke";
+    internal const string DefaultOutputPath = "artifacts/blind-eval/scorecard.json";
+    internal const string UnknownCommitSha = "unknown";
+    internal const double DefaultPassThreshold = 0.80;
+
+    internal static BlindEvalCliOptions Resolve(
+        string? faultSet,
+        string? mode,
+        string? outputPath,
+        string? commitSha,
+        string? passThreshold,
+        string? fixturePath)
+    {
+        string resolvedFaultSet = FirstNonEmpty(
+            faultSet,
+            Environment.GetEnvironmentVariable(EvalFaultSetEnvironmentVariable),
+            DefaultFaultSet);
+
+        string resolvedOutput = FirstNonEmpty(
+            outputPath,
+            Environment.GetEnvironmentVariable(EvalOutputEnvironmentVariable),
+            DefaultOutputPath);
+
+        string resolvedCommit = FirstNonEmpty(
+            commitSha,
+            Environment.GetEnvironmentVariable(EvalCommitEnvironmentVariable),
+            Environment.GetEnvironmentVariable(GitHubShaEnvironmentVariable),
+            UnknownCommitSha);
+
+        string resolvedThreshold = FirstNonEmpty(
+            passThreshold,
+            Environment.GetEnvironmentVariable(EvalPassThresholdEnvironmentVariable),
+            DefaultPassThreshold.ToString("0.00", CultureInfo.InvariantCulture));
+
+        if (!double.TryParse(resolvedThreshold, NumberStyles.Float, CultureInfo.InvariantCulture, out double threshold)
+            || threshold < 0
+            || threshold > 1)
+        {
+            throw new InvalidOperationException(
+                $"--eval-pass-threshold requires a number between 0 and 1; got `{resolvedThreshold}`.");
+        }
+
+        EvaluationMode resolvedMode = ParseMode(mode);
+
+        return new BlindEvalCliOptions(
+            FaultSet: resolvedFaultSet,
+            Mode: resolvedMode,
+            OutputPath: resolvedOutput,
+            CommitSha: resolvedCommit,
+            PassThreshold: threshold,
+            FixturePath: string.IsNullOrWhiteSpace(fixturePath) ? null : fixturePath.Trim());
+    }
+
+    private static EvaluationMode ParseMode(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode))
+        {
+            return EvaluationMode.ReadOnly;
+        }
+
+        return mode.Trim().ToLowerInvariant() switch
+        {
+            "read-only" or "readonly" => EvaluationMode.ReadOnly,
+            "guided-write" or "guidedwrite" => EvaluationMode.GuidedWrite,
+            "execute-lower-env" or "executelowerenv" => EvaluationMode.ExecuteLowerEnv,
+            _ => throw new InvalidOperationException(
+                $"Invalid --eval-mode `{mode}`. Supported values: read-only, guided-write, execute-lower-env.")
+        };
+    }
+
+    private static string FirstNonEmpty(params string?[] candidates)
+    {
+        foreach (string? candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate.Trim();
+            }
+        }
+
+        return string.Empty;
     }
 }

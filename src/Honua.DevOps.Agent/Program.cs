@@ -6,6 +6,7 @@ using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.BugReport;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
+using Honua.DevOps.Agent.Operations.Eval;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.WorkIntake;
 using Honua.DevOps.Agent.Prompts;
@@ -61,6 +62,19 @@ try
     {
         OperatorPolicyModel journalPolicy = OperatorPolicyModel.Load();
         Environment.ExitCode = OperationJournal.ShowOperation(journalPolicy.AuditHookTarget, options.ShowOperation, Console.Out);
+        return;
+    }
+
+    // The blind evaluation lane runs before the backend gateways are constructed: it
+    // measures model diagnosis from the fault catalog and needs no Honua backend, no
+    // audit sink, and no operator toolset.
+    if (options.EvalBlind is not null)
+    {
+        Environment.ExitCode = await BlindEvalMode.RunAsync(
+            options.Provider,
+            options.EvalBlind,
+            Console.Out,
+            cancellationTokenSource.Token);
         return;
     }
 
