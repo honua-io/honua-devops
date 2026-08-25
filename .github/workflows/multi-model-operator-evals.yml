@@ -5,7 +5,31 @@ on:
   push:
     branches:
       - trunk
+  schedule:
+    # Recurring model-behavior signal for the operator product (honua-devops#155).
+    - cron: "41 5 * * *"
   workflow_dispatch:
+    inputs:
+      provider:
+        description: "Provider for the credentialed blind-eval lane."
+        type: choice
+        required: false
+        default: claude
+        options:
+          - claude
+          - codex
+          - bedrock
+          - local-llama
+      fault_set:
+        description: "Fault set to replay: smoke, all, category:<value>, or a scenario id list."
+        type: string
+        required: false
+        default: smoke
+      pass_threshold:
+        description: "Aggregate pass-rate threshold in [0,1]."
+        type: string
+        required: false
+        default: "0.80"
 
 permissions:
   contents: read
@@ -24,3 +48,153 @@ jobs:
 
       - name: Smoke multi-model eval contract
         run: ./scripts/smoke-multi-model-operator-evals.sh
+
+  # The PR-safe floor for the blind fault-injection lane. It runs the same CLI mode
+  # the credentialed lane runs, against local fixture adapters, so the runner, the
+  # grader, the scorecard contract, and the known-bad gate are exercised on every PR
+  # with no credentials. Fixture runs record lane="fixture" and are never release
+  # evidence.
+  blind-eval-fixture-floor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Syntax check
+        run: bash -n scripts/smoke-blind-eval-lane.sh
+
+      - name: Build
+        run: dotnet build --configuration Release
+
+      - name: Smoke blind-eval lane (golden + known-bad fixtures)
+        run: ./scripts/smoke-blind-eval-lane.sh
+
+  # REQ-001/REQ-002. Scheduled and dispatch only: a credentialed run never gates a PR.
+  # When the provider secrets are absent the lane reports "not configured" and stops.
+  # When they ARE present the lane must complete: any non-zero exit from the eval —
+  # including a provider outage or a malformed answer — fails this job. It never skips.
+  blind-eval-live:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: model-evals
+    env:
+      HONUA_DEVOPS_EVAL_PROVIDER: ${{ inputs.provider || 'claude' }}
+      HONUA_DEVOPS_EVAL_FAULT_SET: ${{ inputs.fault_set || 'smoke' }}
+      HONUA_DEVOPS_EVAL_PASS_THRESHOLD: ${{ inputs.pass_threshold || '0.80' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Presence checks only. Secret VALUES are never echoed, compared in a way that
+      # could reveal them, or written to the step summary.
+      - name: Resolve provider credential state
+        id: credentials
+        env:
+          HONUA_DEVOPS_CLAUDE_MODEL: ${{ secrets.HONUA_DEVOPS_CLAUDE_MODEL }}
+          HONUA_DEVOPS_CLAUDE_API_KEY: ${{ secrets.HONUA_DEVOPS_CLAUDE_API_KEY }}
+          HONUA_DEVOPS_CODEX_MODEL: ${{ secrets.HONUA_DEVOPS_CODEX_MODEL }}
+          HONUA_DEVOPS_CODEX_API_KEY: ${{ secrets.HONUA_DEVOPS_CODEX_API_KEY }}
+          HONUA_DEVOPS_BEDROCK_MODEL: ${{ secrets.HONUA_DEVOPS_BEDROCK_MODEL }}
+          HONUA_DEVOPS_BEDROCK_API_KEY: ${{ secrets.HONUA_DEVOPS_BEDROCK_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          HONUA_DEVOPS_LOCAL_LLAMA_MODEL: ${{ secrets.HONUA_DEVOPS_LOCAL_LLAMA_MODEL }}
+          HONUA_DEVOPS_LOCAL_LLAMA_API_KEY: ${{ secrets.HONUA_DEVOPS_LOCAL_LLAMA_API_KEY }}
+          HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT: ${{ secrets.HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          configured=false
+          case "$HONUA_DEVOPS_EVAL_PROVIDER" in
+            claude)
+              if [[ -n "${HONUA_DEVOPS_CLAUDE_MODEL:-}" && -n "${HONUA_DEVOPS_CLAUDE_API_KEY:-}" ]]; then
+                configured=true
+              fi
+              ;;
+            codex)
+              if [[ -n "${HONUA_DEVOPS_CODEX_MODEL:-}" && -n "${HONUA_DEVOPS_CODEX_API_KEY:-}" ]]; then
+                configured=true
+              fi
+              ;;
+            bedrock)
+              if [[ -n "${HONUA_DEVOPS_BEDROCK_MODEL:-}" ]] \
+                && [[ -n "${HONUA_DEVOPS_BEDROCK_API_KEY:-}" || -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+                configured=true
+              fi
+              ;;
+            local-llama)
+              if [[ -n "${HONUA_DEVOPS_LOCAL_LLAMA_MODEL:-}" && -n "${HONUA_DEVOPS_LOCAL_LLAMA_API_KEY:-}" \
+                    && -n "${HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT:-}" ]]; then
+                configured=true
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported provider '$HONUA_DEVOPS_EVAL_PROVIDER' for the credentialed blind-eval lane."
+              exit 1
+              ;;
+          esac
+          echo "configured=${configured}" >>"$GITHUB_OUTPUT"
+          if [[ "$configured" != "true" ]]; then
+            echo "::notice::Provider secrets for '$HONUA_DEVOPS_EVAL_PROVIDER' are not configured; the credentialed blind-eval lane did not run."
+            {
+              echo "## Credentialed blind-eval lane"
+              echo
+              echo "Not run: provider secrets for \`$HONUA_DEVOPS_EVAL_PROVIDER\` are not configured in this repository/environment."
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build
+        if: steps.credentials.outputs.configured == 'true'
+        run: dotnet build --configuration Release
+
+      # No `continue-on-error`, no `|| true`: a configured run that cannot complete
+      # exits non-zero (2 = incomplete, 1 = the model failed the corpus) and fails here.
+      - name: Run credentialed blind evaluation
+        if: steps.credentials.outputs.configured == 'true'
+        env:
+          HONUA_DEVOPS_CLAUDE_MODEL: ${{ secrets.HONUA_DEVOPS_CLAUDE_MODEL }}
+          HONUA_DEVOPS_CLAUDE_API_KEY: ${{ secrets.HONUA_DEVOPS_CLAUDE_API_KEY }}
+          HONUA_DEVOPS_CODEX_MODEL: ${{ secrets.HONUA_DEVOPS_CODEX_MODEL }}
+          HONUA_DEVOPS_CODEX_API_KEY: ${{ secrets.HONUA_DEVOPS_CODEX_API_KEY }}
+          HONUA_DEVOPS_BEDROCK_MODEL: ${{ secrets.HONUA_DEVOPS_BEDROCK_MODEL }}
+          HONUA_DEVOPS_BEDROCK_API_KEY: ${{ secrets.HONUA_DEVOPS_BEDROCK_API_KEY }}
+          HONUA_DEVOPS_BEDROCK_REGION: ${{ secrets.HONUA_DEVOPS_BEDROCK_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          HONUA_DEVOPS_LOCAL_LLAMA_MODEL: ${{ secrets.HONUA_DEVOPS_LOCAL_LLAMA_MODEL }}
+          HONUA_DEVOPS_LOCAL_LLAMA_API_KEY: ${{ secrets.HONUA_DEVOPS_LOCAL_LLAMA_API_KEY }}
+          HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT: ${{ secrets.HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT }}
+          HONUA_DEVOPS_EVAL_COMMIT_SHA: ${{ github.sha }}
+          HONUA_DEVOPS_EVAL_OUTPUT: artifacts/blind-eval/scorecard.json
+        run: |
+          set -euo pipefail
+          dotnet run --project src/Honua.DevOps.Agent --configuration Release --no-build -- \
+            --eval-blind \
+            --provider "$HONUA_DEVOPS_EVAL_PROVIDER"
+
+      - name: Verify scorecard provenance and redaction
+        if: steps.credentials.outputs.configured == 'true'
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: python3 scripts/verify-blind-eval-scorecard.py artifacts/blind-eval/scorecard.json --expect-lane live --expect-commit "$EXPECTED_SHA"
+
+      # `always()` so the scorecard from a FAILING run is still published: a red lane
+      # without its evidence is not actionable.
+      - name: Publish scorecard artifact
+        if: always() && steps.credentials.outputs.configured == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: blind-eval-scorecard-${{ github.sha }}
+          path: artifacts/blind-eval/scorecard.json
+          # `warn`, not `error`: when the lane fails before it can write a scorecard the
+          # eval step has already failed the job — a second, less informative failure
+          # here would only bury it.
+          if-no-files-found: warn
