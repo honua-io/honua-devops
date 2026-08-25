@@ -1,4 +1,7 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -176,6 +179,7 @@ public sealed class TerraformProvisioningTests
             confirmed: false,
             confirmation: string.Empty);
         string challenge = ExtractChallenge(planResponse, "confirmation=");
+        string approvalReceipt = CreateApprovalReceipt(planResponse, "apply");
         runner.Enqueue(Success("Apply complete! Resources: 3 added, 1 changed, 0 destroyed."));
 
         HonuaOperationsToolkit toolkit = new(
@@ -190,7 +194,8 @@ public sealed class TerraformProvisioningTests
             "apply",
             "{\"environment\":\"dev\"}",
             confirmed: true,
-            confirmation: challenge);
+            confirmation: challenge,
+            approvalReceiptJson: approvalReceipt);
 
         Assert.Equal("infrastructure-provisioned", response.Status);
         Assert.Equal(4, runner.Calls.Count);
@@ -222,6 +227,7 @@ public sealed class TerraformProvisioningTests
             confirmed: false,
             confirmation: string.Empty);
         string challenge = ExtractChallenge(planResponse, "confirmation=");
+        string approvalReceipt = CreateApprovalReceipt(planResponse, "apply");
 
         HonuaOperationsToolkit executor = new(
             CreateRuntime(root.Path, ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv),
@@ -234,7 +240,8 @@ public sealed class TerraformProvisioningTests
             "apply",
             "{\"environment\":\"dev\"}",
             confirmed: true,
-            confirmation: challenge);
+            confirmation: challenge,
+            approvalReceiptJson: approvalReceipt);
         await runner.ApplyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         OperationResponse concurrentApply = await executor.ProvisionInfrastructureAsync(
@@ -243,7 +250,8 @@ public sealed class TerraformProvisioningTests
             "apply",
             "{\"environment\":\"dev\"}",
             confirmed: true,
-            confirmation: challenge);
+            confirmation: challenge,
+            approvalReceiptJson: approvalReceipt);
 
         Assert.Equal("confirmation-required", concurrentApply.Status);
         Assert.Contains("already been claimed", concurrentApply.Summary, StringComparison.Ordinal);
@@ -253,6 +261,41 @@ public sealed class TerraformProvisioningTests
         OperationResponse firstResponse = await firstApply;
         Assert.Equal("infrastructure-provisioned", firstResponse.Status);
         Assert.Equal(1, runner.ApplyCalls);
+    }
+
+    [Fact]
+    public async Task Apply_RefusesBeforeProcessStartWithoutTrustedPlanBoundApprovalReceipt()
+    {
+        using TerraformTestRoot root = new();
+        FakeProvisioningProcessRunner runner = new(
+            Success("initialized"),
+            Success("Plan: 1 to add, 0 to change, 0 to destroy."),
+            Success(TerraformShowOutput));
+        using BackendGateway gateway = CreateGateway();
+        HonuaOperationsToolkit planner = new(
+            CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
+            gateway,
+            provisioningProcessRunner: runner);
+        OperationResponse plan = await planner.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "plan", "{\"environment\":\"dev\"}", false, string.Empty);
+        string challenge = ExtractChallenge(plan, "confirmation=");
+
+        HonuaOperationsToolkit executor = new(
+            CreateRuntime(root.Path, ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv),
+            gateway,
+            DirectAllowedPolicy(),
+            provisioningProcessRunner: runner);
+        OperationResponse missing = await executor.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "apply", "{\"environment\":\"dev\"}", true, challenge, string.Empty);
+        OperationResponse substituted = await executor.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "apply", "{\"environment\":\"dev\"}", true, challenge,
+            CreateApprovalReceipt(plan, "destroy"));
+
+        Assert.Equal("confirmation-required", missing.Status);
+        Assert.Contains("signed honua.devops.provision-approval/v1", missing.Summary, StringComparison.Ordinal);
+        Assert.Equal("confirmation-required", substituted.Status);
+        Assert.Contains("exact operation", substituted.Summary, StringComparison.Ordinal);
+        Assert.Equal(3, runner.Calls.Count);
     }
 
     [Fact]
@@ -356,14 +399,17 @@ public sealed class TerraformProvisioningTests
             string.Empty,
             secretRef,
             outputDirectory,
-            overwrite: false);
+            overwrite: false,
+            provisioningOperationId: "urn:honua:provisioning:test-handoff");
 
-        Assert.Equal("install-handoff-ready", response.Status);
+        Assert.Equal("install-handoff-written", response.Status);
         string proxyConfig = await File.ReadAllTextAsync(System.IO.Path.Combine(outputDirectory, "honua-mcp-proxy.handoff.json"));
         string envExample = await File.ReadAllTextAsync(System.IO.Path.Combine(outputDirectory, "honua.env.example"));
         Assert.Contains("https://honua.example.test", proxyConfig, StringComparison.Ordinal);
         Assert.Contains("https://honua.example.test/mcp", proxyConfig, StringComparison.Ordinal);
         Assert.Contains(secretRef, proxyConfig, StringComparison.Ordinal);
+        Assert.Contains("@honua/mcp-server@2026.1.1", proxyConfig, StringComparison.Ordinal);
+        Assert.Contains("sha512-", proxyConfig, StringComparison.Ordinal);
         Assert.Contains("\"name\": \"admin\"", proxyConfig, StringComparison.Ordinal);
         Assert.Contains("honua_admin_server_status", proxyConfig, StringComparison.Ordinal);
         Assert.Contains("\"name\": \"analysis\"", proxyConfig, StringComparison.Ordinal);
@@ -410,7 +456,56 @@ public sealed class TerraformProvisioningTests
             TerraformRef: "trunk",
             TerraformLocalPath: terraformRoot,
             TerraformDeploymentTargets: ["ecs"],
-            ProductionEnvironments: ["prod"]);
+            ProductionEnvironments: ["prod"],
+            ProvisionApprovalIssuerKeys: new Dictionary<string, string>
+            {
+                [ApprovalIssuer] = Convert.ToBase64String(ApprovalKey)
+            },
+            McpProxyPackage: "@honua/mcp-server@2026.1.1",
+            McpProxyIntegrity: "sha512-dGVzdC1pbnRlZ3JpdHk=",
+            CandidateReference: "honua-2026.1.1-test");
+    }
+
+    private const string ApprovalIssuer = "test://release-approver";
+    private static readonly byte[] ApprovalKey = SHA256.HashData(Encoding.UTF8.GetBytes("honua-devops-test-approval-key"));
+
+    private static string CreateApprovalReceipt(OperationResponse plan, string action)
+    {
+        ProvisioningLineage lineage = Assert.IsType<ProvisioningLineage>(plan.ProvisioningLineage);
+        DateTimeOffset issued = DateTimeOffset.UtcNow.AddSeconds(-1);
+        DateTimeOffset expires = issued.AddMinutes(15);
+        string keyId = Convert.ToHexString(SHA256.HashData(ApprovalKey)).ToLowerInvariant()[..16];
+        string receiptId = $"approval-{Guid.NewGuid():n}";
+        string canonical = string.Join('\n',
+            "honua.devops.provision-approval/v1",
+            receiptId,
+            ApprovalIssuer,
+            keyId,
+            lineage.ProvisioningOperationId,
+            lineage.PlanSha256!,
+            action,
+            "aws-ecs",
+            "dev",
+            "approved",
+            issued.ToUniversalTime().ToString("O"),
+            expires.ToUniversalTime().ToString("O"));
+        string signature = Convert.ToBase64String(HMACSHA256.HashData(ApprovalKey, Encoding.UTF8.GetBytes(canonical)));
+        return JsonSerializer.Serialize(new
+        {
+            schemaVersion = "honua.devops.provision-approval/v1",
+            approvalReceiptId = receiptId,
+            issuer = ApprovalIssuer,
+            keyId,
+            provisioningOperationId = lineage.ProvisioningOperationId,
+            planSha256 = lineage.PlanSha256,
+            action,
+            stack = "aws-ecs",
+            environment = "dev",
+            decision = "approved",
+            issuedAtUtc = issued,
+            expiresAtUtc = expires,
+            signature
+        });
     }
 
     private static BackendGateway CreateGateway()

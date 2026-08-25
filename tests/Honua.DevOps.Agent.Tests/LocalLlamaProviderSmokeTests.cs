@@ -114,7 +114,7 @@ public class LocalLlamaProviderSmokeTests
         return new AuditRecord(
             Timestamp: DateTimeOffset.UnixEpoch,
             SessionId: "session",
-            OperationId: "operation",
+            AuditEventId: "audit-event",
             ToolName: "describe_environment",
             Arguments: new Dictionary<string, string> { ["service"] = "roads-api" },
             Status: "environment-described",

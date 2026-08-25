@@ -200,15 +200,15 @@ internal static class CapabilityToolset
                 "build_ai_devops_brief",
                 "Build an advisory AI DevOps brief with affected resources, raw evidence references, suggested actions (with requiresApproval/mutatesState flags), confidence, owner, status, and workflow links. Advisory only with auto-apply disabled; mutating suggestions require an explicit governed submit/rollback."),
             CreateTool(
-                (string stack, string size, string action, string variablesJson, bool confirmed, string confirmation)
-                    => toolkit.ProvisionInfrastructureAsync(stack, size, action, variablesJson, confirmed, confirmation),
+                (string stack, string size, string action, string variablesJson, bool confirmed, string confirmation, string approvalReceiptJson)
+                    => toolkit.ProvisionInfrastructureAsync(stack, size, action, variablesJson, confirmed, confirmation, approvalReceiptJson),
                 "provision_infrastructure",
-                "Provision a Honua cloud cell from the allowlisted honua-iac Terraform roots. 2026.1 supports stack=aws-ecs (the deployable examples/aws root) and size=small. action=plan runs init+plan only and returns a tokenized confirmation challenge. A later action=apply validates and applies that exact unexpired, hash-checked saved plan; it requires execute mode, execute-lower-env or break-glass tier, direct-allowed approval, a non-production environment, confirmed=true, and the exact challenge. action=destroy is break-glass only and uses the same two-call saved-plan gate. variablesJson accepts only non-secret allowlisted Terraform values; provide required secrets out-of-band through a gitignored terraform.tfvars or TF_VAR_* environment variables."),
+                "Provision a Honua cloud cell from the allowlisted honua-iac Terraform roots. 2026.1 supports stack=aws-ecs and size=small. action=plan returns a stable provisioningOperationId, saved-plan digest, and tokenized challenge. apply/destroy requires that exact saved plan plus approvalReceiptJson containing a signed honua.devops.provision-approval/v1 receipt from a configured trusted issuer, bound to the exact operation, plan, action, stack, and environment. variablesJson accepts only non-secret allowlisted Terraform values."),
             CreateTool(
-                (string stack, string baseUrl, string adminKeySecretRef, string outputDirectory, bool overwrite)
-                    => toolkit.InstallHandoffAsync(stack, baseUrl, adminKeySecretRef, outputDirectory, overwrite),
+                (string stack, string baseUrl, string adminKeySecretRef, string outputDirectory, bool overwrite, string provisioningOperationId)
+                    => toolkit.InstallHandoffAsync(stack, baseUrl, adminKeySecretRef, outputDirectory, overwrite, provisioningOperationId),
                 "install_handoff",
-                "Write a secretless CLI and honua-mcp-proxy handoff after provisioning. Returns HONUA_BASE_URL plus the secret reference for HONUA_ADMIN_KEY; records a fail-closed MCP tools/list contract for the admin family, analysis profile, and esri-gp profile; writes a versioned proxy configuration containing HONUA_MCP_REMOTE_URL; and never reads, writes, or returns the admin-key material. Leave baseUrl empty to read only the honua_url Terraform output. Existing files are preserved unless overwrite=true."),
+                "Write a secretless, unverified CLI and honua-mcp-proxy handoff after provisioning. Requires the exact provisioningOperationId and operator-configured manifest pins for candidate, proxy version, and integrity. Returns install-handoff-written, never ready; verification is a separate evidence-producing step. Leave baseUrl empty to read only the honua_url Terraform output."),
             CreateTool(
                 (string releasePackageJson, string mode, string correlationId)
                     => releaseExplainer.ExplainReleasePackageAsync(releasePackageJson, mode, correlationId),

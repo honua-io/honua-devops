@@ -21,6 +21,8 @@ public class JsonlAuditSinkTests
             string[] lines = File.ReadAllLines(path);
             Assert.Equal(2, lines.Length);
             using JsonDocument first = JsonDocument.Parse(lines[0]);
+            Assert.True(first.RootElement.TryGetProperty("AuditEventId", out _));
+            Assert.False(first.RootElement.TryGetProperty("OperationId", out _));
             Assert.Equal("describe_environment", first.RootElement.GetProperty("ToolName").GetString());
             Assert.False(first.RootElement.GetProperty("Mutated").GetBoolean());
             using JsonDocument second = JsonDocument.Parse(lines[1]);
@@ -72,7 +74,7 @@ public class JsonlAuditSinkTests
         return new AuditRecord(
             Timestamp: DateTimeOffset.UtcNow,
             SessionId: "test-session",
-            OperationId: Guid.NewGuid().ToString("n"),
+            AuditEventId: Guid.NewGuid().ToString("n"),
             ToolName: tool,
             Arguments: new Dictionary<string, string> { ["service"] = "roads-api" },
             Status: status,

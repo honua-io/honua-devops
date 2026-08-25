@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Honua.DevOps.Agent.Operations.Audit;
 
 internal sealed record RecentOperation(
-    string OperationId,
+    string AuditEventId,
     string Timestamp,
     string Tool,
     string Status,
@@ -166,7 +166,7 @@ internal static class OperationJournal
             }
 
             return new RecentOperation(
-                OperationId: root.TryGetProperty("OperationId", out JsonElement opId) && opId.ValueKind == JsonValueKind.String ? opId.GetString() ?? string.Empty : string.Empty,
+                AuditEventId: ReadAuditEventId(root),
                 Timestamp: root.TryGetProperty("Timestamp", out JsonElement ts) && ts.ValueKind == JsonValueKind.String ? ts.GetString() ?? string.Empty : string.Empty,
                 Tool: root.TryGetProperty("ToolName", out JsonElement tool) && tool.ValueKind == JsonValueKind.String ? tool.GetString() ?? string.Empty : string.Empty,
                 Status: root.TryGetProperty("Status", out JsonElement st) && st.ValueKind == JsonValueKind.String ? st.GetString() ?? string.Empty : string.Empty,
@@ -178,6 +178,21 @@ internal static class OperationJournal
         {
             return null;
         }
+    }
+
+    private static string ReadAuditEventId(JsonElement root)
+    {
+        // OperationId is accepted only as a read-compatibility alias for journals written before
+        // honua-devops#150. New records serialize AuditEventId and never present this per-call GUID
+        // as a canonical runtime operation identity.
+        foreach (string name in new[] { "AuditEventId", "auditEventId", "OperationId", "operationId" })
+        {
+            if (root.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString() ?? string.Empty;
+            }
+        }
+        return string.Empty;
     }
 
     internal static int ShowOperation(string auditHookTarget, string operationId, TextWriter writer)
@@ -197,18 +212,18 @@ internal static class OperationJournal
         string needle = operationId.Trim();
         foreach (string line in File.ReadLines(path))
         {
-            // Match on the parsed OperationId field, not a raw substring of the JSONL
+            // Match on the parsed AuditEventId field, not a raw substring of the JSONL
             // line. A 32-char id can appear inside other fields (e.g. Summary) of an
             // earlier record, which would otherwise return the wrong record.
             RecentOperation? parsed = TryParseRecord(line);
-            if (parsed is not null && string.Equals(parsed.OperationId, needle, StringComparison.Ordinal))
+            if (parsed is not null && string.Equals(parsed.AuditEventId, needle, StringComparison.Ordinal))
             {
                 writer.WriteLine(line);
                 return 0;
             }
         }
 
-        writer.WriteLine($"No record with operationId `{needle}` found in `{path}`.");
+        writer.WriteLine($"No record with auditEventId `{needle}` found in `{path}`.");
         return 66;
     }
 
@@ -239,7 +254,7 @@ internal static class OperationJournal
             using JsonDocument document = JsonDocument.Parse(line);
             JsonElement root = document.RootElement;
             string timestamp = TryGet(root, "Timestamp");
-            string operationId = TryGet(root, "OperationId");
+            string auditEventId = ReadAuditEventId(root);
             string toolName = TryGet(root, "ToolName");
             string status = TryGet(root, "Status");
             string mutated = root.TryGetProperty("Mutated", out JsonElement mutatedElement) && mutatedElement.ValueKind == JsonValueKind.True
@@ -251,7 +266,7 @@ internal static class OperationJournal
             {
                 summary = summary[..80] + "...";
             }
-            return $"{timestamp}  {operationId}  {tool(toolName)}  [{mutated}/{tier}]  {status}  {summary}";
+            return $"{timestamp}  {auditEventId}  {tool(toolName)}  [{mutated}/{tier}]  {status}  {summary}";
         }
         catch (JsonException)
         {

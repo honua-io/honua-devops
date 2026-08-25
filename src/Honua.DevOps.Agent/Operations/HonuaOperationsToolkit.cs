@@ -40,7 +40,7 @@ internal sealed partial class HonuaOperationsToolkit(
 
     internal string SessionEdition => string.IsNullOrWhiteSpace(defaultEdition) ? "community" : defaultEdition!.Trim().ToLowerInvariant();
 
-    [Description("Search the operator's audit journal for recent operations. Returns operationId, timestamp, tool, status, summary, mutated flag, and execution tier. Use this to look up an operationId for rollback, recall what was run in a prior session, or summarize recent activity. Filter by tool name (exact match), mutatedOnly (true to skip read-only calls), or statusContains (substring match). Returns up to `limit` most-recent matches.")]
+    [Description("Search the operator's diagnostic audit journal. Returns auditEventId, timestamp, tool, status, summary, mutated flag, and execution tier. auditEventId identifies one audit emission and is not a canonical runtime operationId. Filter by tool name (exact match), mutatedOnly (true to skip read-only calls), or statusContains (substring match). Returns up to `limit` most-recent matches.")]
     public Task<OperationSearchResult> FindRecentOperationsAsync(
         string toolFilter,
         bool mutatedOnly,

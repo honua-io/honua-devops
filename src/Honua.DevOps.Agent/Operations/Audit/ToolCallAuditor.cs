@@ -31,7 +31,10 @@ internal static class ToolCallAuditor
             return;
         }
 
-        string operationId = Guid.NewGuid().ToString("n");
+        // This identifies one audit emission only. It is deliberately not called operationId:
+        // canonical runtime operations come from their owning control plane, while provisioning
+        // carries its separate stable provisioningOperationId across plan/apply/handoff.
+        string auditEventId = Guid.NewGuid().ToString("n");
         Dictionary<string, string> arguments = new(StringComparer.Ordinal);
         if (call.Arguments is not null)
         {
@@ -51,12 +54,14 @@ internal static class ToolCallAuditor
         bool mutated = false;
         IReadOnlyList<OperationBackendStep>? backendSteps = null;
         OperationEvidence? evidence = null;
+        ProvisioningLineage? provisioningLineage = null;
 
         if (toolResult is OperationResponse response)
         {
             status = response.Status;
             summary = Redaction.Scrub(response.Summary);
             evidence = response.Evidence;
+            provisioningLineage = response.ProvisioningLineage;
             if (response.BackendSteps is { } steps)
             {
                 List<OperationBackendStep> scrubbedSteps = new(steps.Count);
@@ -132,7 +137,7 @@ internal static class ToolCallAuditor
         AuditRecord record = new(
             Timestamp: DateTimeOffset.UtcNow,
             SessionId: context.SessionId,
-            OperationId: operationId,
+            AuditEventId: auditEventId,
             ToolName: call.ToolName,
             Arguments: arguments,
             Status: status,
@@ -143,7 +148,8 @@ internal static class ToolCallAuditor
             ApprovalMode: context.ApprovalMode,
             Provider: context.Provider,
             BackendSteps: backendSteps,
-            Evidence: evidence);
+            Evidence: evidence,
+            ProvisioningLineage: provisioningLineage);
 
         try
         {

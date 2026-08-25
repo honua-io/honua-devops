@@ -66,6 +66,7 @@ internal sealed partial class HonuaOperationsToolkit
         string variablesJson,
         bool confirmed,
         string confirmation,
+        string approvalReceiptJson = "",
         CancellationToken cancellationToken = default)
     {
         const string canonicalStack = "aws-ecs";
@@ -186,7 +187,9 @@ internal sealed partial class HonuaOperationsToolkit
                         canonicalSize,
                         environment,
                         terraformRoot,
+                        approvalReceiptJson,
                         out SavedTerraformPlan? savedPlan,
+                        out ProvisionApprovalReceipt? approvalReceipt,
                         out loadError))
                 {
                     return ProvisioningRefusal(
@@ -200,7 +203,7 @@ internal sealed partial class HonuaOperationsToolkit
                         [normalizedAction == "destroy" ? "Destroy can permanently remove data." : "Apply creates or changes billable cloud resources."]);
                 }
 
-                return await ApplySavedPlanAsync(savedPlan!, normalizedAction, cancellationToken);
+                return await ApplySavedPlanAsync(savedPlan!, approvalReceipt!, normalizedAction, cancellationToken);
             }
         }
 
@@ -297,6 +300,7 @@ internal sealed partial class HonuaOperationsToolkit
                 planDirectory,
                 new SavedTerraformPlanManifest(
                     planToken,
+                    $"urn:honua:provisioning:{planToken}",
                     canonicalStack,
                     canonicalSize,
                     environment,
@@ -346,7 +350,10 @@ internal sealed partial class HonuaOperationsToolkit
                     "Saved Terraform plans can contain sensitive values; this artifact is kept in the current user's protected temporary directory and deleted after use or expiry.",
                     "Local Terraform state is unsuitable for a shared or long-lived environment."
                 ],
-                BackendSteps: steps);
+                BackendSteps: steps,
+                ProvisioningLineage: new ProvisioningLineage(
+                    $"urn:honua:provisioning:{planToken}",
+                    PlanSha256: ComputeSha256(planFile)));
         }
         finally
         {
@@ -364,6 +371,7 @@ internal sealed partial class HonuaOperationsToolkit
         string adminKeySecretRef,
         string outputDirectory,
         bool overwrite,
+        string provisioningOperationId = "",
         CancellationToken cancellationToken = default)
     {
         const string canonicalStack = "aws-ecs";
@@ -464,6 +472,31 @@ internal sealed partial class HonuaOperationsToolkit
                 ["A literal admin key must not be persisted in the handoff files or audit journal."]);
         }
 
+        string rootProvisioningOperationId = provisioningOperationId.Trim();
+        if (!rootProvisioningOperationId.StartsWith("urn:honua:provisioning:", StringComparison.Ordinal)
+            || rootProvisioningOperationId.Length > 200)
+        {
+            return ProvisioningRefusal(
+                "provisioning-operation-required",
+                "install_handoff requires the stable provisioningOperationId returned by the plan/apply lineage.",
+                ["Pass the exact provisioningOperationId; do not invent or substitute a server operation id."],
+                []);
+        }
+
+        string proxyPackage = runtime.McpProxyPackage?.Trim() ?? string.Empty;
+        string proxyIntegrity = runtime.McpProxyIntegrity?.Trim() ?? string.Empty;
+        string candidateReference = runtime.CandidateReference?.Trim() ?? string.Empty;
+        if (!Regex.IsMatch(proxyPackage, "^@honua/mcp-server@[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$", RegexOptions.CultureInvariant)
+            || !Regex.IsMatch(proxyIntegrity, "^sha(256|384|512)-[A-Za-z0-9+/=]+$", RegexOptions.CultureInvariant)
+            || string.IsNullOrWhiteSpace(candidateReference))
+        {
+            return ProvisioningRefusal(
+                "proxy-pin-required",
+                "The proxy package, integrity, and candidate reference must be pinned by operator configuration before handoff emission.",
+                ["Set HONUA_DEVOPS_MCP_PROXY_PACKAGE, HONUA_DEVOPS_MCP_PROXY_INTEGRITY, and HONUA_DEVOPS_CANDIDATE_REFERENCE from the release manifest."],
+                ["An unversioned proxy cannot produce release-grade handoff evidence."]);
+        }
+
         string handoffDirectory;
         try
         {
@@ -490,8 +523,11 @@ internal sealed partial class HonuaOperationsToolkit
         object contract = new
         {
             schemaVersion = "honua.mcp-proxy.handoff/v1",
+            rootProvisioningOperationId,
+            candidateReference,
+            proxyArtifact = new { package = proxyPackage, integrity = proxyIntegrity },
             command = "npx",
-            args = new[] { "-y", "--package", "@honua/mcp-server", "honua-mcp-proxy" },
+            args = new[] { "-y", "--package", proxyPackage, "honua-mcp-proxy" },
             env = new Dictionary<string, string>
             {
                 ["HONUA_BASE_URL"] = parsedBaseUrl!.AbsoluteUri.TrimEnd('/'),
@@ -550,9 +586,10 @@ internal sealed partial class HonuaOperationsToolkit
                 }
             }
         };
+        string configBytes = JsonSerializer.Serialize(contract, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
         await File.WriteAllTextAsync(
             configPath,
-            JsonSerializer.Serialize(contract, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+            configBytes,
             cancellationToken);
         await File.WriteAllTextAsync(
             envPath,
@@ -572,14 +609,16 @@ internal sealed partial class HonuaOperationsToolkit
             MutatesState: true));
 
         return new OperationResponse(
-            Status: "install-handoff-ready",
-            Summary: $"Secretless Honua CLI/MCP handoff written for `{canonicalStack}` at `{handoffDirectory}`.",
+            Status: "install-handoff-written",
+            Summary: $"Secretless Honua CLI/MCP handoff written but not yet verified for `{canonicalStack}` at `{handoffDirectory}`.",
             Findings:
             [
                 $"HONUA_BASE_URL={parsedBaseUrl.AbsoluteUri.TrimEnd('/')}",
                 $"HONUA_ADMIN_KEY secret reference={normalizedSecretRef}",
                 $"HONUA_MCP_REMOTE_URL={mcpUri.AbsoluteUri}",
                 $"Proxy handoff: {configPath}",
+                $"Proxy artifact: {proxyPackage} ({proxyIntegrity}).",
+                $"Root provisioning operation: {rootProvisioningOperationId}.",
                 "Required AI capability families: admin, analysis, and esri-gp.",
                 "No admin-key material was read, returned, or written."
             ],
@@ -603,7 +642,11 @@ internal sealed partial class HonuaOperationsToolkit
                 "The handoff is not a health certificate; verify the deployed server and proxy after resolving the secret.",
                 "A broad secret-store identity could expose unrelated credentials even though this file is secretless."
             ],
-            BackendSteps: steps);
+            BackendSteps: steps,
+            ProvisioningLineage: new ProvisioningLineage(
+                rootProvisioningOperationId,
+                HandoffReceiptSha256: ComputeSha256(Encoding.UTF8.GetBytes(configBytes)),
+                RootProvisioningOperationId: rootProvisioningOperationId));
     }
 
     private OperationResponse? AuthorizeTerraformMutation(string action, string environment)
@@ -887,6 +930,7 @@ internal sealed partial class HonuaOperationsToolkit
 
     private async Task<OperationResponse> ApplySavedPlanAsync(
         SavedTerraformPlan savedPlan,
+        ProvisionApprovalReceipt approvalReceipt,
         string action,
         CancellationToken cancellationToken)
     {
@@ -926,6 +970,7 @@ internal sealed partial class HonuaOperationsToolkit
                 [
                     "The exact token-bound plan returned by the previous planning call was the only artifact passed to terraform apply.",
                     "The saved plan hash, stack, root, size, environment, action, and age were verified before process start.",
+                    $"Trusted issuer `{approvalReceipt.Issuer}` approved receipt `{approvalReceipt.ApprovalReceiptId}` for this exact operation and plan.",
                     "An atomic one-time claim was acquired before process start; concurrent reuse of the token fails closed.",
                     "Invocation used direct argv; no shell command string was evaluated.",
                     action == "destroy"
@@ -952,7 +997,13 @@ internal sealed partial class HonuaOperationsToolkit
                     "Cloud readiness is not implied by a successful Terraform apply; run the service smoke contract.",
                     "Losing or exposing Terraform state can prevent safe reconciliation and disclose sensitive metadata."
                 ],
-                BackendSteps: steps);
+                BackendSteps: steps,
+                ProvisioningLineage: new ProvisioningLineage(
+                    savedPlan.Manifest.ProvisioningOperationId,
+                    savedPlan.Manifest.PlanSha256,
+                    approvalReceipt.ApprovalReceiptId,
+                    ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
+                    ActuatorReceiptReference: $"terraform://{savedPlan.Manifest.Stack}/{action}/{savedPlan.Manifest.PlanSha256}"));
         }
         finally
         {
@@ -984,17 +1035,20 @@ internal sealed partial class HonuaOperationsToolkit
         ProtectSavedPlan(path);
     }
 
-    private static bool TryLoadSavedPlan(
+    private bool TryLoadSavedPlan(
         string confirmation,
         string action,
         string stack,
         string size,
         string environment,
         string terraformRoot,
+        string approvalReceiptJson,
         out SavedTerraformPlan? savedPlan,
+        out ProvisionApprovalReceipt? approvalReceipt,
         out string error)
     {
         savedPlan = null;
+        approvalReceipt = null;
         string prefix = $"{action}:{stack}:{environment}:";
         error = $"A reviewed saved plan is required. Expected confirmation prefix `{prefix}` followed by the token returned by the planning call.";
         string normalized = confirmation.Trim();
@@ -1067,6 +1121,16 @@ internal sealed partial class HonuaOperationsToolkit
             return false;
         }
 
+        if (!TryValidateApprovalReceipt(
+                approvalReceiptJson,
+                manifest,
+                action,
+                out approvalReceipt,
+                out error))
+        {
+            return false;
+        }
+
         string claimPath = Path.Combine(directory, "apply.claim");
         try
         {
@@ -1089,6 +1153,103 @@ internal sealed partial class HonuaOperationsToolkit
         }
 
         savedPlan = new SavedTerraformPlan(manifest, planFile, directory);
+        return true;
+    }
+
+    private bool TryValidateApprovalReceipt(
+        string receiptJson,
+        SavedTerraformPlanManifest manifest,
+        string action,
+        out ProvisionApprovalReceipt? receipt,
+        out string error)
+    {
+        receipt = null;
+        error = "A signed honua.devops.provision-approval/v1 receipt from a trusted issuer is required.";
+        if (string.IsNullOrWhiteSpace(receiptJson))
+        {
+            return false;
+        }
+        try
+        {
+            receipt = JsonSerializer.Deserialize<ProvisionApprovalReceipt>(receiptJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            error = "The provision approval receipt is malformed.";
+            return false;
+        }
+        if (receipt is null
+            || receipt.SchemaVersion != "honua.devops.provision-approval/v1"
+            || string.IsNullOrWhiteSpace(receipt.ApprovalReceiptId)
+            || receipt.ApprovalReceiptId.Length > 200
+            || receipt.Decision != "approved"
+            || receipt.ProvisioningOperationId != manifest.ProvisioningOperationId
+            || !string.Equals(receipt.PlanSha256, manifest.PlanSha256, StringComparison.OrdinalIgnoreCase)
+            || receipt.Action != action
+            || receipt.Stack != manifest.Stack
+            || receipt.Environment != manifest.Environment)
+        {
+            error = "The approval receipt does not approve this exact operation, plan, action, stack, and environment.";
+            return false;
+        }
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (receipt.IssuedAtUtc > now.AddMinutes(5) || receipt.ExpiresAtUtc <= now || receipt.ExpiresAtUtc > receipt.IssuedAtUtc.AddHours(1))
+        {
+            error = "The approval receipt is expired, not yet valid, or exceeds the one-hour validity ceiling.";
+            return false;
+        }
+        if (runtime.ProvisionApprovalIssuerKeys is null
+            || !runtime.ProvisionApprovalIssuerKeys.TryGetValue(receipt.Issuer, out string? encodedKey))
+        {
+            error = $"Approval issuer `{receipt.Issuer}` is not in the configured trusted-issuer allowlist.";
+            return false;
+        }
+        byte[] key;
+        try
+        {
+            key = Convert.FromBase64String(encodedKey);
+        }
+        catch (FormatException)
+        {
+            error = "The configured trusted issuer key is invalid.";
+            return false;
+        }
+        string expectedKeyId = ComputeSha256(key)[..16];
+        if (!string.Equals(receipt.KeyId, expectedKeyId, StringComparison.Ordinal))
+        {
+            error = "The approval receipt key id does not match the trusted issuer key.";
+            return false;
+        }
+        string canonical = string.Join('\n',
+            receipt.SchemaVersion,
+            receipt.ApprovalReceiptId,
+            receipt.Issuer,
+            receipt.KeyId,
+            receipt.ProvisioningOperationId,
+            receipt.PlanSha256.ToLowerInvariant(),
+            receipt.Action,
+            receipt.Stack,
+            receipt.Environment,
+            receipt.Decision,
+            receipt.IssuedAtUtc.ToUniversalTime().ToString("O"),
+            receipt.ExpiresAtUtc.ToUniversalTime().ToString("O"));
+        byte[] expectedSignature = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(canonical));
+        byte[] actualSignature;
+        try
+        {
+            actualSignature = Convert.FromBase64String(receipt.Signature);
+        }
+        catch (FormatException)
+        {
+            error = "The approval receipt signature is malformed.";
+            return false;
+        }
+        if (!CryptographicOperations.FixedTimeEquals(expectedSignature, actualSignature))
+        {
+            error = "The approval receipt signature could not be verified by its trusted issuer key.";
+            return false;
+        }
         return true;
     }
 
@@ -1158,6 +1319,9 @@ internal sealed partial class HonuaOperationsToolkit
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
+    private static string ComputeSha256(byte[] bytes)
+        => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
     private static void ProtectDirectory(string path)
     {
         if (!OperatingSystem.IsWindows())
@@ -1178,6 +1342,7 @@ internal sealed partial class HonuaOperationsToolkit
 
     private sealed record SavedTerraformPlanManifest(
         string Token,
+        string ProvisioningOperationId,
         string Stack,
         string Size,
         string Environment,
@@ -1186,6 +1351,21 @@ internal sealed partial class HonuaOperationsToolkit
         bool DestroyPlan,
         string PlanSummary,
         string PlanSha256);
+
+    private sealed record ProvisionApprovalReceipt(
+        string SchemaVersion,
+        string ApprovalReceiptId,
+        string Issuer,
+        string KeyId,
+        string ProvisioningOperationId,
+        string PlanSha256,
+        string Action,
+        string Stack,
+        string Environment,
+        string Decision,
+        DateTimeOffset IssuedAtUtc,
+        DateTimeOffset ExpiresAtUtc,
+        string Signature);
 
     private sealed record SavedTerraformPlan(
         SavedTerraformPlanManifest Manifest,

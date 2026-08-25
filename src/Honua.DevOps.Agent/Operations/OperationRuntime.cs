@@ -12,7 +12,11 @@ internal sealed record OperationRuntime(
     string? DeployTargetId = null,
     string[]? ProductionEnvironments = null,
     bool RollbackEnabled = false,
-    bool CrossEnvironmentPromotionEnabled = false)
+    bool CrossEnvironmentPromotionEnabled = false,
+    IReadOnlyDictionary<string, string>? ProvisionApprovalIssuerKeys = null,
+    string? McpProxyPackage = null,
+    string? McpProxyIntegrity = null,
+    string? CandidateReference = null)
 {
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
     private static readonly string[] DefaultProductionEnvironments = ["prod", "production", "prd"];
@@ -38,6 +42,10 @@ internal sealed record OperationRuntime(
     private const string TerraformLocalPathVariable = "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH";
     private const string DeployTargetIdVariable = "HONUA_DEVOPS_DEPLOY_TARGET_ID";
     private const string ProductionEnvironmentsVariable = "HONUA_DEVOPS_PRODUCTION_ENVIRONMENTS";
+    private const string ProvisionApprovalIssuerKeysVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS";
+    private const string McpProxyPackageVariable = "HONUA_DEVOPS_MCP_PROXY_PACKAGE";
+    private const string McpProxyIntegrityVariable = "HONUA_DEVOPS_MCP_PROXY_INTEGRITY";
+    private const string CandidateReferenceVariable = "HONUA_DEVOPS_CANDIDATE_REFERENCE";
 
     // Release posture: rollback + cross-environment promotion are EXPERIMENTAL and OFF for the
     // MVP release. The operate story is single-environment deploy with health-gated fix-forward
@@ -106,6 +114,11 @@ internal sealed record OperationRuntime(
             Environment.GetEnvironmentVariable(RollbackEnabledVariable));
         bool crossEnvironmentPromotionEnabled = ParseExperimentalFlag(
             Environment.GetEnvironmentVariable(CrossEnvironmentPromotionEnabledVariable));
+        IReadOnlyDictionary<string, string> approvalIssuerKeys = ParseApprovalIssuerKeys(
+            Environment.GetEnvironmentVariable(ProvisionApprovalIssuerKeysVariable));
+        string? mcpProxyPackage = NormalizeOptionalValue(Environment.GetEnvironmentVariable(McpProxyPackageVariable));
+        string? mcpProxyIntegrity = NormalizeOptionalValue(Environment.GetEnvironmentVariable(McpProxyIntegrityVariable));
+        string? candidateReference = NormalizeOptionalValue(Environment.GetEnvironmentVariable(CandidateReferenceVariable));
 
         return new OperationRuntime(
             mode,
@@ -119,8 +132,52 @@ internal sealed record OperationRuntime(
             deployTargetId,
             productionEnvironments,
             rollbackEnabled,
-            crossEnvironmentPromotionEnabled);
+            crossEnvironmentPromotionEnabled,
+            approvalIssuerKeys,
+            mcpProxyPackage,
+            mcpProxyIntegrity,
+            candidateReference);
     }
+
+    private static IReadOnlyDictionary<string, string> ParseApprovalIssuerKeys(string? value)
+    {
+        Dictionary<string, string> issuers = new(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return issuers;
+        }
+        foreach (string entry in value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int separator = entry.IndexOf('=');
+            if (separator < 1 || separator == entry.Length - 1)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid `{ProvisionApprovalIssuerKeysVariable}` entry. Expected issuer=base64-hmac-key entries separated by semicolons.");
+            }
+            string issuer = entry[..separator].Trim();
+            string key = entry[(separator + 1)..].Trim();
+            try
+            {
+                if (Convert.FromBase64String(key).Length < 32)
+                {
+                    throw new FormatException();
+                }
+            }
+            catch (FormatException)
+            {
+                throw new InvalidOperationException(
+                    $"Issuer `{issuer}` in `{ProvisionApprovalIssuerKeysVariable}` must use a base64 key of at least 32 bytes.");
+            }
+            if (!issuers.TryAdd(issuer, key))
+            {
+                throw new InvalidOperationException($"Duplicate approval issuer `{issuer}`.");
+            }
+        }
+        return issuers;
+    }
+
+    private static string? NormalizeOptionalValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
     /// Parses an experimental capability flag. Default-OFF: only an explicit truthy value
