@@ -21,7 +21,7 @@ public class JsonlAuditSinkTests
             string[] lines = File.ReadAllLines(path);
             Assert.Equal(2, lines.Length);
             using JsonDocument first = JsonDocument.Parse(lines[0]);
-            Assert.True(first.RootElement.TryGetProperty("AuditEventId", out _));
+            Assert.True(first.RootElement.TryGetProperty("auditEventId", out _));
             Assert.False(first.RootElement.TryGetProperty("OperationId", out _));
             Assert.Equal("describe_environment", first.RootElement.GetProperty("ToolName").GetString());
             Assert.False(first.RootElement.GetProperty("Mutated").GetBoolean());

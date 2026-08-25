@@ -1,9 +1,11 @@
+using System.Text.Json.Serialization;
+
 namespace Honua.DevOps.Agent.Operations.Audit;
 
 internal sealed record AuditRecord(
     DateTimeOffset Timestamp,
     string SessionId,
-    string AuditEventId,
+    [property: JsonPropertyName("auditEventId")] string AuditEventId,
     string ToolName,
     IReadOnlyDictionary<string, string> Arguments,
     string Status,
