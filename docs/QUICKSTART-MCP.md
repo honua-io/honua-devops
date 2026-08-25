@@ -219,6 +219,45 @@ live MCP surface 1:1):
 `provision_infrastructure`, `install_handoff`, `verify_install_handoff`,
 `explain_release_package`.
 
+### Governed provisioning and verified handoff
+
+`provision_infrastructure` returns a stable `provisioningOperationId`, exact
+saved-plan SHA-256, and one-time challenge. Apply/destroy additionally requires
+`approvalReceiptJson` using schema `honua.devops.provision-approval/v1`. The
+receipt issuer must appear in `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS`
+(`issuer=base64-hmac-key`, semicolon-separated; keys are secret-injected, never
+committed). Its base64 HMAC-SHA256 signature covers these newline-separated
+UTF-8 fields in order:
+
+`schemaVersion`, `approvalReceiptId`, `issuer`, `keyId` (first 16 hex chars of
+SHA-256 over the decoded key), `provisioningOperationId`, lowercase
+`planSha256`, `action`, `stack`, `environment`, `decision`, UTC `issuedAtUtc`
+and UTC `expiresAtUtc` in round-trip (`O`) format. Receipts must say `approved`,
+expire within one hour, and match the exact saved plan. Missing, expired,
+substituted, untrusted, malformed, or replayed receipts start no Terraform
+apply process.
+
+Handoff emission also requires immutable release inputs:
+
+```dotenv
+HONUA_DEVOPS_MCP_PROXY_PACKAGE=@honua/mcp-server@<exact-version>
+HONUA_DEVOPS_MCP_PROXY_INTEGRITY=sha512-<registry-integrity>
+HONUA_DEVOPS_CANDIDATE_REFERENCE=<exact-server-revision>
+```
+
+`install_handoff` consumes the exact `provisioningOperationId` and locally
+persisted DevOps apply evidence. It returns `install-handoff-written`, never
+ready. `verify_install_handoff` then resolves the secret reference only into
+the child proxy environment, checks npm integrity, HTTPS readiness,
+authenticated candidate identity, MCP initialize, paged `tools/list`, the
+Admin/analysis/esri-gp roster, and `honua_admin_server_status`. Only complete
+success writes `honua-install-verification.receipt.json` and the DevOps-owned
+`honua-devops-aws-ecs-provision-binding.json`; partial verification writes no
+ready binding. `secret://NAME`, AWS Secrets Manager references, and Azure Key
+Vault references resolve through the process environment, `aws`, or `az`
+respectively without placing credential material in arguments, handoff files,
+receipts, or audit records.
+
 > The mutating/decision tools `deploy_service_gitops` and
 > `record_gitops_proposal_decision` stay behind the same execution-mode/tier and
 > approval gates as the interactive agent (see "Safety model over MCP" below); in
