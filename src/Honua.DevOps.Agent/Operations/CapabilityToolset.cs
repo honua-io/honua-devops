@@ -210,6 +210,11 @@ internal static class CapabilityToolset
                 "install_handoff",
                 "Write a secretless, unverified CLI and honua-mcp-proxy handoff after provisioning. Requires the exact provisioningOperationId and operator-configured manifest pins for candidate, proxy version, and integrity. Returns install-handoff-written, never ready; verification is a separate evidence-producing step. Leave baseUrl empty to read only the honua_url Terraform output."),
             CreateTool(
+                (string handoffConfigPath, bool overwrite)
+                    => toolkit.VerifyInstallHandoffAsync(handoffConfigPath, overwrite),
+                "verify_install_handoff",
+                "Run the exact emitted pinned proxy command, resolve the admin secret reference only into its child environment, verify HTTPS health, Admin authentication, MCP initialize, the paged required Admin/analysis/esri-gp roster, and a harmless Admin status call. On complete success only, writes a content-addressed verification receipt and DevOps-produced aws-ecs provision binding joined to the stable provisioningOperationId."),
+            CreateTool(
                 (string releasePackageJson, string mode, string correlationId)
                     => releaseExplainer.ExplainReleasePackageAsync(releasePackageJson, mode, correlationId),
                 "explain_release_package",

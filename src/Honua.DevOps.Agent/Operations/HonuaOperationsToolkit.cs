@@ -28,7 +28,8 @@ internal sealed partial class HonuaOperationsToolkit(
     OperatorPolicyModel? policy = null,
     SupportGateway? supportGateway = null,
     string? defaultEdition = null,
-    IProvisioningProcessRunner? provisioningProcessRunner = null)
+    IProvisioningProcessRunner? provisioningProcessRunner = null,
+    IInstallHandoffVerifier? installHandoffVerifier = null)
 {
     // One actuation spine per toolkit instance (issue #153). It is the single write
     // authority for this session: every mutating backend call is issued under a grant it

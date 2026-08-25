@@ -2,7 +2,7 @@
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 35 operator tools the interactive agent
+MCP-capable host) can call the same 36 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 In MCP mode the client LLM does the reasoning, so **no model provider
@@ -59,9 +59,9 @@ On Windows the archive is a `.zip` and the executable is
 Verify the registration reached `tools/list`:
 
 ```bash
-claude mcp list                       # honua-devops should report 35 tools
+claude mcp list                       # honua-devops should report 36 tools
 ~/.local/share/honua-devops/Honua.DevOps.Agent --list-tools | head -1
-# honua-devops exposes 35 operator tools:
+# honua-devops exposes 36 operator tools:
 ```
 
 Upgrade by repeating the download/verify/extract over the same directory with a
@@ -116,7 +116,7 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 35 tools), or run the
+Verify with `claude mcp list` (the server should report 36 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
@@ -196,7 +196,7 @@ bottlenecks) with prioritized remediation and validation checks.
 
 ## Exposed tools (1:1 with the interactive agent)
 
-All 35 tools registered by `CapabilityToolset` (the
+All 36 tools registered by `CapabilityToolset` (the
 `ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
 live MCP surface 1:1):
 

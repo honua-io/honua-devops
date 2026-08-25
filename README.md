@@ -312,7 +312,7 @@ Register with Claude Code:
 claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
 ```
 
-All 35 operator tools are exposed 1:1 with the interactive agent — same
+All 36 operator tools are exposed 1:1 with the interactive agent — same
 handlers, same execution-mode/approval/edition gates, and one JSONL audit
 record per tool call (stdout-targeted audit evidence moves to stderr because
 stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)

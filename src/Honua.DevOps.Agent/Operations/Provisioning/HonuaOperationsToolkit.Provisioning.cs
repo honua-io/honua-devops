@@ -313,6 +313,20 @@ internal sealed partial class HonuaOperationsToolkit
             string nextAction = destroyPlan ? "destroy" : "apply";
             string challenge = $"{nextAction}:{canonicalStack}:{environment}:{planToken}";
 
+            ProvisioningLineage lineage = new(
+                savedPlan.Manifest.ProvisioningOperationId,
+                savedPlan.Manifest.PlanSha256,
+                approvalReceipt.ApprovalReceiptId,
+                ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
+                ActuatorReceiptReference: $"terraform://{savedPlan.Manifest.Stack}/{action}/{savedPlan.Manifest.PlanSha256}");
+            SaveProvisioningState(new ProvisioningState(
+                lineage,
+                savedPlan.Manifest.Stack,
+                savedPlan.Manifest.Environment,
+                action,
+                DateTimeOffset.UtcNow,
+                TeardownHandle: $"terraform://{savedPlan.Manifest.Stack}/{savedPlan.Manifest.Environment}/{savedPlan.Manifest.ProvisioningOperationId}"));
+
             return new OperationResponse(
                 Status: destroyPlan ? "terraform-destroy-plan-ready" : "terraform-plan-ready",
                 Summary: destroyPlan
@@ -482,6 +496,16 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Pass the exact provisioningOperationId; do not invent or substitute a server operation id."],
                 []);
         }
+        if (!TryLoadProvisioningState(rootProvisioningOperationId, out ProvisioningState? provisioningState)
+            || provisioningState!.Stack != canonicalStack
+            || provisioningState.Action != "apply")
+        {
+            return ProvisioningRefusal(
+                "provisioning-evidence-missing",
+                "No DevOps-produced successful apply evidence exists for this provisioningOperationId.",
+                ["Run the exact governed plan and apply before generating the install handoff."],
+                ["Caller-authored provisioning bindings are not accepted."]);
+        }
 
         string proxyPackage = runtime.McpProxyPackage?.Trim() ?? string.Empty;
         string proxyIntegrity = runtime.McpProxyIntegrity?.Trim() ?? string.Empty;
@@ -524,6 +548,7 @@ internal sealed partial class HonuaOperationsToolkit
         {
             schemaVersion = "honua.mcp-proxy.handoff/v1",
             rootProvisioningOperationId,
+            provisioningLineage = provisioningState.Lineage,
             candidateReference,
             proxyArtifact = new { package = proxyPackage, integrity = proxyIntegrity },
             command = "npx",
@@ -643,10 +668,166 @@ internal sealed partial class HonuaOperationsToolkit
                 "A broad secret-store identity could expose unrelated credentials even though this file is secretless."
             ],
             BackendSteps: steps,
-            ProvisioningLineage: new ProvisioningLineage(
-                rootProvisioningOperationId,
-                HandoffReceiptSha256: ComputeSha256(Encoding.UTF8.GetBytes(configBytes)),
-                RootProvisioningOperationId: rootProvisioningOperationId));
+            ProvisioningLineage: provisioningState.Lineage with
+            {
+                HandoffReceiptSha256 = ComputeSha256(Encoding.UTF8.GetBytes(configBytes)),
+                RootProvisioningOperationId = rootProvisioningOperationId
+            });
+    }
+
+    [Description("Run the exact emitted proxy handoff, resolve its secret reference only into the child process, and produce a content-addressed verified provision binding.")]
+    public async Task<OperationResponse> VerifyInstallHandoffAsync(
+        string handoffConfigPath,
+        bool overwrite,
+        CancellationToken cancellationToken = default)
+    {
+        string fullPath = Path.GetFullPath(handoffConfigPath.Trim());
+        if (!File.Exists(fullPath))
+        {
+            return ProvisioningRefusal("handoff-config-missing", "The emitted handoff configuration does not exist.", [], []);
+        }
+
+        InstallHandoffVerificationRequest request;
+        string configBytes;
+        try
+        {
+            configBytes = await File.ReadAllTextAsync(fullPath, cancellationToken);
+            using JsonDocument document = JsonDocument.Parse(configBytes);
+            JsonElement root = document.RootElement;
+            string ReadRequired(string name) => root.GetProperty(name).GetString()
+                ?? throw new InvalidOperationException($"Handoff field `{name}` is empty.");
+            string command = ReadRequired("command");
+            string[] arguments = root.GetProperty("args").EnumerateArray().Select(value => value.GetString()!).ToArray();
+            Dictionary<string, string> environment = root.GetProperty("env").EnumerateObject()
+                .ToDictionary(property => property.Name, property => property.Value.GetString()!, StringComparer.Ordinal);
+            string secretReference = root.GetProperty("secretRefs").GetProperty("HONUA_ADMIN_KEY").GetString()!;
+            JsonElement proxy = root.GetProperty("proxyArtifact");
+            string proxyPackage = proxy.GetProperty("package").GetString()!;
+            string proxyIntegrity = proxy.GetProperty("integrity").GetString()!;
+            List<string> requiredTools = [];
+            foreach (JsonElement family in root.GetProperty("capabilityContract").GetProperty("required").EnumerateArray())
+            {
+                requiredTools.AddRange(family.GetProperty("requiredTools").EnumerateArray().Select(value => value.GetString()!));
+            }
+            request = new InstallHandoffVerificationRequest(
+                command,
+                arguments,
+                environment,
+                secretReference,
+                environment["HONUA_BASE_URL"],
+                ReadRequired("candidateReference"),
+                proxyPackage,
+                proxyIntegrity,
+                ReadRequired("rootProvisioningOperationId"),
+                requiredTools.Distinct(StringComparer.Ordinal).ToArray());
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException or KeyNotFoundException)
+        {
+            return ProvisioningRefusal("handoff-config-invalid", Redaction.Scrub(exception.Message), [], []);
+        }
+
+        if (!string.Equals(request.ProxyPackage, runtime.McpProxyPackage, StringComparison.Ordinal)
+            || !string.Equals(request.ProxyIntegrity, runtime.McpProxyIntegrity, StringComparison.Ordinal)
+            || !string.Equals(request.CandidateReference, runtime.CandidateReference, StringComparison.Ordinal))
+        {
+            return ProvisioningRefusal(
+                "handoff-pin-mismatch",
+                "The handoff candidate/proxy pins do not match the current operator release configuration.",
+                ["Regenerate the handoff from the current manifest pins."],
+                []);
+        }
+        if (!TryLoadProvisioningState(request.ProvisioningOperationId, out ProvisioningState? state))
+        {
+            return ProvisioningRefusal(
+                "provisioning-evidence-missing",
+                "The handoff cannot be joined to DevOps-produced apply evidence.",
+                [], []);
+        }
+
+        IInstallHandoffVerifier verifier = installHandoffVerifier ?? SystemInstallHandoffVerifier.Instance;
+        InstallHandoffVerificationResult verification = await verifier.VerifyAsync(request, cancellationToken);
+        if (!verification.Succeeded)
+        {
+            return new OperationResponse(
+                verification.Status,
+                verification.Detail,
+                ["No verified handoff receipt or provision binding was emitted."],
+                ["Correct the reported health/auth/proxy/roster failure and rerun verification."],
+                ["verification failed closed"],
+                ["Partial verification is not installation readiness."],
+                BackendSteps: verification.Steps,
+                ProvisioningLineage: state!.Lineage);
+        }
+
+        string directory = Path.GetDirectoryName(fullPath)!;
+        string receiptPath = Path.Combine(directory, "honua-install-verification.receipt.json");
+        string bindingPath = Path.Combine(directory, "aws-ecs-provision-binding.json");
+        if (!overwrite && (File.Exists(receiptPath) || File.Exists(bindingPath)))
+        {
+            return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
+        }
+
+        string handoffSha = ComputeSha256(Encoding.UTF8.GetBytes(configBytes));
+        string verificationCore = JsonSerializer.Serialize(new
+        {
+            schemaVersion = "honua.devops.install-handoff-verification/v1",
+            provisioningOperationId = request.ProvisioningOperationId,
+            handoffSha256 = handoffSha,
+            request.CandidateReference,
+            request.ProxyPackage,
+            request.ProxyIntegrity,
+            secretReferenceSha256 = ComputeSha256(Encoding.UTF8.GetBytes(request.AdminKeySecretReference)),
+            verification.ServerIdentity,
+            observedTools = verification.ObservedTools,
+            verifiedAtUtc = DateTimeOffset.UtcNow
+        });
+        string verificationSha = ComputeSha256(Encoding.UTF8.GetBytes(verificationCore));
+        string verificationId = $"urn:sha256:{verificationSha}";
+        string receiptBytes = JsonSerializer.Serialize(new
+        {
+            receiptId = verificationId,
+            receiptSha256 = verificationSha,
+            evidence = JsonSerializer.Deserialize<JsonElement>(verificationCore)
+        }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+
+        ProvisioningLineage completedLineage = state!.Lineage with
+        {
+            HandoffReceiptSha256 = handoffSha,
+            HandoffVerificationReceiptId = verificationId,
+            HandoffVerificationReceiptSha256 = verificationSha,
+            RootProvisioningOperationId = request.ProvisioningOperationId
+        };
+        string bindingBytes = JsonSerializer.Serialize(new
+        {
+            schemaVersion = "honua.aws-ecs-provision-binding/v1",
+            lineage = completedLineage,
+            endpoint = request.BaseUrl,
+            candidateReference = request.CandidateReference,
+            proxyArtifact = new { package = request.ProxyPackage, integrity = request.ProxyIntegrity },
+            secretReferenceSha256 = ComputeSha256(Encoding.UTF8.GetBytes(request.AdminKeySecretReference)),
+            handoffSha256 = handoffSha,
+            verificationReceiptId = verificationId,
+            verificationReceiptSha256 = verificationSha,
+            state.TeardownHandle
+        }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+        await File.WriteAllTextAsync(receiptPath, receiptBytes, cancellationToken);
+        await File.WriteAllTextAsync(bindingPath, bindingBytes, cancellationToken);
+        ProtectSavedPlan(receiptPath);
+        ProtectSavedPlan(bindingPath);
+        SaveProvisioningState(state with { Lineage = completedLineage });
+
+        List<OperationBackendStep> steps = [.. verification.Steps,
+            new("write-handoff-verification-receipt", receiptPath, true, "content-addressed receipt written", verificationId, true),
+            new("write-aws-ecs-provision-binding", bindingPath, true, "DevOps-produced binding written", verificationSha, true)];
+        return new OperationResponse(
+            "install-handoff-verified",
+            "The exact pinned proxy handoff passed health, auth, MCP roster, and Admin status verification.",
+            [$"Verification receipt: {receiptPath}", $"Provision binding: {bindingPath}", $"Receipt id: {verificationId}"],
+            ["Join this binding into the release-owned candidate receipt."],
+            ["health ready", "Admin authentication", "MCP initialize", "paged required roster", "Admin status call"],
+            ["This local verification is not a substitute for the disposable AWS live-cell acceptance run."],
+            BackendSteps: steps,
+            ProvisioningLineage: completedLineage);
     }
 
     private OperationResponse? AuthorizeTerraformMutation(string action, string environment)
@@ -998,12 +1179,7 @@ internal sealed partial class HonuaOperationsToolkit
                     "Losing or exposing Terraform state can prevent safe reconciliation and disclose sensitive metadata."
                 ],
                 BackendSteps: steps,
-                ProvisioningLineage: new ProvisioningLineage(
-                    savedPlan.Manifest.ProvisioningOperationId,
-                    savedPlan.Manifest.PlanSha256,
-                    approvalReceipt.ApprovalReceiptId,
-                    ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
-                    ActuatorReceiptReference: $"terraform://{savedPlan.Manifest.Stack}/{action}/{savedPlan.Manifest.PlanSha256}"));
+                ProvisioningLineage: lineage);
         }
         finally
         {
@@ -1025,6 +1201,47 @@ internal sealed partial class HonuaOperationsToolkit
 
     private static string GetSavedPlanRoot()
         => Path.GetFullPath(Path.Combine(Path.GetTempPath(), "honua-devops-terraform-plans"));
+
+    private static string GetProvisioningStateRoot()
+        => Path.GetFullPath(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "honua-devops",
+            "provisioning"));
+
+    private static string GetProvisioningStatePath(string provisioningOperationId)
+        => Path.Combine(
+            GetProvisioningStateRoot(),
+            ComputeSha256(Encoding.UTF8.GetBytes(provisioningOperationId)) + ".json");
+
+    private static void SaveProvisioningState(ProvisioningState state)
+    {
+        string root = GetProvisioningStateRoot();
+        Directory.CreateDirectory(root);
+        ProtectDirectory(root);
+        string destination = GetProvisioningStatePath(state.Lineage.ProvisioningOperationId);
+        string temporary = destination + $".{Guid.NewGuid():n}.tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        ProtectSavedPlan(temporary);
+        File.Move(temporary, destination, overwrite: true);
+        ProtectSavedPlan(destination);
+    }
+
+    private static bool TryLoadProvisioningState(string provisioningOperationId, out ProvisioningState? state)
+    {
+        state = null;
+        try
+        {
+            string path = GetProvisioningStatePath(provisioningOperationId);
+            if (!File.Exists(path)) return false;
+            state = JsonSerializer.Deserialize<ProvisioningState>(File.ReadAllText(path));
+            return state is not null
+                && string.Equals(state.Lineage.ProvisioningOperationId, provisioningOperationId, StringComparison.Ordinal);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
 
     private static void SavePlanManifest(string directory, SavedTerraformPlanManifest manifest)
     {
@@ -1371,6 +1588,14 @@ internal sealed partial class HonuaOperationsToolkit
         SavedTerraformPlanManifest Manifest,
         string PlanFile,
         string Directory);
+
+    private sealed record ProvisioningState(
+        ProvisioningLineage Lineage,
+        string Stack,
+        string Environment,
+        string Action,
+        DateTimeOffset AppliedAtUtc,
+        string TeardownHandle);
 
     private static OperationBackendStep ToBackendStep(
         string name,

@@ -385,12 +385,28 @@ public sealed class TerraformProvisioningTests
     {
         using TerraformTestRoot root = new();
         FakeProvisioningProcessRunner runner = new(
+            Success("initialized"),
+            Success("Plan: 1 to add, 0 to change, 0 to destroy."),
+            Success(TerraformShowOutput),
+            Success("Apply complete! Resources: 1 added, 0 changed, 0 destroyed."),
             Success("{\"honua_url\":{\"sensitive\":false,\"type\":\"string\",\"value\":\"https://honua.example.test\"}}"));
         using BackendGateway gateway = CreateGateway();
-        HonuaOperationsToolkit toolkit = new(
+        HonuaOperationsToolkit planner = new(
             CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
             gateway,
             provisioningProcessRunner: runner);
+        OperationResponse plan = await planner.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "plan", "{\"environment\":\"dev\"}", false, string.Empty);
+        string challenge = ExtractChallenge(plan, "confirmation=");
+        string approval = CreateApprovalReceipt(plan, "apply");
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(root.Path, ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv),
+            gateway,
+            DirectAllowedPolicy(),
+            provisioningProcessRunner: runner);
+        OperationResponse apply = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "apply", "{\"environment\":\"dev\"}", true, challenge, approval);
+        Assert.Equal("infrastructure-provisioned", apply.Status);
         string outputDirectory = System.IO.Path.Combine(root.Path, "handoff");
         const string secretRef = "arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-admin";
 
@@ -400,7 +416,7 @@ public sealed class TerraformProvisioningTests
             secretRef,
             outputDirectory,
             overwrite: false,
-            provisioningOperationId: "urn:honua:provisioning:test-handoff");
+            provisioningOperationId: apply.ProvisioningLineage!.ProvisioningOperationId);
 
         Assert.Equal("install-handoff-written", response.Status);
         string proxyConfig = await File.ReadAllTextAsync(System.IO.Path.Combine(outputDirectory, "honua-mcp-proxy.handoff.json"));
@@ -423,8 +439,63 @@ public sealed class TerraformProvisioningTests
         Assert.Contains("HONUA_ADMIN_KEY is intentionally absent", envExample, StringComparison.Ordinal);
         Assert.Contains("Required server capabilities: admin", envExample, StringComparison.Ordinal);
         Assert.DoesNotContain("do-not-log", proxyConfig, StringComparison.Ordinal);
-        Assert.Single(runner.Calls);
-        Assert.Equal(["output", "-json"], runner.Calls[0].Arguments);
+        Assert.Equal(5, runner.Calls.Count);
+        Assert.Equal(["output", "-json"], runner.Calls[4].Arguments);
+    }
+
+    [Fact]
+    public async Task VerifyHandoff_EmitsDevOpsProducedBindingOnlyAfterEveryProbePasses()
+    {
+        using TerraformTestRoot root = new();
+        FakeProvisioningProcessRunner runner = new(
+            Success("initialized"),
+            Success("Plan: 1 to add, 0 to change, 0 to destroy."),
+            Success(TerraformShowOutput),
+            Success("Apply complete!"));
+        using BackendGateway gateway = CreateGateway();
+        HonuaOperationsToolkit planner = new(
+            CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan), gateway,
+            provisioningProcessRunner: runner);
+        OperationResponse plan = await planner.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "plan", "{\"environment\":\"dev\"}", false, string.Empty);
+        string challenge = ExtractChallenge(plan, "confirmation=");
+        FakeInstallHandoffVerifier verifier = new(succeed: true);
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime(root.Path, ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv), gateway,
+            DirectAllowedPolicy(), provisioningProcessRunner: runner, installHandoffVerifier: verifier);
+        OperationResponse apply = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "apply", "{\"environment\":\"dev\"}", true, challenge,
+            CreateApprovalReceipt(plan, "apply"));
+        string handoffDirectory = System.IO.Path.Combine(root.Path, "verified-handoff");
+        OperationResponse handoff = await toolkit.InstallHandoffAsync(
+            "aws-ecs", "https://honua.example.test", "secret://HONUA_TEST_ADMIN_KEY",
+            handoffDirectory, false, apply.ProvisioningLineage!.ProvisioningOperationId);
+
+        OperationResponse verified = await toolkit.VerifyInstallHandoffAsync(
+            System.IO.Path.Combine(handoffDirectory, "honua-mcp-proxy.handoff.json"), false);
+
+        Assert.Equal("install-handoff-verified", verified.Status);
+        Assert.NotNull(verifier.Request);
+        Assert.Equal("@honua/mcp-server@2026.1.1", verifier.Request!.ProxyPackage);
+        string binding = await File.ReadAllTextAsync(System.IO.Path.Combine(handoffDirectory, "aws-ecs-provision-binding.json"));
+        Assert.Contains(apply.ProvisioningLineage.ProvisioningOperationId, binding, StringComparison.Ordinal);
+        Assert.Contains("approvalReceiptId", binding, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("handoffVerificationReceiptId", binding, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("test-admin-secret", binding, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyHandoff_FailedProbeEmitsNoReadyBinding()
+    {
+        using TerraformTestRoot root = new();
+        string config = System.IO.Path.Combine(root.Path, "missing.json");
+        using BackendGateway gateway = CreateGateway();
+        HonuaOperationsToolkit toolkit = new(CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan), gateway);
+
+        OperationResponse response = await toolkit.VerifyInstallHandoffAsync(config, false);
+
+        Assert.Equal("handoff-config-missing", response.Status);
+        Assert.False(File.Exists(System.IO.Path.Combine(root.Path, "aws-ecs-provision-binding.json")));
     }
 
     private static string ExtractChallenge(OperationResponse response, string marker)
@@ -615,6 +686,29 @@ Plan: 7 to add, 0 to change, 0 to destroy.
                 }
             }
             return Task.FromResult(result);
+        }
+    }
+
+    private sealed class FakeInstallHandoffVerifier(bool succeed) : IInstallHandoffVerifier
+    {
+        internal InstallHandoffVerificationRequest? Request { get; private set; }
+
+        public Task<InstallHandoffVerificationResult> VerifyAsync(
+            InstallHandoffVerificationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Request = request;
+            OperationBackendStep step = new(
+                "fake-full-handoff-verification", "mcp://fixture", succeed,
+                succeed ? "all probes passed" : "roster missing", "<redacted>", false);
+            return Task.FromResult(new InstallHandoffVerificationResult(
+                succeed,
+                succeed ? "install-handoff-verified" : "mcp-roster-incomplete",
+                succeed ? "verified" : "missing required tool",
+                succeed ? "server-fixture" : null,
+                succeed ? request.RequiredTools : [],
+                [step]));
         }
     }
 
