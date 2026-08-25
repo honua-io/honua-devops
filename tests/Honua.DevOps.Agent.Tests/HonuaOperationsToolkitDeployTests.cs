@@ -444,9 +444,9 @@ public class HonuaOperationsToolkitDeployTests
             ExecutionTier.ExecuteLowerEnv,
             "honua-gitops",
             AllowedEnvironments: ["dev", "staging", "production"],
-            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRepository: "https://github.com/honua-io/honua-iac",
             TerraformRef: "main",
-            TerraformLocalPath: "/tmp/honua-terraform",
+            TerraformLocalPath: "/tmp/honua-iac",
             TerraformDeploymentTargets: ["eks", "aks"]);
         HonuaOperationsToolkit toolkit = new(runtime, gateway, DirectAllowedPolicy());
 
@@ -585,9 +585,9 @@ public class HonuaOperationsToolkitDeployTests
             executionTier,
             gitOpsTool,
             AllowedEnvironments: ["dev", "staging", "prod"],
-            TerraformRepository: "https://github.com/honua-io/honua-terraform",
+            TerraformRepository: "https://github.com/honua-io/honua-iac",
             TerraformRef: "main",
-            TerraformLocalPath: "/tmp/honua-terraform",
+            TerraformLocalPath: "/tmp/honua-iac",
             TerraformDeploymentTargets: ["eks", "aks"],
             DeployTargetId: deployTargetId,
             ProductionEnvironments: null,

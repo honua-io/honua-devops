@@ -56,7 +56,7 @@ internal sealed record OperationRuntime(
         GitOpsTool: "honua-gitops",
         AllowedEnvironments: DefaultEnvironments,
         TerraformRepository: "honua-iac",
-        TerraformRef: "main",
+        TerraformRef: "trunk",
         TerraformLocalPath: string.Empty,
         TerraformDeploymentTargets: []);
 
@@ -80,13 +80,13 @@ internal sealed record OperationRuntime(
         string? terraformRepository = Environment.GetEnvironmentVariable(TerraformRepositoryVariable)?.Trim();
         if (string.IsNullOrWhiteSpace(terraformRepository))
         {
-            terraformRepository = "https://github.com/honua-io/honua-terraform";
+            terraformRepository = "https://github.com/honua-io/honua-iac";
         }
 
         string? terraformRef = Environment.GetEnvironmentVariable(TerraformRefVariable)?.Trim();
         if (string.IsNullOrWhiteSpace(terraformRef))
         {
-            terraformRef = "main";
+            terraformRef = "trunk";
         }
 
         string terraformLocalPath = ResolveTerraformLocalPath(
@@ -237,7 +237,7 @@ internal sealed record OperationRuntime(
             return configuredPath.Trim();
         }
 
-        string siblingPath = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "..", "honua-terraform"));
+        string siblingPath = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "..", "honua-iac"));
         return siblingPath;
     }
 

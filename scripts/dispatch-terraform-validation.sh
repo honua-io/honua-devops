@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO="honua-io/honua-terraform"
+REPO="honua-io/honua-iac"
 CLOUD="both"
 PROFILE="ephemeral"
 APPLY_CONFIRMATION=""

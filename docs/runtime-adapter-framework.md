@@ -9,7 +9,7 @@ Runtime adapters let the operator reason about different deployment targets thro
 The adapter framework exists so the operator can:
 
 - validate target-specific prerequisites
-- plan and apply infrastructure changes through `honua-terraform`
+- plan and apply infrastructure changes through `honua-iac`
 - plan and apply release changes through `honua-gitops` and, where appropriate, `honua-helm`
 - verify rollout health, rollback readiness, and drift status through a consistent contract
 - export actual state without hiding target-specific gaps
@@ -117,7 +117,7 @@ Characteristics:
 
 Adapters consume the current platform backends this way:
 
-- `honua-terraform`: infra planning and apply contract
+- `honua-iac`: infra planning and apply contract
 - `honua-helm`: Kubernetes release packaging and rollout semantics
 - `honua-server` control-plane APIs: service-state reconciliation and operational evidence
 - OTEL and Honua metrics: rollout verification, drift, and incident evidence

@@ -277,9 +277,9 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
         tier,
         "honua-gitops",
         ["dev", "staging", "prod"],
-        "https://github.com/honua-io/honua-terraform",
+        "https://github.com/honua-io/honua-iac",
         "trunk",
-        "/tmp/honua-terraform",
+        "/tmp/honua-iac",
         ["eks", "aks"]);
 
     private static BackendConfiguration CreateBackendConfiguration() => new(

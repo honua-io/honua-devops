@@ -11,16 +11,16 @@ Legend:
 
 | Runtime | Mode | Validation Path | Launch Class | Expected Result |
 | --- | --- | --- | --- | --- |
-| AWS Lambda | AOT | `honua-terraform/scripts/run-aws-terraform-integration.sh --stack serverless --aot` | Must Pass | Pass |
-| AWS Lambda | JIT | `honua-terraform/scripts/run-aws-terraform-integration.sh --stack serverless` | Experimental | Pass or documented caveat |
-| AWS ECS | JIT | `honua-terraform/scripts/run-aws-terraform-integration.sh --stack ecs` | Must Pass | Pass |
-| AWS ECS | AOT | `honua-terraform/scripts/run-aws-terraform-integration.sh --stack ecs --aot` | Experimental | Pass or documented caveat |
-| Azure Functions | AOT | `honua-terraform/scripts/run-azure-terraform-integration.sh --stack functions --aot` | Must Pass | Pass |
-| Azure Functions | JIT | `honua-terraform/scripts/run-azure-terraform-integration.sh --stack functions` | Experimental | Pass or documented caveat |
-| Azure Container Apps | JIT | `honua-terraform/scripts/run-azure-terraform-integration.sh --stack aca` | Must Pass | Pass |
-| Azure Container Apps | AOT | `honua-terraform/scripts/run-azure-terraform-integration.sh --stack aca --aot` | Experimental | Pass or documented caveat |
-| Kubernetes (Helm) | JIT | `honua-terraform/scripts/run-k8s-terraform-integration.sh` | Must Pass | Pass |
-| Kubernetes (Helm) | AOT | `honua-terraform/scripts/run-k8s-terraform-integration.sh --aot` | Experimental | Pass or documented caveat |
+| AWS Lambda | AOT | `honua-iac/scripts/run-aws-terraform-integration.sh --stack serverless --aot` | Must Pass | Pass |
+| AWS Lambda | JIT | `honua-iac/scripts/run-aws-terraform-integration.sh --stack serverless` | Experimental | Pass or documented caveat |
+| AWS ECS | JIT | `honua-iac/scripts/run-aws-terraform-integration.sh --stack ecs` | Must Pass | Pass |
+| AWS ECS | AOT | `honua-iac/scripts/run-aws-terraform-integration.sh --stack ecs --aot` | Experimental | Pass or documented caveat |
+| Azure Functions | AOT | `honua-iac/scripts/run-azure-terraform-integration.sh --stack functions --aot` | Must Pass | Pass |
+| Azure Functions | JIT | `honua-iac/scripts/run-azure-terraform-integration.sh --stack functions` | Experimental | Pass or documented caveat |
+| Azure Container Apps | JIT | `honua-iac/scripts/run-azure-terraform-integration.sh --stack aca` | Must Pass | Pass |
+| Azure Container Apps | AOT | `honua-iac/scripts/run-azure-terraform-integration.sh --stack aca --aot` | Experimental | Pass or documented caveat |
+| Kubernetes (Helm) | JIT | `honua-iac/scripts/run-k8s-terraform-integration.sh` | Must Pass | Pass |
+| Kubernetes (Helm) | AOT | `honua-iac/scripts/run-k8s-terraform-integration.sh --aot` | Experimental | Pass or documented caveat |
 
 ## Validation Config Profiles
 

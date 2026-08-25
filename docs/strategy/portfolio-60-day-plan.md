@@ -56,7 +56,7 @@ The platform is materially more built than the public narrative claims; the back
 | **Crown jewel (production-shaped)** | honua-server | The platform. 1,015 .NET tests, 40 CI workflows, broad protocol matrix, first-class migration evidence. |
 | **Released alpha** | honua-sdk-js, honua-sdk-dotnet, honua-sdk-python | Three language SDKs, all Apache-2.0, all on staging release trains |
 | **Active product surfaces** | honua-portal, honua-mobile, honua-devops | UX, mobile, AI operator — each independent product |
-| **Stable infrastructure** | honua-helm, honua-terraform | Deployment substrate |
+| **Stable infrastructure** | honua-helm, honua-iac | Deployment substrate |
 | **Skeleton / commercial packaging** | honua-marketplace | Bootstrap stage; blocks the marketplace path |
 | **Internal tooling** | honua-agentflow, honua-support | Dev orchestration + support API |
 | **Content** | honua-sales, honua-site | GTM docs + marketing surface |
@@ -170,8 +170,8 @@ A coordinated four-phase sequence. Each phase has one strategic outcome, not a f
 
 1. **honua-marketplace #1-5 in sequence.** AWS listing (#1), Azure listing (#2), private-offer assets (#3), license/entitlement activation path (#4), first marketplace deploy proof (#5).
 2. **honua-helm #5** completed to operator-handoff state — chart contract, upgrade safety, smoke validation.
-3. **honua-terraform #1 + #2** marketplace IaC published.
-4. **honua-terraform #22 + #23** (backup/restore + RTO/RPO drills) ship as procurement-readiness artifacts.
+3. **honua-iac #1 + #2** marketplace IaC published.
+4. **honua-iac #22 + #23** (backup/restore + RTO/RPO drills) ship as procurement-readiness artifacts.
 
 **Justification:** marketplace listings are the only credible distribution channel that bypasses the SLG procurement-vehicle problem. AWS Marketplace can be purchased via existing GSA contracts; Azure Marketplace via existing Microsoft state agreements. Without these, every sale is a 12-month contract-vehicle fight. With them, the contract-vehicle fight is resolved before we start the conversation.
 
@@ -239,7 +239,7 @@ Founder bandwidth is finite; explicit deferral is cheaper than implicit drift.
 |---|---|---|---|
 | **honua-mobile-sdk** repo | 3 commits ever (last March 9), 0 open issues, superseded by honua-mobile | **Archive.** Replace README with redirect to honua-mobile; fold any IoT-specific scope (the differentiator vs honua-mobile) into a feature flag in honua-mobile if it matters. | Stops appearing in standing reviews. Removes ambiguity about which mobile repo to file issues against. |
 | **honua-server enterprise GA wishlist** — #341 federated queries, #346 multi-tenancy, #347 plugin SDK, #357 Kafka/NATS event bus, #355 app-level rate limiting, #341/#346/#354 | All P4/GA, no execution lane | **Group under one umbrella "Enterprise GA — post-first-pilot" epic with explicit "do not start before customer X signs" criteria.** Remove individual issues from standing review. | Keeps the deferred surface visible without consuming mental energy at standups. Provides a single trigger criterion ("we have a paying customer requesting X") for promotion. |
-| **honua-terraform managed-container evaluations** — #11 EKS Fargate, #12 AKS Virtual Nodes, #13 AWS App Runner | P3 spikes | **Punt to "evaluate after first paying customer".** | Current Kubernetes-via-Helm deployment path is sufficient for the marketplace launch. These are runway optimizations, not product blockers. Premature optimization before we know what customers actually deploy. |
+| **honua-iac managed-container evaluations** — #11 EKS Fargate, #12 AKS Virtual Nodes, #13 AWS App Runner | P3 spikes | **Punt to "evaluate after first paying customer".** | Current Kubernetes-via-Helm deployment path is sufficient for the marketplace launch. These are runway optimizations, not product blockers. Premature optimization before we know what customers actually deploy. |
 
 **Justification for explicit deferral over silent neglect:** without an explicit punt, these items show up in every backlog grooming pass and force micro-decisions that aren't load-bearing. Naming them deferred-with-criteria removes them from the cognitive surface area while preserving optionality.
 
@@ -434,7 +434,7 @@ Enterprise GA wishlist (to umbrella-defer):
 
 All five filed 2026-05-05. Sequence #4 → #5 → #1/#2/#3.
 
-### honua-terraform (13 open)
+### honua-iac (13 open)
 
 - **#30** Deploy seeded cloud demo services — P1, formerly blocked on server #965; downstream validation remains
 - **#24** VPC quota exhaustion fix — P1

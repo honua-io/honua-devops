@@ -99,10 +99,10 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE` (`true` default; when true, accepted webhooks trigger read-only ticket triage output)
 - `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
 - `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`)
-- `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-terraform`)
-- `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `main`)
+- `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-iac`)
+- `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `trunk`)
 - `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
-- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-terraform`)
+- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-iac`)
 - `HONUA_DEVOPS_DEPLOY_TARGET_ID` (optional Honua deploy-control target; enables real `/api/v1/admin/deploy/*` preflight, plan, and operation calls)
 
 ## Backend Integration
