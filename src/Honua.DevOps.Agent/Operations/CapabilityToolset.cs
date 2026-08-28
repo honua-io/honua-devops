@@ -208,7 +208,7 @@ internal static class CapabilityToolset
                 (string stack, string baseUrl, string adminKeySecretRef, string outputDirectory, bool overwrite, string provisioningOperationId)
                     => toolkit.InstallHandoffAsync(stack, baseUrl, adminKeySecretRef, outputDirectory, overwrite, provisioningOperationId),
                 "install_handoff",
-                "Write a secretless, unverified CLI and honua-mcp-proxy handoff after provisioning. Requires the exact provisioningOperationId and operator-configured manifest pins for candidate, proxy version, and integrity. Returns install-handoff-written, never ready; verification is a separate evidence-producing step. Leave baseUrl empty to read only the honua_url Terraform output."),
+                "Write a secretless, unverified CLI and honua-mcp-proxy handoff after provisioning. Requires the exact provisioningOperationId and operator-configured manifest pins for candidate, proxy version, and integrity. Returns install-handoff-written, never ready; verification is a separate evidence-producing step. Leave baseUrl and adminKeySecretRef empty: both are read from the stack's honua.operator-contract/v1 projection captured at apply time. Supplying either is recorded in the handoff and binding as a caller-override."),
             CreateTool(
                 (string handoffConfigPath, bool overwrite)
                     => toolkit.VerifyInstallHandoffAsync(handoffConfigPath, overwrite),

@@ -70,6 +70,7 @@ internal sealed class SystemProvisioningProcessRunner : IProvisioningProcessRunn
         IReadOnlyList<string> arguments,
         string workingDirectory,
         TimeSpan timeout,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellationToken = default)
     {
         ProcessStartInfo startInfo = new()
@@ -85,6 +86,14 @@ internal sealed class SystemProvisioningProcessRunner : IProvisioningProcessRunn
         foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        if (environment is not null)
+        {
+            foreach (KeyValuePair<string, string> entry in environment)
+            {
+                startInfo.Environment[entry.Key] = entry.Value;
+            }
         }
 
         using Process process = new() { StartInfo = startInfo };

@@ -221,21 +221,49 @@ live MCP surface 1:1):
 
 ## Governed provisioning and verified handoff
 
-`provision_infrastructure` returns a stable `provisioningOperationId`, exact
-saved-plan SHA-256, and one-time challenge. Apply/destroy additionally requires
-`approvalReceiptJson` using schema `honua.devops.provision-approval/v1`. The
-receipt issuer must appear in `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS`
+Terraform is never invoked directly. Every plan and apply runs through the
+honua-iac governed execution substrate — `scripts/terraform-exact-plan.sh` and
+`scripts/terraform-exact-apply.sh` in the checkout named by
+`HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` — which owns backend resolution, the
+short-lived-identity check, the saved-plan binding, the one-time claim, and the
+fail-closed refusal matrix. A checkout without those wrappers is refused with
+`iac-substrate-unavailable`; honua-devops does not fall back to hand-rolled
+Terraform argv.
+
+When the substrate refuses, its reason code is the tool status:
+`iac-refused-state-serial-drift`, `iac-refused-account-mismatch`,
+`iac-refused-backend-substituted`, and so on. A refusal happens **before any
+mutation**, so nothing was changed and the same approved plan can be retried
+once the named cause is fixed. See
+`docs/devops/terraform-exact-plan-contract.md` in honua-iac for the full matrix.
+
+`provision_infrastructure` returns a stable `provisioningOperationId`, the exact
+saved-plan SHA-256, the **`plan_metadata_digest` an approval must bind**, the
+backend config digest, the prior state lineage/serial, and the execution role
+identity, plus a one-time challenge.
+
+Apply/destroy additionally requires `approvalReceiptJson` using schema
+`honua.devops.provision-approval/v1` (`contracts/honua-devops-provision-approval.v1.schema.json`).
+The receipt issuer must appear in `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS`
 (`issuer=base64-hmac-key`, semicolon-separated; keys are secret-injected, never
 committed). Its base64 HMAC-SHA256 signature covers these newline-separated
 UTF-8 fields in order:
 
 `schemaVersion`, `approvalReceiptId`, `issuer`, `keyId` (first 16 hex chars of
 SHA-256 over the decoded key), `provisioningOperationId`, lowercase
-`planSha256`, `action`, `stack`, `environment`, `decision`, UTC `issuedAtUtc`
-and UTC `expiresAtUtc` in round-trip (`O`) format. Receipts must say `approved`,
-expire within one hour, and match the exact saved plan. Missing, expired,
-substituted, untrusted, malformed, or replayed receipts start no Terraform
-apply process.
+`planSha256`, lowercase `planMetadataDigest`, `action`, `stack`, `environment`,
+`decision`, UTC `issuedAtUtc` and UTC `expiresAtUtc` in round-trip (`O`) format.
+
+`planMetadataDigest` is the value the apply wrapper checks against
+`--approved-digest`. It transitively binds the backend, target account and role,
+inputs, source revision and prior state — not just the plan bytes — so an
+approval that omits it cannot gate the mutation the substrate performs.
+honua-devops also sets `HONUA_IAC_REQUIRE_APPROVAL=1` on the wrapper itself, so
+a missing approval fails closed inside the substrate as well.
+
+Receipts must say `approved`, expire within one hour, and match the exact saved
+plan. Missing, expired, substituted, untrusted, malformed, or replayed receipts
+start no Terraform apply process.
 
 Handoff emission also requires immutable release inputs:
 
@@ -246,8 +274,17 @@ HONUA_DEVOPS_CANDIDATE_REFERENCE=<exact-server-revision>
 ```
 
 `install_handoff` consumes the exact `provisioningOperationId` and locally
-persisted DevOps apply evidence. It returns `install-handoff-written`, never
-ready. `verify_install_handoff` then resolves the secret reference only into
+persisted DevOps apply evidence. Leave `baseUrl` and `adminKeySecretRef` empty:
+both come from the stack's own `honua.operator-contract/v1` projection, captured
+and schema-validated at apply time. Supplying either is still permitted — a
+development cell may sit behind a tunnel — but it is recorded as
+`endpointSource: caller-override` / `adminKeySecretRefSource: caller-override`
+in both the handoff and the binding, alongside what the stack actually reported.
+A root that projects no operator contract is refused rather than falling back to
+a scalar URL output, and an `unqualified` contract is refused outright.
+
+It returns `install-handoff-written`, never ready.
+`verify_install_handoff` then resolves the secret reference only into
 the child proxy environment, checks npm integrity, HTTPS readiness,
 authenticated candidate identity, MCP initialize, paged `tools/list`, the
 Admin/analysis/esri-gp roster, and `honua_admin_server_status`. Only complete
@@ -257,6 +294,17 @@ ready binding. `secret://NAME`, AWS Secrets Manager references, and Azure Key
 Vault references resolve through the process environment, `aws`, or `az`
 respectively without placing credential material in arguments, handoff files,
 receipts, or audit records.
+
+The binding names which state, under which identity, produced the claim: the
+backend config digest, workspace and object key; the state lineage and serial
+before and after; and the short-lived assumed-role ARN, account and partition.
+It carries the honua-iac execution receipt verbatim, and
+`lineage.actuatorReceiptReference` is the SHA-256 of exactly those bytes, so a
+holder can re-hash and confirm the reference resolves. `teardownHandle` names
+the root, workspace, backend object and state lineage a destroy would act on,
+rather than an opaque string. All three emitted artifacts are validated against
+their published `contracts/` schemas **before** they are written; a document
+that fails its own contract is never created.
 
 > The mutating/decision tools `deploy_service_gitops` and
 > `record_gitops_proposal_decision` stay behind the same execution-mode/tier and
