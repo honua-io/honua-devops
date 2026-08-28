@@ -58,7 +58,7 @@ internal sealed partial class HonuaOperationsToolkit
         "redis_connection_string"
     };
 
-    [Description("Plan, apply, or break-glass destroy an allowlisted honua-iac stack with strong argv invocation and plan-before-mutation gates.")]
+    [Description("Plan, apply, or break-glass destroy an allowlisted honua-iac stack through the governed exact-plan substrate, with plan-before-mutation and approval gates.")]
     public async Task<OperationResponse> ProvisionInfrastructureAsync(
         string stack,
         string size,
@@ -69,29 +69,30 @@ internal sealed partial class HonuaOperationsToolkit
         string approvalReceiptJson = "",
         CancellationToken cancellationToken = default)
     {
-        const string canonicalStack = "aws-ecs";
-        const string canonicalSize = "small";
         string normalizedStack = NormalizeToken(stack);
         string normalizedSize = NormalizeToken(size);
         string normalizedAction = NormalizeToken(action);
 
-        if (!string.Equals(normalizedStack, canonicalStack, StringComparison.Ordinal))
+        if (!ProvisioningStackCatalog.TryResolve(normalizedStack, out ProvisioningStack? provisioningStack))
         {
             return ProvisioningRefusal(
                 "unsupported-stack",
-                $"Stack `{normalizedStack}` is not available. 2026.1 allows only `{canonicalStack}` (honua-iac `examples/aws`).",
+                $"Stack `{normalizedStack}` is not available. 2026.1 allows only: {string.Join(", ", ProvisioningStackCatalog.Ids)}.",
                 ["Choose stack=aws-ecs. AWS serverless and Helm remain sequenced follow-ups."],
                 ["Never resolve a caller-controlled stack directly to a filesystem path."]);
         }
 
-        if (!string.Equals(normalizedSize, canonicalSize, StringComparison.Ordinal))
+        string canonicalStack = provisioningStack!.Id;
+        if (!provisioningStack.Sizes.Contains(normalizedSize))
         {
             return ProvisioningRefusal(
                 "unsupported-size",
-                $"Size `{normalizedSize}` is not available. 2026.1 allows only `{canonicalSize}`.",
+                $"Size `{normalizedSize}` is not available for `{canonicalStack}`. Allowed: {string.Join(", ", provisioningStack.Sizes)}.",
                 ["Choose size=small or plan a reviewed custom topology outside this tool."],
                 ["Unreviewed size values could bypass the single-node development contract."]);
         }
+
+        string canonicalSize = normalizedSize;
 
         if (normalizedAction is not ("plan" or "apply" or "destroy"))
         {
@@ -131,10 +132,15 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Provisioning is fail-closed when the Terraform runtime cannot be proven present."]);
         }
 
+        if (!TryResolveSubstrate(out TerraformExactSubstrate? substrate, out OperationResponse? substrateRefusal))
+        {
+            return substrateRefusal!;
+        }
+
         string terraformRoot;
         try
         {
-            terraformRoot = ResolveStackRoot(runtime.TerraformLocalPath, "aws");
+            terraformRoot = substrate!.ResolveQualifiedRoot(provisioningStack.TerraformRootName);
         }
         catch (InvalidOperationException exception)
         {
@@ -203,7 +209,13 @@ internal sealed partial class HonuaOperationsToolkit
                         [normalizedAction == "destroy" ? "Destroy can permanently remove data." : "Apply creates or changes billable cloud resources."]);
                 }
 
-                return await ApplySavedPlanAsync(savedPlan!, approvalReceipt!, normalizedAction, cancellationToken);
+                return await ApplySavedPlanAsync(
+                    substrate!,
+                    provisioningStack,
+                    savedPlan!,
+                    approvalReceipt!,
+                    normalizedAction,
+                    cancellationToken);
             }
         }
 
@@ -221,8 +233,10 @@ internal sealed partial class HonuaOperationsToolkit
 
         CleanupExpiredSavedPlans();
         string planDirectory = CreatePlanDirectory(out string planToken);
+        string provisioningOperationId = $"urn:honua:provisioning:{planToken}";
         string variableFile = Path.Combine(planDirectory, "small.auto.tfvars.json");
         string planFile = Path.Combine(planDirectory, "honua.tfplan");
+        string planMetadataFile = planFile + ".metadata.json";
         bool keepPlanDirectory = false;
         try
         {
@@ -233,63 +247,92 @@ internal sealed partial class HonuaOperationsToolkit
 
             IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
             List<OperationBackendStep> steps = [];
-            ProvisioningProcessResult initResult = await runner.RunAsync(
-                "terraform",
-                ["init", "-input=false", "-no-color"],
-                terraformRoot,
-                TimeSpan.FromMinutes(5),
-                cancellationToken);
-            steps.Add(ToBackendStep("terraform-init", canonicalStack, initResult, mutatesState: false));
-            if (!initResult.Succeeded)
-            {
-                return TerraformFailure("terraform-init-failed", "Terraform init failed.", initResult, steps);
-            }
 
+            // The substrate owns init/backend resolution, the short-lived-identity
+            // check, the input digest, the state read, and the saved-plan binding.
+            // honua-devops supplies the root, the action, the inputs and the actor,
+            // and consumes the metadata document the wrapper writes.
             List<string> planArguments =
             [
-                "plan",
-                "-input=false",
-                "-no-color",
-                "-lock-timeout=60s",
-                $"-var-file={variableFile}"
+                substrate!.PlanScript,
+                "--root", terraformRoot,
+                "--action", normalizedAction == "destroy" ? "destroy" : "apply",
+                "--plan-out", planFile,
+                "--metadata-out", planMetadataFile,
+                "--var-file", variableFile,
+                "--actor", $"honua-devops:{provisioningOperationId}",
+                "--target-id", ResolveTargetId(canonicalStack, environment),
+                "--expires-in", SavedPlanLifetimeSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)
             ];
-            if (normalizedAction == "destroy")
-            {
-                planArguments.Add("-destroy");
-            }
-            planArguments.Add($"-out={planFile}");
 
             ProvisioningProcessResult planResult = await runner.RunAsync(
-                "terraform",
+                "bash",
                 planArguments,
-                terraformRoot,
-                TimeSpan.FromMinutes(15),
+                substrate.IacRoot,
+                TimeSpan.FromMinutes(20),
+                SubstrateEnvironment(requireApproval: false),
                 cancellationToken);
-            steps.Add(ToBackendStep("terraform-plan", canonicalStack, planResult, mutatesState: false));
+            steps.Add(ToBackendStep("terraform-exact-plan", canonicalStack, planResult, mutatesState: false));
             if (!planResult.Succeeded)
             {
+                // A typed refusal is a governed decision with a specific cause and a
+                // specific fix; it must not be flattened into "terraform failed".
+                if (TerraformExactRefusal.TryParse(planResult, out TerraformExactRefusal? refusal))
+                {
+                    return SubstrateRefusal(refusal!, "plan", steps);
+                }
+
                 return TerraformFailure("terraform-plan-failed", "Terraform plan failed; apply was not attempted.", planResult, steps);
             }
 
             string planSummary = ReadPlanSummary(planResult.StandardOutput);
-            if (!File.Exists(planFile))
+            if (!File.Exists(planFile) || !File.Exists(planMetadataFile))
             {
                 return TerraformFailure(
                     "terraform-plan-artifact-missing",
-                    "Terraform reported success but did not create the required saved-plan artifact; apply is blocked.",
-                    new ProvisioningProcessResult(1, string.Empty, "saved plan artifact missing", false),
+                    "The exact-plan wrapper reported success but did not produce the saved-plan/metadata pair; apply is blocked.",
+                    new ProvisioningProcessResult(1, string.Empty, "saved plan or metadata artifact missing", false),
                     steps);
+            }
+
+            ExactPlanMetadata? planMetadata;
+            string metadataError;
+            try
+            {
+                if (!ExactPlanMetadata.TryRead(
+                        await File.ReadAllTextAsync(planMetadataFile, cancellationToken),
+                        await File.ReadAllTextAsync(substrate.ExactPlanSchemaPath, cancellationToken),
+                        out planMetadata,
+                        out metadataError))
+                {
+                    return ProvisioningRefusal(
+                        "exact-plan-metadata-invalid",
+                        Redaction.Scrub(metadataError),
+                        ["Update the honua-iac checkout so its wrapper and published schema agree."],
+                        ["An unreadable plan binding cannot be approved; no apply was started."]);
+                }
+            }
+            catch (IOException exception)
+            {
+                return ProvisioningRefusal(
+                    "exact-plan-metadata-invalid",
+                    Redaction.Scrub(exception.Message),
+                    ["Confirm the honua-iac checkout ships `infrastructure/terraform/contracts`."],
+                    []);
             }
 
             // Reviewable evidence. `terraform show` against the SAVED PLAN is read-only and
             // is the only way an MCP caller can see which resources, replacements, and
             // deletions it is being asked to confirm. Without it the response tells the
             // caller to "review the complete plan" while handing it only three numbers.
+            ExactPlanMetadata metadata = planMetadata!;
+
             ProvisioningProcessResult showResult = await runner.RunAsync(
                 "terraform",
                 ["show", "-no-color", planFile],
                 terraformRoot,
                 TimeSpan.FromMinutes(5),
+                environment: null,
                 cancellationToken);
             steps.Add(ToBackendStep("terraform-show", canonicalStack, showResult, mutatesState: false));
             TerraformPlanReview planReview = BuildPlanReview(showResult);
@@ -300,7 +343,7 @@ internal sealed partial class HonuaOperationsToolkit
                 planDirectory,
                 new SavedTerraformPlanManifest(
                     planToken,
-                    $"urn:honua:provisioning:{planToken}",
+                    provisioningOperationId,
                     canonicalStack,
                     canonicalSize,
                     environment,
@@ -308,7 +351,10 @@ internal sealed partial class HonuaOperationsToolkit
                     DateTimeOffset.UtcNow,
                     destroyPlan,
                     planSummary,
-                    ComputeSha256(planFile)));
+                    ComputeSha256(planFile),
+                    provisioningStack.TerraformRootName,
+                    planMetadataFile,
+                    metadata));
             keepPlanDirectory = true;
             string nextAction = destroyPlan ? "destroy" : "apply";
             string challenge = $"{nextAction}:{canonicalStack}:{environment}:{planToken}";
@@ -321,9 +367,18 @@ internal sealed partial class HonuaOperationsToolkit
                 Findings:
                 [
                     $"Deployable root: {terraformRoot}.",
-                    $"Saved plan token: {planToken} (expires in 30 minutes).",
-                    "Invocation used direct argv; no shell command string was evaluated.",
+                    $"Saved plan token: {planToken} (expires in {SavedPlanLifetimeSeconds / 60} minutes).",
+                    "Planned through the honua-iac governed exact-plan substrate (`scripts/terraform-exact-plan.sh`); no hand-rolled Terraform argv was used.",
                     "Generated variables were restricted to the non-secret aws-ecs/small allowlist.",
+                    // The value an approval must bind to. Without it in the response the
+                    // caller cannot issue an approval the apply wrapper will accept.
+                    $"Approval binds to plan_metadata_digest: {metadata.PlanMetadataDigest}.",
+                    $"Saved plan sha256: {metadata.SavedPlanSha256}.",
+                    $"Backend: {metadata.BackendKind} (remote={metadata.BackendIsRemote}) workspace `{metadata.Workspace}`, backend_config_digest {metadata.BackendConfigDigest}.",
+                    $"Prior state lineage {metadata.StateLineageBefore ?? "(none)"} serial {metadata.StateSerialBefore?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "(none)"}.",
+                    $"Execution identity: {metadata.AssumedRoleArn} in account {metadata.AccountId} ({metadata.CredentialKind}).",
+                    $"IaC revision {metadata.IacRevision}, Terraform {metadata.TerraformVersion}, provider lock {metadata.ProviderLockDigest}.",
+                    $"Release qualified: {metadata.ReleaseQualified.ToString().ToLowerInvariant()} (evidence mode: {metadata.EvidenceMode}).",
                     $"Planned resource changes ({planReview.ChangeCount} shown{(planReview.Truncated ? ", truncated" : string.Empty)}):",
                     .. planReview.ResourceChanges,
                     planReview.DestructiveChanges.Count == 0
@@ -334,26 +389,33 @@ internal sealed partial class HonuaOperationsToolkit
                 Actions:
                 [
                     "Review the planned resource changes listed above before mutation; replacements and deletions are called out explicitly.",
+                    $"Issue a honua.devops.provision-approval/v1 receipt binding planMetadataDigest={metadata.PlanMetadataDigest}.",
                     $"Repeat with action={nextAction}, confirmed=true, and confirmation={challenge}. The saved plan, not a newly generated plan, will be applied.",
-                    "Configure and protect a remote state backend before creating a shared or long-lived cell."
+                    metadata.ReleaseQualified
+                        ? "This plan is release-qualified; retain the metadata digest as approval evidence."
+                        : "This plan is NOT release-qualified and the apply wrapper will refuse it with `unqualified-plan-refused`."
                 ],
                 ValidationChecks:
                 [
-                    "terraform init succeeded",
+                    "exact-plan wrapper succeeded",
+                    "plan metadata validated against terraform-exact-plan.v1.schema.json",
                     destroyPlan ? "terraform destroy plan succeeded" : "terraform plan succeeded",
                     "saved-plan artifact exists and is token-bound",
                     "no apply process started"
                 ],
                 Risks:
                 [
-                    "The saved plan expires after 30 minutes and Terraform will reject it if state has changed.",
+                    $"The saved plan expires at {metadata.ExpiresAtUtc:O} and the apply wrapper refuses it afterwards with `plan-expired`.",
                     "Saved Terraform plans can contain sensitive values; this artifact is kept in the current user's protected temporary directory and deleted after use or expiry.",
-                    "Local Terraform state is unsuitable for a shared or long-lived environment."
+                    metadata.IsOfflineEvidence
+                        ? "This plan was produced in HONUA_IAC_OFFLINE fixture mode and is stamped `offline-test`; it is not evidence about any real cloud account."
+                        : "State substitution or drift between now and apply is refused by the substrate, not silently reconciled."
                 ],
                 BackendSteps: steps,
                 ProvisioningLineage: new ProvisioningLineage(
-                    $"urn:honua:provisioning:{planToken}",
-                    PlanSha256: ComputeSha256(planFile)));
+                    provisioningOperationId,
+                    PlanSha256: ComputeSha256(planFile),
+                    PlanMetadataDigest: metadata.PlanMetadataDigest));
         }
         finally
         {
@@ -364,7 +426,7 @@ internal sealed partial class HonuaOperationsToolkit
         }
     }
 
-    [Description("Write a secretless Honua CLI/MCP handoff using a Terraform honua_url and a secret-store reference.")]
+    [Description("Write a secretless Honua CLI/MCP handoff from the stack's honua.operator-contract/v1 endpoint and admin-key secret reference.")]
     public async Task<OperationResponse> InstallHandoffAsync(
         string stack,
         string baseUrl,
@@ -384,93 +446,7 @@ internal sealed partial class HonuaOperationsToolkit
                 []);
         }
 
-        // The `terraform` executable is a runtime prerequisite this process does not ship.
-        // Checking for it up front turns an opaque "process did not start" Win32 failure
-        // into an actionable refusal — notably for the published MCP container, whose
-        // chiseled final image contains only the operator binary.
-        if (!(provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance).CanRun("terraform"))
-        {
-            return ProvisioningRefusal(
-                "terraform-unavailable",
-                "The `terraform` executable was not found on PATH. No process was started.",
-                [
-                    "Install Terraform on the host running honua-devops and ensure it is on PATH.",
-                    "In the published MCP container, mount a Terraform binary and the honua-iac checkout, e.g. "
-                        + "`-v /usr/local/bin/terraform:/usr/local/bin/terraform:ro -v /path/to/honua-iac:/honua-iac:ro "
-                        + "-e PATH=/usr/local/bin:/usr/bin:/bin -e HONUA_DEVOPS_TERRAFORM_LOCAL_PATH=/honua-iac` "
-                        + "(see docs/QUICKSTART-MCP.md).",
-                    "The container image deliberately does not redistribute the Terraform binary."
-                ],
-                ["Provisioning is fail-closed when the Terraform runtime cannot be proven present."]);
-        }
-
-        string terraformRoot;
-        try
-        {
-            terraformRoot = ResolveStackRoot(runtime.TerraformLocalPath, "aws");
-        }
-        catch (InvalidOperationException exception)
-        {
-            return ProvisioningRefusal(
-                "terraform-root-invalid",
-                Redaction.Scrub(exception.Message),
-                ["Set HONUA_DEVOPS_TERRAFORM_LOCAL_PATH to a current honua-iac checkout."],
-                []);
-        }
-
-        string normalizedBaseUrl = baseUrl.Trim();
         List<OperationBackendStep> steps = [];
-        if (string.IsNullOrWhiteSpace(normalizedBaseUrl))
-        {
-            IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
-            ProvisioningProcessResult outputResult = await runner.RunAsync(
-                "terraform",
-                ["output", "-json"],
-                terraformRoot,
-                TimeSpan.FromMinutes(2),
-                cancellationToken);
-            steps.Add(ToBackendStep("terraform-output", canonicalStack, outputResult, mutatesState: false));
-            if (!outputResult.Succeeded)
-            {
-                return TerraformFailure(
-                    "terraform-output-failed",
-                    "Could not read the honua_url Terraform output.",
-                    outputResult,
-                    steps);
-            }
-
-            try
-            {
-                normalizedBaseUrl = ReadHonuaUrl(outputResult.StandardOutput);
-            }
-            catch (InvalidOperationException exception)
-            {
-                return ProvisioningRefusal(
-                    "honua-url-missing",
-                    exception.Message,
-                    ["Pass baseUrl explicitly or expose the honua_url output from the stack."],
-                    []);
-            }
-        }
-
-        if (!TryValidateBaseUrl(normalizedBaseUrl, out Uri? parsedBaseUrl, out string urlError))
-        {
-            return ProvisioningRefusal(
-                "base-url-invalid",
-                urlError,
-                ["Use an absolute HTTPS URL, or HTTP only for a loopback development endpoint."],
-                ["An untrusted proxy endpoint could receive the resolved admin credential at launch time."]);
-        }
-
-        string normalizedSecretRef = adminKeySecretRef.Trim();
-        if (!IsSecretReference(normalizedSecretRef))
-        {
-            return ProvisioningRefusal(
-                "secret-ref-invalid",
-                "adminKeySecretRef must be an AWS Secrets Manager ARN/URI, Azure Key Vault URI, or secret:// reference. Secret material is not accepted.",
-                ["Pass the cloud secret identifier, never the admin-key value."],
-                ["A literal admin key must not be persisted in the handoff files or audit journal."]);
-        }
 
         string rootProvisioningOperationId = provisioningOperationId.Trim();
         if (!rootProvisioningOperationId.StartsWith("urn:honua:provisioning:", StringComparison.Ordinal)
@@ -491,6 +467,54 @@ internal sealed partial class HonuaOperationsToolkit
                 "No DevOps-produced successful apply evidence exists for this provisioningOperationId.",
                 ["Run the exact governed plan and apply before generating the install handoff."],
                 ["Caller-authored provisioning bindings are not accepted."]);
+        }
+
+        // The endpoint and the admin-key locator come from the stack's own
+        // honua.operator-contract/v1 projection, captured at apply time. A caller
+        // argument is an OVERRIDE — still accepted, because a development cell may
+        // legitimately sit behind a tunnel, but recorded as an override in the
+        // handoff and the binding so no reader can mistake it for what the stack
+        // reported.
+        string contractEndpoint = provisioningState.Endpoint ?? string.Empty;
+        string contractSecretRef = provisioningState.AdminKeySecretRef ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(contractEndpoint) || string.IsNullOrWhiteSpace(contractSecretRef))
+        {
+            return ProvisioningRefusal(
+                "operator-contract-missing",
+                "The recorded apply evidence carries no operator-contract endpoint and admin-key secret reference.",
+                [
+                    "Re-run the governed apply against a root that projects honua.operator-contract/v1.",
+                    "Provisioning evidence produced before contract consumption cannot back a handoff."
+                ],
+                ["A handoff built from caller-supplied identity is not evidence about the deployed stack."]);
+        }
+
+        string callerBaseUrl = baseUrl.Trim();
+        string callerSecretRef = adminKeySecretRef.Trim();
+        bool endpointOverridden = callerBaseUrl.Length > 0
+            && !string.Equals(callerBaseUrl.TrimEnd('/'), contractEndpoint.TrimEnd('/'), StringComparison.Ordinal);
+        bool secretRefOverridden = callerSecretRef.Length > 0
+            && !string.Equals(callerSecretRef, contractSecretRef, StringComparison.Ordinal);
+
+        string normalizedBaseUrl = endpointOverridden ? callerBaseUrl : contractEndpoint;
+        string normalizedSecretRef = secretRefOverridden ? callerSecretRef : contractSecretRef;
+
+        if (!TryValidateBaseUrl(normalizedBaseUrl, out Uri? parsedBaseUrl, out string urlError))
+        {
+            return ProvisioningRefusal(
+                "base-url-invalid",
+                urlError,
+                ["Use an absolute HTTPS URL, or HTTP only for a loopback development endpoint."],
+                ["An untrusted proxy endpoint could receive the resolved admin credential at launch time."]);
+        }
+
+        if (!IsSecretReference(normalizedSecretRef))
+        {
+            return ProvisioningRefusal(
+                "secret-ref-invalid",
+                "adminKeySecretRef must be an AWS Secrets Manager ARN/URI, Azure Key Vault URI, or secret:// reference. Secret material is not accepted.",
+                ["Pass the cloud secret identifier, never the admin-key value."],
+                ["A literal admin key must not be persisted in the handoff files or audit journal."]);
         }
 
         string proxyPackage = runtime.McpProxyPackage?.Trim() ?? string.Empty;
@@ -536,6 +560,18 @@ internal sealed partial class HonuaOperationsToolkit
             rootProvisioningOperationId,
             provisioningLineage = provisioningState.Lineage,
             candidateReference,
+            // Provenance of the two identities that decide where a resolved admin
+            // credential is sent. `operator-contract` means the stack said so;
+            // `caller-override` means someone told us instead.
+            endpointSource = endpointOverridden ? "caller-override" : "operator-contract",
+            adminKeySecretRefSource = secretRefOverridden ? "caller-override" : "operator-contract",
+            operatorContract = new
+            {
+                digest = provisioningState.OperatorContractDigest,
+                status = provisioningState.OperatorContractStatus,
+                endpoint = contractEndpoint,
+                adminKeySecretRef = contractSecretRef
+            },
             proxyArtifact = new { package = proxyPackage, integrity = proxyIntegrity },
             command = "npx",
             args = new[] { "-y", "--package", proxyPackage, "honua-mcp-proxy" },
@@ -598,6 +634,21 @@ internal sealed partial class HonuaOperationsToolkit
             }
         };
         string configBytes = JsonSerializer.Serialize(contract, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+
+        // Validated before it is written. The handoff is the document a client will
+        // resolve a live admin credential against, so it must satisfy its published
+        // contract or not exist at all.
+        IReadOnlyList<string> handoffErrors = ProvisioningContracts.ValidateProxyHandoff(configBytes);
+        if (handoffErrors.Count > 0)
+        {
+            return ProvisioningRefusal(
+                "handoff-contract-invalid",
+                "The generated handoff does not satisfy honua-mcp-proxy-handoff.v1.schema.json: "
+                    + string.Join("; ", handoffErrors.Take(8)),
+                ["This is a defect in honua-devops, not in the operator's environment; report it with this status."],
+                ["No handoff files were written."]);
+        }
+
         await File.WriteAllTextAsync(
             configPath,
             configBytes,
@@ -624,8 +675,12 @@ internal sealed partial class HonuaOperationsToolkit
             Summary: $"Secretless Honua CLI/MCP handoff written but not yet verified for `{canonicalStack}` at `{handoffDirectory}`.",
             Findings:
             [
-                $"HONUA_BASE_URL={parsedBaseUrl.AbsoluteUri.TrimEnd('/')}",
-                $"HONUA_ADMIN_KEY secret reference={normalizedSecretRef}",
+                $"HONUA_BASE_URL={parsedBaseUrl.AbsoluteUri.TrimEnd('/')} (source: {(endpointOverridden ? "caller-override" : "operator-contract")}).",
+                $"HONUA_ADMIN_KEY secret reference={normalizedSecretRef} (source: {(secretRefOverridden ? "caller-override" : "operator-contract")}).",
+                $"Operator contract {provisioningState.OperatorContractStatus} digest {provisioningState.OperatorContractDigest}; it reports endpoint {contractEndpoint}.",
+                endpointOverridden || secretRefOverridden
+                    ? "WARNING: a caller argument overrode what the stack reported. The override is recorded in the handoff and the binding."
+                    : "Endpoint and admin-key locator were taken from the stack's operator contract, not from caller arguments.",
                 $"HONUA_MCP_REMOTE_URL={mcpUri.AbsoluteUri}",
                 $"Proxy handoff: {configPath}",
                 $"Proxy artifact: {proxyPackage} ({proxyIntegrity}).",
@@ -759,11 +814,11 @@ internal sealed partial class HonuaOperationsToolkit
             schemaVersion = "honua.devops.install-handoff-verification/v1",
             provisioningOperationId = request.ProvisioningOperationId,
             handoffSha256 = handoffSha,
-            request.CandidateReference,
-            request.ProxyPackage,
-            request.ProxyIntegrity,
+            candidateReference = request.CandidateReference,
+            proxyPackage = request.ProxyPackage,
+            proxyIntegrity = request.ProxyIntegrity,
             secretReferenceSha256 = ComputeSha256(Encoding.UTF8.GetBytes(request.AdminKeySecretReference)),
-            verification.ServerIdentity,
+            serverIdentity = verification.ServerIdentity,
             observedTools = verification.ObservedTools,
             verifiedAtUtc = DateTimeOffset.UtcNow
         });
@@ -783,19 +838,71 @@ internal sealed partial class HonuaOperationsToolkit
             HandoffVerificationReceiptSha256 = verificationSha,
             RootProvisioningOperationId = request.ProvisioningOperationId
         };
+        if (state.Execution is null)
+        {
+            return ProvisioningRefusal(
+                "iac-execution-evidence-missing",
+                "The recorded apply evidence carries no honua-iac execution facts, so a binding could not name the "
+                    + "state, backend and identity that produced the claim.",
+                ["Re-run the governed plan and apply through the exact-plan substrate."],
+                ["A binding that cannot name its state lineage is not evidence."]);
+        }
+
+        // Provenance carried forward from the handoff: a reader of the binding must be
+        // able to tell whether the endpoint it names is what the stack reported.
+        (string endpointSource, string secretRefSource) = ReadHandoffSources(configBytes);
+
         string bindingBytes = JsonSerializer.Serialize(new
         {
             schemaVersion = "honua.devops.aws-ecs-provision-binding/v1",
             lineage = completedLineage,
             endpoint = request.BaseUrl,
+            endpointSource,
+            adminKeySecretRefSource = secretRefSource,
             candidateReference = request.CandidateReference,
             proxyArtifact = new { package = request.ProxyPackage, integrity = request.ProxyIntegrity },
             secretReferenceSha256 = ComputeSha256(Encoding.UTF8.GetBytes(request.AdminKeySecretReference)),
             handoffSha256 = handoffSha,
             verificationReceiptId = verificationId,
             verificationReceiptSha256 = verificationSha,
-            state.TeardownHandle
+            operatorContract = new
+            {
+                digest = state.OperatorContractDigest,
+                status = state.OperatorContractStatus,
+                endpoint = state.Endpoint
+            },
+            // Which state, under which identity, produced this claim.
+            iacExecution = state.Execution,
+            execReceiptSha256 = state.ExecReceiptSha256,
+            execReceipt = state.ExecReceipt,
+            teardownHandle = state.TeardownHandle
         }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+
+        // Validated against the published contract BEFORE it is written: an evidence
+        // artifact that does not satisfy its own schema must never reach the disk,
+        // because everything downstream treats its presence as the claim.
+        IReadOnlyList<string> bindingErrors = ProvisioningContracts.ValidateProvisionBinding(bindingBytes);
+        if (bindingErrors.Count > 0)
+        {
+            return ProvisioningRefusal(
+                "provision-binding-invalid",
+                "The provision binding does not satisfy honua-devops-aws-ecs-provision-binding.schema.json: "
+                    + string.Join("; ", bindingErrors.Take(8)),
+                ["This is a defect in honua-devops, not in the operator's environment; report it with this status."],
+                ["No binding was written."]);
+        }
+
+        IReadOnlyList<string> receiptErrors = ProvisioningContracts.ValidateVerificationReceipt(receiptBytes);
+        if (receiptErrors.Count > 0)
+        {
+            return ProvisioningRefusal(
+                "verification-receipt-invalid",
+                "The verification receipt does not satisfy honua-devops-install-handoff-verification.v1.schema.json: "
+                    + string.Join("; ", receiptErrors.Take(8)),
+                ["This is a defect in honua-devops, not in the operator's environment; report it with this status."],
+                ["No verification evidence was written."]);
+        }
+
         await File.WriteAllTextAsync(receiptPath, receiptBytes, cancellationToken);
         await File.WriteAllTextAsync(bindingPath, bindingBytes, cancellationToken);
         ProtectSavedPlan(receiptPath);
@@ -814,6 +921,81 @@ internal sealed partial class HonuaOperationsToolkit
             ["This local verification is not a substitute for the disposable AWS live-cell acceptance run."],
             BackendSteps: steps,
             ProvisioningLineage: completedLineage);
+    }
+
+    /// <summary>
+    /// Saved-plan lifetime. Passed to the substrate as <c>--expires-in</c> so the
+    /// wrapper's <c>plan-expired</c> refusal and this process's own age check agree
+    /// on one number instead of drifting apart.
+    /// </summary>
+    private const int SavedPlanLifetimeSeconds = 1800;
+
+    private bool TryResolveSubstrate(out TerraformExactSubstrate? substrate, out OperationResponse? refusal)
+    {
+        refusal = null;
+        if (TerraformExactSubstrate.TryResolve(runtime.TerraformLocalPath, out substrate, out string error))
+        {
+            return true;
+        }
+
+        refusal = ProvisioningRefusal(
+            "iac-substrate-unavailable",
+            Redaction.Scrub(error),
+            [
+                "Set HONUA_DEVOPS_TERRAFORM_LOCAL_PATH to a honua-iac checkout at or after honua-iac#158.",
+                "The checkout must ship `scripts/terraform-exact-*.sh` and `infrastructure/terraform/contracts`."
+            ],
+            ["honua-devops does not execute Terraform outside the governed substrate."]);
+        return false;
+    }
+
+    /// <summary>
+    /// The environment contract honua-devops imposes on the wrappers. Approval
+    /// enforcement is set here rather than inherited so it cannot be switched off by
+    /// how the host process happened to be launched.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? SubstrateEnvironment(bool requireApproval)
+        => requireApproval
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [TerraformExactSubstrate.RequireApprovalVariable] = "1"
+            }
+            : null;
+
+    private string ResolveTargetId(string stack, string environment)
+        => string.IsNullOrWhiteSpace(runtime.DeployTargetId)
+            ? $"{stack}:{environment}"
+            : runtime.DeployTargetId!.Trim();
+
+    /// <summary>
+    /// Surfaces a wrapper refusal as its own typed status rather than as free text
+    /// inside a generic Terraform failure.
+    /// </summary>
+    private static OperationResponse SubstrateRefusal(
+        TerraformExactRefusal refusal,
+        string action,
+        IReadOnlyList<OperationBackendStep> steps)
+    {
+        return new OperationResponse(
+            Status: refusal.Status,
+            Summary: $"The honua-iac execution substrate refused the {action} before any mutation: "
+                + $"REFUSED[{refusal.Reason}]. {refusal.Message}",
+            Findings:
+            [
+                $"Refusal reason: {refusal.Reason}.",
+                refusal.IsKnown
+                    ? "This is a documented row of the fail-closed matrix in honua-iac `docs/devops/terraform-exact-plan-contract.md`."
+                    : "This reason is not in the roster honua-devops knows; the honua-iac substrate may be newer than this build.",
+                refusal.Message
+            ],
+            Actions:
+            [
+                "Correct the specific cause named by the refusal reason; do not retry unchanged.",
+                "A refusal releases the plan claim, so the same approved plan can be retried once the cause is fixed."
+            ],
+            ValidationChecks: ["the substrate refused before any process mutated state"],
+            Risks: ["Nothing was mutated by this call."],
+            BackendSteps: steps);
     }
 
     private OperationResponse? AuthorizeTerraformMutation(string action, string environment)
@@ -1063,25 +1245,28 @@ internal sealed partial class HonuaOperationsToolkit
         return value.GetString()!.Trim();
     }
 
-    private static string ResolveStackRoot(string configuredRoot, string actualRootName)
+    /// <summary>
+    /// Recovers the endpoint/secret-reference provenance recorded in an emitted
+    /// handoff. Absent fields read as <c>caller-override</c>: a handoff that does not
+    /// state where its endpoint came from has not proved the stack reported it.
+    /// </summary>
+    private static (string EndpointSource, string SecretRefSource) ReadHandoffSources(string handoffJson)
     {
-        if (string.IsNullOrWhiteSpace(configuredRoot))
+        try
         {
-            throw new InvalidOperationException("The honua-iac root is not configured.");
+            using JsonDocument document = JsonDocument.Parse(handoffJson);
+            string Read(string name)
+                => document.RootElement.TryGetProperty(name, out JsonElement value)
+                    && value.ValueKind == JsonValueKind.String
+                    && value.GetString() is "operator-contract" or "caller-override"
+                        ? value.GetString()!
+                        : "caller-override";
+            return (Read("endpointSource"), Read("adminKeySecretRefSource"));
         }
-
-        string repositoryRoot = Path.GetFullPath(configuredRoot);
-        string examplesRoot = Path.GetFullPath(Path.Combine(repositoryRoot, "infrastructure", "terraform", "examples"));
-        string stackRoot = Path.GetFullPath(Path.Combine(examplesRoot, actualRootName));
-        string expectedPrefix = examplesRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        if (!stackRoot.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase)
-            || !File.Exists(Path.Combine(stackRoot, "main.tf"))
-            || !File.Exists(Path.Combine(stackRoot, "variables.tf")))
+        catch (JsonException)
         {
-            throw new InvalidOperationException($"The allowlisted deployable root `{actualRootName}` is missing from the configured honua-iac checkout.");
+            return ("caller-override", "caller-override");
         }
-        return stackRoot;
     }
 
     private static bool HasSecretInput(string terraformRoot)
@@ -1096,6 +1281,8 @@ internal sealed partial class HonuaOperationsToolkit
     }
 
     private async Task<OperationResponse> ApplySavedPlanAsync(
+        TerraformExactSubstrate substrate,
+        ProvisioningStack provisioningStack,
         SavedTerraformPlan savedPlan,
         ProvisionApprovalReceipt approvalReceipt,
         string action,
@@ -1103,22 +1290,42 @@ internal sealed partial class HonuaOperationsToolkit
     {
         IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
         List<OperationBackendStep> steps = [];
+        string receiptPath = Path.Combine(savedPlan.Directory, "exec-receipt.json");
         try
         {
+            // The apply wrapper re-derives every bound fact from the live context and
+            // refuses before any mutation. It never regenerates a plan and never
+            // accepts variables, so the approved artifact is the only thing consumed.
             ProvisioningProcessResult applyResult = await runner.RunAsync(
-                "terraform",
-                ["apply", "-input=false", "-no-color", "-auto-approve", savedPlan.PlanFile],
-                savedPlan.Manifest.TerraformRoot,
+                "bash",
+                [
+                    substrate.ApplyScript,
+                    "--plan", savedPlan.PlanFile,
+                    "--metadata", savedPlan.Manifest.PlanMetadataFile,
+                    "--approved-digest", savedPlan.Manifest.PlanMetadataDigest,
+                    "--action", action == "destroy" ? "destroy" : "apply",
+                    "--receipt-out", receiptPath
+                ],
+                substrate.IacRoot,
                 TimeSpan.FromMinutes(45),
+                SubstrateEnvironment(requireApproval: true),
                 cancellationToken);
             steps.Add(ToBackendStep(
-                action == "destroy" ? "terraform-destroy-apply" : "terraform-apply",
+                action == "destroy" ? "terraform-exact-destroy" : "terraform-exact-apply",
                 savedPlan.Manifest.Stack,
                 applyResult,
                 mutatesState: true));
 
             if (!applyResult.Succeeded)
             {
+                // A refusal happens BEFORE any mutation. Reporting it as an apply
+                // failure would tell the operator to inspect state for partial
+                // changes that cannot exist.
+                if (TerraformExactRefusal.TryParse(applyResult, out TerraformExactRefusal? refusal))
+                {
+                    return SubstrateRefusal(refusal!, action, steps);
+                }
+
                 return TerraformFailure(
                     action == "destroy" ? "terraform-destroy-failed" : "terraform-apply-failed",
                     action == "destroy"
@@ -1128,20 +1335,125 @@ internal sealed partial class HonuaOperationsToolkit
                     steps);
             }
 
+            if (!File.Exists(receiptPath))
+            {
+                return TerraformFailure(
+                    "exec-receipt-missing",
+                    "The apply wrapper exited zero but wrote no execution receipt; no provisioning evidence was recorded.",
+                    new ProvisioningProcessResult(1, string.Empty, "execution receipt missing", false),
+                    steps);
+            }
+
+            string receiptDocument = await File.ReadAllTextAsync(receiptPath, cancellationToken);
+            if (!TerraformExecReceipt.TryRead(
+                    receiptDocument,
+                    await File.ReadAllTextAsync(substrate.ExecReceiptSchemaPath, cancellationToken),
+                    out TerraformExecReceipt? receipt,
+                    out string receiptError))
+            {
+                return ProvisioningRefusal(
+                    "exec-receipt-invalid",
+                    Redaction.Scrub(receiptError),
+                    ["Update the honua-iac checkout so its wrapper and published schema agree."],
+                    ["The mutation may have run; inspect Terraform state before retrying."]);
+            }
+
+            if (!receipt!.Succeeded)
+            {
+                return TerraformFailure(
+                    action == "destroy" ? "terraform-destroy-failed" : "terraform-apply-failed",
+                    $"The apply wrapper recorded a failed execution (exit {receipt.ExitStatus}). "
+                        + $"Resulting state lineage {receipt.StateLineageAfter} serial {receipt.StateSerialAfter}. "
+                        + "The plan is spent; produce and approve a fresh plan.",
+                    new ProvisioningProcessResult(receipt.ExitStatus, applyResult.StandardOutput, applyResult.StandardError, false),
+                    steps);
+            }
+
+            // The approval bound one plan metadata digest; the receipt must record the
+            // same one, or the receipt describes a different execution.
+            if (!string.Equals(receipt.PlanMetadataDigest, savedPlan.Manifest.PlanMetadataDigest, StringComparison.Ordinal))
+            {
+                return ProvisioningRefusal(
+                    "exec-receipt-mismatch",
+                    "The execution receipt is bound to a different plan than the one that was approved.",
+                    ["Do not reuse receipts across operations."],
+                    ["Evidence that does not join to its approval is not evidence."]);
+            }
+
+            OperatorContract? operatorContract = null;
+            if (action != "destroy" && provisioningStack.ProjectsOperatorContract)
+            {
+                (operatorContract, OperationResponse? contractRefusal) = await ReadOperatorContractAsync(
+                    runner,
+                    substrate,
+                    savedPlan.Manifest.TerraformRoot,
+                    steps,
+                    cancellationToken);
+                if (contractRefusal is not null)
+                {
+                    return contractRefusal;
+                }
+            }
+
+            string receiptSha = ComputeSha256(Encoding.UTF8.GetBytes(receiptDocument));
+            IacExecutionEvidence execution = new(
+                PlanMetadataDigest: receipt.PlanMetadataDigest,
+                SavedPlanSha256: receipt.SavedPlanSha256,
+                TerraformRoot: savedPlan.Manifest.TerraformRootName,
+                IacRevision: savedPlan.Manifest.Metadata.IacRevision,
+                IacTreeDigest: savedPlan.Manifest.Metadata.IacTreeDigest,
+                TerraformVersion: savedPlan.Manifest.Metadata.TerraformVersion,
+                ProviderLockDigest: savedPlan.Manifest.Metadata.ProviderLockDigest,
+                InputDigest: savedPlan.Manifest.Metadata.InputDigest,
+                Backend: new IacBackendIdentity(
+                    receipt.BackendConfigDigest,
+                    receipt.BackendKind,
+                    savedPlan.Manifest.Metadata.BackendIsRemote,
+                    receipt.Workspace,
+                    receipt.ObjectKey,
+                    savedPlan.Manifest.Metadata.BackendRegion),
+                ExecutionIdentity: new IacExecutionIdentity(
+                    receipt.AssumedRoleArn,
+                    receipt.RoleId,
+                    receipt.AccountId,
+                    receipt.Partition ?? savedPlan.Manifest.Metadata.Partition,
+                    savedPlan.Manifest.Metadata.Issuer,
+                    receipt.CredentialKind),
+                State: new IacStateLineage(
+                    receipt.StateLineageBefore,
+                    receipt.StateSerialBefore,
+                    receipt.StateLineageAfter,
+                    receipt.StateSerialAfter),
+                OperatorContractDigest: operatorContract?.ContractDigest ?? receipt.OutputContractDigest,
+                EvidenceMode: savedPlan.Manifest.Metadata.EvidenceMode,
+                ReleaseQualified: savedPlan.Manifest.Metadata.ReleaseQualified);
+
             ProvisioningLineage lineage = new(
                 savedPlan.Manifest.ProvisioningOperationId,
-                savedPlan.Manifest.PlanSha256,
-                approvalReceipt.ApprovalReceiptId,
-                ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
+                PlanSha256: savedPlan.Manifest.PlanSha256,
+                PlanMetadataDigest: receipt.PlanMetadataDigest,
+                ApprovalReceiptId: approvalReceipt.ApprovalReceiptId,
+                ApprovalReceiptSha256: ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
                 ApplyAuditEventId: Guid.NewGuid().ToString("n"),
-                ActuatorReceiptReference: $"terraform://{savedPlan.Manifest.Stack}/{action}/{savedPlan.Manifest.PlanSha256}");
+                // Content-addresses the execution-receipt bytes carried verbatim in the
+                // provisioning state and echoed into the binding, so a holder can
+                // actually resolve and re-hash what this reference names.
+                ActuatorReceiptReference: $"urn:sha256:{receiptSha}");
+
             SaveProvisioningState(new ProvisioningState(
                 lineage,
                 savedPlan.Manifest.Stack,
                 savedPlan.Manifest.Environment,
                 action,
                 DateTimeOffset.UtcNow,
-                TeardownHandle: $"terraform://{savedPlan.Manifest.Stack}/{savedPlan.Manifest.Environment}/{savedPlan.Manifest.ProvisioningOperationId}"));
+                TeardownHandle: TeardownHandle.FromReceipt(receipt, savedPlan.Manifest.Metadata.BackendRegion),
+                Execution: execution,
+                ExecReceiptSha256: receiptSha,
+                ExecReceipt: JsonSerializer.Deserialize<JsonElement>(receiptDocument),
+                Endpoint: operatorContract?.Endpoint,
+                AdminKeySecretRef: operatorContract?.AdminKeySecretRef,
+                OperatorContractDigest: operatorContract?.ContractDigest,
+                OperatorContractStatus: operatorContract?.Status));
 
             return new OperationResponse(
                 Status: action == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
@@ -1150,11 +1462,16 @@ internal sealed partial class HonuaOperationsToolkit
                     : $"Infrastructure apply completed for `{savedPlan.Manifest.Stack}` size `{savedPlan.Manifest.Size}` in `{savedPlan.Manifest.Environment}` using reviewed plan `{savedPlan.Manifest.Token}`: {savedPlan.Manifest.PlanSummary}",
                 Findings:
                 [
-                    "The exact token-bound plan returned by the previous planning call was the only artifact passed to terraform apply.",
-                    "The saved plan hash, stack, root, size, environment, action, and age were verified before process start.",
-                    $"Trusted issuer `{approvalReceipt.Issuer}` approved receipt `{approvalReceipt.ApprovalReceiptId}` for this exact operation and plan.",
-                    "An atomic one-time claim was acquired before process start; concurrent reuse of the token fails closed.",
-                    "Invocation used direct argv; no shell command string was evaluated.",
+                    "The exact approved saved plan was consumed by `scripts/terraform-exact-apply.sh`; no plan was regenerated after approval.",
+                    $"Trusted issuer `{approvalReceipt.Issuer}` approved receipt `{approvalReceipt.ApprovalReceiptId}` for plan_metadata_digest {receipt.PlanMetadataDigest}.",
+                    "The substrate re-derived the backend, account, role, inputs, source and state before the mutation and did not refuse.",
+                    $"Backend {receipt.BackendKind} workspace `{receipt.Workspace}` object key {receipt.ObjectKey ?? "(none)"} backend_config_digest {receipt.BackendConfigDigest}.",
+                    $"State moved from lineage {receipt.StateLineageBefore} serial {receipt.StateSerialBefore} to lineage {receipt.StateLineageAfter} serial {receipt.StateSerialAfter}.",
+                    $"Execution identity: {receipt.AssumedRoleArn} in account {receipt.AccountId} ({receipt.CredentialKind}).",
+                    $"Execution receipt: urn:sha256:{receiptSha}.",
+                    operatorContract is null
+                        ? "No operator contract was read for this action."
+                        : $"Operator contract {operatorContract.Status}, digest {operatorContract.ContractDigest}, endpoint {operatorContract.Endpoint}.",
                     action == "destroy"
                         ? "Destroy ran only at break-glass tier after its exact elicitation challenge."
                         : "Apply ran only in a non-production environment after its exact elicitation challenge."
@@ -1164,20 +1481,25 @@ internal sealed partial class HonuaOperationsToolkit
                     :
                     [
                         "Run readiness and smoke checks before install_handoff.",
-                        "Call install_handoff with the Terraform honua_url and the cloud secret reference for the admin key.",
-                        "Retain the remote state version and both planning/apply audit operation ids as deployment evidence."
+                        $"Call install_handoff with provisioningOperationId={savedPlan.Manifest.ProvisioningOperationId}; the endpoint and admin-key secret reference come from the operator contract and need not be supplied.",
+                        "Retain the state lineage/serial, backend config digest and execution role identity as deployment evidence."
                     ],
                 ValidationChecks:
                 [
                     "reviewed saved plan was unexpired and hash-valid",
                     "saved-plan token was atomically claimed exactly once",
-                    "terraform apply of the exact saved plan succeeded",
-                    "saved plan was deleted after the one-time apply attempt"
+                    "the exact-plan substrate accepted the approval digest and executed the saved plan",
+                    "execution receipt validated against terraform-exec-receipt.v1.schema.json",
+                    operatorContract is null
+                        ? "operator contract not applicable to this action"
+                        : "operator contract validated against operator-contract.v1.schema.json"
                 ],
                 Risks:
                 [
                     "Cloud readiness is not implied by a successful Terraform apply; run the service smoke contract.",
-                    "Losing or exposing Terraform state can prevent safe reconciliation and disclose sensitive metadata."
+                    savedPlan.Manifest.Metadata.ReleaseQualified
+                        ? "Losing or exposing Terraform state can prevent safe reconciliation and disclose sensitive metadata."
+                        : "This execution was not release-qualified and must not be presented as release evidence."
                 ],
                 BackendSteps: steps,
                 ProvisioningLineage: lineage);
@@ -1186,6 +1508,75 @@ internal sealed partial class HonuaOperationsToolkit
         {
             DeletePlanDirectory(savedPlan.Directory);
         }
+    }
+
+    /// <summary>
+    /// Reads the <c>honua.operator-contract/v1</c> projection from the applied stack.
+    /// </summary>
+    /// <remarks>
+    /// <c>terraform output</c> is a read-only projection of state and has no wrapper
+    /// in the substrate, so it is invoked directly. Nothing is scraped: the three
+    /// structured outputs are parsed and validated against honua-iac's own schema.
+    /// </remarks>
+    private async Task<(OperatorContract? Contract, OperationResponse? Refusal)> ReadOperatorContractAsync(
+        IProvisioningProcessRunner runner,
+        TerraformExactSubstrate substrate,
+        string terraformRoot,
+        List<OperationBackendStep> steps,
+        CancellationToken cancellationToken)
+    {
+        ProvisioningProcessResult outputResult = await runner.RunAsync(
+            "terraform",
+            ["output", "-json"],
+            terraformRoot,
+            TimeSpan.FromMinutes(2),
+            environment: null,
+            cancellationToken);
+        steps.Add(ToBackendStep("terraform-output", "operator-contract", outputResult, mutatesState: false));
+        if (!outputResult.Succeeded)
+        {
+            return (null, TerraformFailure(
+                "operator-contract-unavailable",
+                "The stack outputs could not be read, so no operator contract could be consumed.",
+                outputResult,
+                steps));
+        }
+
+        string schemaJson;
+        try
+        {
+            schemaJson = await File.ReadAllTextAsync(substrate.OperatorContractSchemaPath, cancellationToken);
+        }
+        catch (IOException exception)
+        {
+            return (null, ProvisioningRefusal(
+                "operator-contract-schema-missing",
+                Redaction.Scrub(exception.Message),
+                ["Use a honua-iac checkout that ships `infrastructure/terraform/contracts/operator-contract.v1.schema.json`."],
+                ["An unvalidated contract is not a contract."]));
+        }
+
+        if (!OperatorContract.TryRead(outputResult.StandardOutput, schemaJson, out OperatorContract? contract, out string contractError))
+        {
+            return (null, ProvisioningRefusal(
+                "operator-contract-invalid",
+                Redaction.Scrub(contractError),
+                ["Update honua-iac so the stack projects a valid honua.operator-contract/v1."],
+                ["The endpoint and admin-key locator must come from the stack, not from a caller."]));
+        }
+
+        // The contract itself states that certified consumers must reject an
+        // unqualified contract, so this is a gate rather than an annotation.
+        if (!contract!.IsQualified)
+        {
+            return (null, ProvisioningRefusal(
+                "operator-contract-unqualified",
+                $"The stack reports operator contract status `{contract.Status}`; it is missing immutable pins required for release use.",
+                ["Deploy a digest-pinned image and supply the release candidate/manifest identity, then re-apply."],
+                ["An unqualified contract describes a disposable development plan and cannot back a release claim."]));
+        }
+
+        return (contract, null);
     }
 
     private static string CreatePlanDirectory(out string token)
@@ -1404,11 +1795,15 @@ internal sealed partial class HonuaOperationsToolkit
             || receipt.Decision != "approved"
             || receipt.ProvisioningOperationId != manifest.ProvisioningOperationId
             || !string.Equals(receipt.PlanSha256, manifest.PlanSha256, StringComparison.OrdinalIgnoreCase)
+            // The substrate gates on the plan metadata digest, so the approval must
+            // bind it. Approving only the .tfplan hash would leave the backend,
+            // account, role, inputs and prior state unapproved.
+            || !string.Equals(receipt.PlanMetadataDigest, manifest.PlanMetadataDigest, StringComparison.OrdinalIgnoreCase)
             || receipt.Action != action
             || receipt.Stack != manifest.Stack
             || receipt.Environment != manifest.Environment)
         {
-            error = "The approval receipt does not approve this exact operation, plan, action, stack, and environment.";
+            error = "The approval receipt does not approve this exact operation, plan metadata digest, plan, action, stack, and environment.";
             return false;
         }
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -1446,6 +1841,7 @@ internal sealed partial class HonuaOperationsToolkit
             receipt.KeyId,
             receipt.ProvisioningOperationId,
             receipt.PlanSha256.ToLowerInvariant(),
+            receipt.PlanMetadataDigest.ToLowerInvariant(),
             receipt.Action,
             receipt.Stack,
             receipt.Environment,
@@ -1568,7 +1964,18 @@ internal sealed partial class HonuaOperationsToolkit
         DateTimeOffset CreatedAtUtc,
         bool DestroyPlan,
         string PlanSummary,
-        string PlanSha256);
+        string PlanSha256,
+        string TerraformRootName,
+        string PlanMetadataFile,
+        /// <summary>
+        /// The substrate's own plan-binding document, carried whole so the apply path
+        /// re-reads exactly what the plan path validated rather than a re-derivation
+        /// of it.
+        /// </summary>
+        ExactPlanMetadata Metadata)
+    {
+        internal string PlanMetadataDigest => Metadata.PlanMetadataDigest;
+    }
 
     private sealed record ProvisionApprovalReceipt(
         string SchemaVersion,
@@ -1577,6 +1984,12 @@ internal sealed partial class HonuaOperationsToolkit
         string KeyId,
         string ProvisioningOperationId,
         string PlanSha256,
+        /// <summary>
+        /// The honua-iac exact-plan metadata digest this approval authorizes. It is
+        /// what <c>terraform-exact-apply.sh</c> checks, so an approval that omitted it
+        /// could not gate the mutation the substrate actually performs.
+        /// </summary>
+        string PlanMetadataDigest,
         string Action,
         string Stack,
         string Environment,
@@ -1596,7 +2009,14 @@ internal sealed partial class HonuaOperationsToolkit
         string Environment,
         string Action,
         DateTimeOffset AppliedAtUtc,
-        string TeardownHandle);
+        TeardownHandle TeardownHandle,
+        IacExecutionEvidence? Execution = null,
+        string? ExecReceiptSha256 = null,
+        JsonElement ExecReceipt = default,
+        string? Endpoint = null,
+        string? AdminKeySecretRef = null,
+        string? OperatorContractDigest = null,
+        string? OperatorContractStatus = null);
 
     private static OperationBackendStep ToBackendStep(
         string name,
@@ -1735,28 +2155,6 @@ internal sealed partial class HonuaOperationsToolkit
 
     private static string NormalizeToken(string value)
         => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
-
-    private static string ReadHonuaUrl(string terraformOutput)
-    {
-        try
-        {
-            using JsonDocument document = JsonDocument.Parse(terraformOutput);
-            if (document.RootElement.TryGetProperty("honua_url", out JsonElement output)
-                && output.ValueKind == JsonValueKind.Object
-                && output.TryGetProperty("value", out JsonElement value)
-                && value.ValueKind == JsonValueKind.String
-                && !string.IsNullOrWhiteSpace(value.GetString()))
-            {
-                return value.GetString()!.Trim();
-            }
-        }
-        catch (JsonException)
-        {
-            // Converted to the stable refusal below.
-        }
-
-        throw new InvalidOperationException("Terraform output did not contain a string `honua_url.value`.");
-    }
 
     private static bool TryValidateBaseUrl(string value, out Uri? uri, out string error)
     {

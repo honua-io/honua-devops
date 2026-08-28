@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/contracts/terraform-exec-receipt.v1.schema.json",
+  "title": "Honua Terraform execution receipt contract v1",
+  "description": "Non-secret post-execution evidence emitted by scripts/terraform-exact-apply.sh. Joins exit status, the resulting state lineage/serial, the output contract digest, the workload identity reference, the backend step, and the cleanup/teardown handle. It carries no credentials, no tokens, and no Terraform state contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "action",
+    "completed_at_utc",
+    "exit_status",
+    "status",
+    "plan_metadata_digest",
+    "saved_plan_sha256",
+    "workload_identity",
+    "backend_step",
+    "state_before",
+    "state_after",
+    "output_contract",
+    "cleanup",
+    "evidence_scope"
+  ],
+  "properties": {
+    "schema_version": { "const": "v1" },
+    "kind": { "const": "honua.iac.exec-receipt" },
+    "action": { "enum": ["apply", "destroy"] },
+    "completed_at_utc": { "type": "string", "format": "date-time" },
+    "exit_status": { "type": "integer", "minimum": 0 },
+    "status": { "enum": ["succeeded", "failed"] },
+    "plan_metadata_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "approved_digest": { "type": ["string", "null"] },
+    "saved_plan_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "actor_id": { "type": ["string", "null"] },
+    "target_id": { "type": ["string", "null"] },
+    "candidate_digest": { "type": ["string", "null"] },
+    "workload_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assumed_role_arn", "account_id", "credential_kind"],
+      "properties": {
+        "assumed_role_arn": { "type": ["string", "null"] },
+        "role_id": { "type": ["string", "null"] },
+        "account_id": { "type": ["string", "null"] },
+        "partition": { "type": ["string", "null"] },
+        "issuer": { "type": ["string", "null"] },
+        "credential_kind": { "type": ["string", "null"] },
+        "contract_digest": { "type": ["string", "null"] }
+      }
+    },
+    "backend_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend_config_digest", "backend_kind", "workspace", "locking"],
+      "properties": {
+        "backend_config_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "backend_kind": { "type": "string" },
+        "workspace": { "type": "string" },
+        "object_key": { "type": ["string", "null"] },
+        "bucket_arn": { "type": ["string", "null"] },
+        "locking": { "type": "object" }
+      }
+    },
+    "state_before": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineage", "serial"],
+      "properties": {
+        "lineage": { "type": ["string", "null"] },
+        "serial": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "state_after": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineage", "serial"],
+      "properties": {
+        "lineage": { "type": ["string", "null"] },
+        "serial": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "output_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["output_name", "digest"],
+      "properties": {
+        "output_name": { "type": "string" },
+        "digest": { "type": ["string", "null"] }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_dir", "saved_plan", "teardown_root", "teardown_action"],
+      "properties": {
+        "claim_dir": { "type": "string" },
+        "saved_plan": { "type": "string" },
+        "teardown_root": { "type": "string" },
+        "teardown_action": { "const": "destroy" }
+      }
+    },
+    "evidence_scope": { "const": "metadata-only-post-execution" }
+  }
+}

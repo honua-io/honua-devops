@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/contracts/terraform-backend-identity.v1.schema.json",
+  "title": "Honua Terraform backend identity contract v1",
+  "description": "Evidence-safe description of WHERE Terraform state lives and HOW it is protected, emitted by scripts/terraform-backend-identity.sh. Backend configuration keys that could carry a secret are listed by name under redacted_config_keys and never by value; the document contains no credentials and no state contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "backend_kind",
+    "is_remote",
+    "workspace",
+    "location",
+    "locking",
+    "encryption",
+    "account",
+    "non_secret_config",
+    "redacted_config_keys",
+    "release_qualified",
+    "terraform_version",
+    "backend_config_digest",
+    "evidence_scope"
+  ],
+  "properties": {
+    "schema_version": { "const": "v1" },
+    "kind": { "const": "honua.iac.backend-identity" },
+    "backend_kind": { "type": "string" },
+    "is_remote": { "type": "boolean" },
+    "workspace": { "type": "string" },
+    "location": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "region": { "type": ["string", "null"] },
+        "bucket_id": { "type": ["string", "null"] },
+        "bucket_arn": { "type": ["string", "null"] },
+        "object_key": { "type": ["string", "null"] },
+        "workspace_key_prefix": { "type": ["string", "null"] },
+        "container_name": { "type": ["string", "null"] },
+        "storage_account_name": { "type": ["string", "null"] }
+      }
+    },
+    "locking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" },
+        "detail": { "type": ["string", "null"] }
+      }
+    },
+    "encryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": ["boolean", "null"] },
+        "kms_key_reference": { "type": ["string", "null"] }
+      }
+    },
+    "backend_access_role_arn": { "type": ["string", "null"] },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "partition"],
+      "properties": {
+        "account_id": { "type": ["string", "null"] },
+        "partition": { "type": ["string", "null"] }
+      }
+    },
+    "non_secret_config": { "type": "object" },
+    "redacted_config_keys": { "type": "array", "items": { "type": "string" } },
+    "release_qualified": { "type": "boolean" },
+    "local_state_allowed": { "type": "boolean" },
+    "terraform_version": { "type": "string" },
+    "backend_config_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "evidence_scope": { "const": "non-secret-backend-configuration" }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/schemas/honua-devops-install-handoff-verification.v1.json",
+  "title": "honua-devops install handoff verification receipt v1",
+  "description": "Content-addressed evidence that the exact emitted, manifest-pinned proxy handoff was actually run and passed health, authentication, MCP initialize, the required tool roster, and an authenticated Admin status call. It is produced only on full success: a failed or partial verification emits no receipt at all. receiptSha256 is the SHA-256 of the canonical `evidence` bytes, and receiptId is that digest as a urn.",
+  "type": "object",
+  "required": ["receiptId", "receiptSha256", "evidence"],
+  "properties": {
+    "receiptId": { "type": "string", "pattern": "^urn:sha256:[0-9a-f]{64}$" },
+    "receiptSha256": { "$ref": "#/$defs/sha256" },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "provisioningOperationId",
+        "handoffSha256",
+        "candidateReference",
+        "proxyPackage",
+        "proxyIntegrity",
+        "secretReferenceSha256",
+        "serverIdentity",
+        "observedTools",
+        "verifiedAtUtc"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "honua.devops.install-handoff-verification/v1" },
+        "provisioningOperationId": { "type": "string", "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$" },
+        "handoffSha256": {
+          "description": "SHA-256 of the exact handoff bytes that were executed, joining this receipt to one emitted document.",
+          "$ref": "#/$defs/sha256"
+        },
+        "candidateReference": { "type": "string", "minLength": 1 },
+        "proxyPackage": { "type": "string", "pattern": "^@honua/mcp-server@[0-9]+\\.[0-9]+\\.[0-9]+" },
+        "proxyIntegrity": { "type": "string", "pattern": "^sha(256|384|512)-[A-Za-z0-9+/=]+$" },
+        "secretReferenceSha256": {
+          "description": "Digest of the admin-key LOCATOR. Never the secret, and never reversible to one.",
+          "$ref": "#/$defs/sha256"
+        },
+        "serverIdentity": { "type": "string", "minLength": 1 },
+        "observedTools": {
+          "description": "The tools actually observed through paged MCP tools/list, not the roster that was asked for.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "verifiedAtUtc": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "additionalProperties": false
+}

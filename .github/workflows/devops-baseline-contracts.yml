@@ -26,7 +26,14 @@ jobs:
           bash -n scripts/check-terraform-secrets.sh
           bash -n scripts/smoke-contract.sh
           bash -n scripts/smoke-contract-smoke.sh
+          bash -n scripts/smoke-provisioning-contracts.sh
           bash -n scripts/fault-injection/*.sh
 
       - name: Smoke contract self-test
         run: ./scripts/smoke-contract-smoke.sh
+
+      # Guards the honua-devops#147 invariant that every provisioning contract is
+      # embedded, and therefore actually enforced on write rather than merely
+      # published. Needs no .NET, network or credentials.
+      - name: Provisioning contract smoke
+        run: ./scripts/smoke-provisioning-contracts.sh

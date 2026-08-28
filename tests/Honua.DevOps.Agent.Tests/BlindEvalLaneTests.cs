@@ -120,8 +120,9 @@ public class BlindEvalLaneTests
     [InlineData("oneOf", "[{\"type\":\"string\"}]")]
     [InlineData("anyOf", "[{\"type\":\"string\"}]")]
     [InlineData("not", "{\"type\":\"integer\"}")]
+    // `format` is enforced only for the values the validator implements; any other
+    // value must still fail closed rather than pass unchecked.
     [InlineData("format", "\"email\"")]
-    [InlineData("maxLength", "2")]
     [InlineData("exclusiveMinimum", "0")]
     [InlineData("maxItems", "1")]
     [InlineData("patternProperties", "{\"^x\":{\"type\":\"string\"}}")]
@@ -147,14 +148,12 @@ public class BlindEvalLaneTests
     }
 
     [Fact]
-    public void Validator_FailsClosed_OnObjectFormAdditionalPropertiesAndRefSiblings()
+    public void Validator_FailsClosed_OnRefSiblings()
     {
-        IReadOnlyList<string> objectForm = JsonSchemaValidator.Validate(
-            """{"a":"ok"}""",
-            """{ "type": "object", "additionalProperties": { "type": "string" } }""");
-
-        Assert.Contains(objectForm, error => error.Contains("additionalProperties", StringComparison.Ordinal));
-
+        // The object (subschema) form of `additionalProperties` used to be refused
+        // here. It is now implemented and enforced — see
+        // JsonSchemaValidatorApplicatorTests — because honua-devops validates the
+        // honua-iac operator contract against honua-iac's own schema, which uses it.
         IReadOnlyList<string> refSiblings = JsonSchemaValidator.Validate(
             """{"a":"ok"}""",
             """

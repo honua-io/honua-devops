@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/schemas/honua-devops-provision-approval.v1.json",
+  "title": "honua-devops provision approval receipt v1",
+  "description": "The durable approval that authorizes exactly one Terraform mutation. honua-devops refuses to start an apply or destroy without a valid, unexpired, single-use receipt of this shape from a configured trusted issuer. A caller boolean, an echoed challenge token, or a self-issued receipt is not authorization. This schema describes the document an issuer produces; it is an INPUT contract, and satisfying it is necessary but not sufficient - the signature must also verify under the configured issuer key.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "approvalReceiptId",
+    "issuer",
+    "keyId",
+    "provisioningOperationId",
+    "planSha256",
+    "planMetadataDigest",
+    "action",
+    "stack",
+    "environment",
+    "decision",
+    "issuedAtUtc",
+    "expiresAtUtc",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "honua.devops.provision-approval/v1" },
+    "approvalReceiptId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "issuer": {
+      "description": "Issuer identity. Must be present in the operator-configured trusted-issuer allowlist; an unknown issuer is refused.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "keyId": {
+      "description": "First 16 hex characters of the SHA-256 of the issuer key, so a receipt names which key must verify it.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "provisioningOperationId": { "type": "string", "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$" },
+    "planSha256": {
+      "description": "SHA-256 of the saved binary plan this approval authorizes.",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "planMetadataDigest": {
+      "description": "The honua-iac exact-plan metadata digest. This is the value terraform-exact-apply.sh checks against --approved-digest, and it transitively binds the backend, target account and role, inputs, source revision and prior state - not just the plan bytes.",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "action": { "enum": ["apply", "destroy"] },
+    "stack": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "environment": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "decision": { "enum": ["approved", "rejected"] },
+    "issuedAtUtc": { "type": "string", "format": "date-time" },
+    "expiresAtUtc": {
+      "description": "Validity ceiling. honua-devops additionally refuses a receipt whose lifetime exceeds one hour.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "signature": {
+      "description": "Base64 signature over the canonical newline-joined field sequence. 2026.1 uses HMAC-SHA256 with a symmetric issuer key; see honua-devops#147 for the open decision on moving to asymmetric issuance.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,17 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://honua.io/schemas/honua-devops-aws-ecs-provision-binding.v1.json",
+  "title": "honua-devops aws-ecs provision binding v1",
+  "description": "The DevOps-produced, content-addressed binding for a verified aws-ecs provision. It names the endpoint and secret locator the stack itself reported through honua.operator-contract/v1, and the honua-iac execution facts - backend identity, state lineage/serial and short-lived execution role - under which the claim was produced. Validated before it is written; honua-devops emits no binding that fails this schema.",
   "type": "object",
   "required": [
     "schemaVersion",
     "lineage",
     "endpoint",
+    "endpointSource",
+    "adminKeySecretRefSource",
     "candidateReference",
     "proxyArtifact",
     "secretReferenceSha256",
     "handoffSha256",
     "verificationReceiptId",
     "verificationReceiptSha256",
+    "operatorContract",
+    "iacExecution",
+    "execReceiptSha256",
+    "execReceipt",
     "teardownHandle"
   ],
   "properties": {
@@ -21,6 +29,7 @@
       "required": [
         "provisioningOperationId",
         "planSha256",
+        "planMetadataDigest",
         "approvalReceiptId",
         "approvalReceiptSha256",
         "applyAuditEventId",
@@ -31,24 +40,36 @@
         "rootProvisioningOperationId"
       ],
       "properties": {
-        "provisioningOperationId": { "type": "string", "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$" },
+        "provisioningOperationId": { "$ref": "#/$defs/provisioningOperationId" },
         "planSha256": { "$ref": "#/$defs/sha256" },
-        "approvalReceiptId": { "type": "string", "minLength": 1 },
+        "planMetadataDigest": {
+          "description": "The honua-iac exact-plan metadata digest the approval bound and the apply wrapper enforced.",
+          "$ref": "#/$defs/sha256"
+        },
+        "approvalReceiptId": { "type": "string", "minLength": 1, "maxLength": 200 },
         "approvalReceiptSha256": { "$ref": "#/$defs/sha256" },
         "applyAuditEventId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
-        "actuatorReceiptReference": { "type": "string", "minLength": 1 },
+        "actuatorReceiptReference": {
+          "description": "Content address of the honua-iac execution receipt carried verbatim in `execReceipt`. A holder can re-hash those bytes and confirm this reference resolves to them.",
+          "type": "string",
+          "pattern": "^urn:sha256:[0-9a-f]{64}$"
+        },
         "handoffReceiptSha256": { "$ref": "#/$defs/sha256" },
-        "handoffVerificationReceiptId": { "type": "string", "pattern": "^urn:sha256:[0-9a-f]{64}$" },
+        "handoffVerificationReceiptId": { "$ref": "#/$defs/receiptUrn" },
         "handoffVerificationReceiptSha256": { "$ref": "#/$defs/sha256" },
-        "rootProvisioningOperationId": { "type": "string", "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$" },
+        "rootProvisioningOperationId": { "$ref": "#/$defs/provisioningOperationId" },
         "serverOperationId": { "type": ["string", "null"] },
         "serverProposalId": { "type": ["string", "null"] },
         "serverDecisionReference": { "type": ["string", "null"] },
-        "serverExecutionId": { "type": ["string", "null"] }
+        "serverExecutionId": { "type": ["string", "null"] },
+        "releaseReceiptReference": { "type": ["string", "null"] },
+        "releaseReceiptSha256": { "type": ["string", "null"] }
       },
       "additionalProperties": true
     },
     "endpoint": { "type": "string", "format": "uri" },
+    "endpointSource": { "$ref": "#/$defs/identitySource" },
+    "adminKeySecretRefSource": { "$ref": "#/$defs/identitySource" },
     "candidateReference": { "type": "string", "minLength": 1 },
     "proxyArtifact": {
       "type": "object",
@@ -61,12 +82,141 @@
     },
     "secretReferenceSha256": { "$ref": "#/$defs/sha256" },
     "handoffSha256": { "$ref": "#/$defs/sha256" },
-    "verificationReceiptId": { "type": "string", "pattern": "^urn:sha256:[0-9a-f]{64}$" },
+    "verificationReceiptId": { "$ref": "#/$defs/receiptUrn" },
     "verificationReceiptSha256": { "$ref": "#/$defs/sha256" },
-    "teardownHandle": { "type": "string", "minLength": 1 }
+    "operatorContract": {
+      "description": "What the stack's own honua.operator-contract/v1 projection reported.",
+      "type": "object",
+      "required": ["digest", "status", "endpoint"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/sha256" },
+        "status": { "const": "qualified" },
+        "endpoint": { "type": "string", "format": "uri" }
+      },
+      "additionalProperties": false
+    },
+    "iacExecution": { "$ref": "#/$defs/iacExecution" },
+    "execReceiptSha256": { "$ref": "#/$defs/sha256" },
+    "execReceipt": {
+      "description": "The honua.iac.exec-receipt document verbatim, so `actuatorReceiptReference` resolves to bytes the holder actually has.",
+      "type": "object",
+      "required": ["schema_version", "kind", "plan_metadata_digest", "state_after"],
+      "properties": {
+        "kind": { "const": "honua.iac.exec-receipt" },
+        "schema_version": { "const": "v1" }
+      },
+      "additionalProperties": true
+    },
+    "teardownHandle": { "$ref": "#/$defs/teardownHandle" }
   },
   "$defs": {
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nullableSha256": { "type": ["string", "null"], "pattern": "^([0-9a-f]{64})?$" },
+    "receiptUrn": { "type": "string", "pattern": "^urn:sha256:[0-9a-f]{64}$" },
+    "provisioningOperationId": { "type": "string", "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$" },
+    "identitySource": {
+      "description": "Where the endpoint / admin-key locator came from. `operator-contract` means the stack reported it; `caller-override` means a caller supplied it instead and the binding is not self-attesting for that value.",
+      "enum": ["operator-contract", "caller-override"]
+    },
+    "iacExecution": {
+      "type": "object",
+      "required": [
+        "planMetadataDigest",
+        "savedPlanSha256",
+        "terraformRoot",
+        "iacRevision",
+        "iacTreeDigest",
+        "terraformVersion",
+        "providerLockDigest",
+        "inputDigest",
+        "backend",
+        "executionIdentity",
+        "state",
+        "operatorContractDigest",
+        "evidenceMode",
+        "releaseQualified"
+      ],
+      "properties": {
+        "planMetadataDigest": { "$ref": "#/$defs/sha256" },
+        "savedPlanSha256": { "$ref": "#/$defs/sha256" },
+        "terraformRoot": { "type": "string", "minLength": 1 },
+        "iacRevision": { "type": "string", "minLength": 1 },
+        "iacTreeDigest": { "type": "string", "minLength": 1 },
+        "terraformVersion": { "type": "string", "minLength": 1 },
+        "providerLockDigest": { "$ref": "#/$defs/sha256" },
+        "inputDigest": { "$ref": "#/$defs/sha256" },
+        "backend": {
+          "type": "object",
+          "required": ["backendConfigDigest", "backendKind", "isRemote", "workspace", "objectKey", "region"],
+          "properties": {
+            "backendConfigDigest": { "$ref": "#/$defs/sha256" },
+            "backendKind": { "type": "string", "minLength": 1 },
+            "isRemote": { "type": "boolean" },
+            "workspace": { "type": "string", "minLength": 1 },
+            "objectKey": { "type": ["string", "null"] },
+            "region": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "executionIdentity": {
+          "type": "object",
+          "required": ["assumedRoleArn", "roleId", "accountId", "partition", "issuer", "credentialKind"],
+          "properties": {
+            "assumedRoleArn": { "type": "string", "minLength": 1 },
+            "roleId": { "type": ["string", "null"] },
+            "accountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+            "partition": { "type": "string", "minLength": 1 },
+            "issuer": { "type": ["string", "null"] },
+            "credentialKind": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "state": {
+          "type": "object",
+          "required": ["lineageBefore", "serialBefore", "lineageAfter", "serialAfter"],
+          "properties": {
+            "lineageBefore": { "type": ["string", "null"] },
+            "serialBefore": { "type": ["integer", "null"] },
+            "lineageAfter": { "type": ["string", "null"] },
+            "serialAfter": { "type": ["integer", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "operatorContractDigest": { "$ref": "#/$defs/nullableSha256" },
+        "evidenceMode": { "type": "string", "minLength": 1 },
+        "releaseQualified": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "teardownHandle": {
+      "description": "A dereferenceable teardown target: the exact root, workspace, backend object and state lineage a destroy would act on.",
+      "type": "object",
+      "required": [
+        "kind",
+        "terraformRoot",
+        "action",
+        "workspace",
+        "backendConfigDigest",
+        "objectKey",
+        "stateLineage",
+        "stateSerial",
+        "accountId",
+        "region"
+      ],
+      "properties": {
+        "kind": { "const": "honua.iac.terraform-teardown/v1" },
+        "terraformRoot": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "workspace": { "type": "string", "minLength": 1 },
+        "backendConfigDigest": { "$ref": "#/$defs/sha256" },
+        "objectKey": { "type": ["string", "null"] },
+        "stateLineage": { "type": ["string", "null"] },
+        "stateSerial": { "type": ["integer", "null"] },
+        "accountId": { "type": "string", "pattern": "^[0-9]{12}$" },
+        "region": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

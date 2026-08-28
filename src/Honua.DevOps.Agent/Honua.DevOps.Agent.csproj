@@ -55,6 +55,16 @@
       writes against the same file, with no second copy to drift.
     -->
     <EmbeddedResource Include="../../contracts/blind-eval-scorecard.v1.schema.json" LogicalName="Honua.DevOps.Agent.contracts.blind-eval-scorecard.v1.schema.json" />
+    <!--
+      The provisioning contracts are embedded for the same reason: honua-devops
+      validates every handoff, verification receipt and provision binding against the
+      exact committed file downstream consumers read, on write rather than only in
+      tests, so there is no second copy to drift.
+    -->
+    <EmbeddedResource Include="../../contracts/honua-devops-aws-ecs-provision-binding.schema.json" LogicalName="Honua.DevOps.Agent.contracts.honua-devops-aws-ecs-provision-binding.schema.json" />
+    <EmbeddedResource Include="../../contracts/honua-mcp-proxy-handoff.v1.schema.json" LogicalName="Honua.DevOps.Agent.contracts.honua-mcp-proxy-handoff.v1.schema.json" />
+    <EmbeddedResource Include="../../contracts/honua-devops-install-handoff-verification.v1.schema.json" LogicalName="Honua.DevOps.Agent.contracts.honua-devops-install-handoff-verification.v1.schema.json" />
+    <EmbeddedResource Include="../../contracts/honua-devops-provision-approval.v1.schema.json" LogicalName="Honua.DevOps.Agent.contracts.honua-devops-provision-approval.v1.schema.json" />
   </ItemGroup>
 
 </Project>

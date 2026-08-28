@@ -9,6 +9,13 @@ namespace Honua.DevOps.Agent.Operations;
 internal sealed record ProvisioningLineage(
     [property: JsonPropertyName("provisioningOperationId")] string ProvisioningOperationId,
     [property: JsonPropertyName("planSha256")] string? PlanSha256 = null,
+    /// <summary>
+    /// The honua-iac exact-plan metadata digest an approval binds to. This — not the
+    /// raw <c>.tfplan</c> hash — is what <c>terraform-exact-apply.sh</c> checks
+    /// against <c>--approved-digest</c>, and it transitively covers the plan bytes,
+    /// the backend, the account/role, the inputs and the prior state.
+    /// </summary>
+    [property: JsonPropertyName("planMetadataDigest")] string? PlanMetadataDigest = null,
     [property: JsonPropertyName("approvalReceiptId")] string? ApprovalReceiptId = null,
     [property: JsonPropertyName("approvalReceiptSha256")] string? ApprovalReceiptSha256 = null,
     [property: JsonPropertyName("applyAuditEventId")] string? ApplyAuditEventId = null,

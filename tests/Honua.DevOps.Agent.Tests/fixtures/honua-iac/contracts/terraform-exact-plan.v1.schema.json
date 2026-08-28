@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/contracts/terraform-exact-plan.v1.schema.json",
+  "title": "Honua Terraform exact-plan metadata contract v1",
+  "description": "Canonical, non-secret metadata emitted by scripts/terraform-exact-plan.sh. It binds one saved binary plan to exactly one execution context. honua-devops#147 binds an approval to plan_metadata_digest, which is the SHA-256 of this document's canonical JSON with plan_metadata_digest removed. It carries no credentials, no variable values, and no Terraform state contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "action",
+    "created_at_utc",
+    "expires_at_utc",
+    "actor_id",
+    "source",
+    "toolchain",
+    "backend",
+    "identity",
+    "inputs",
+    "state_before",
+    "plan",
+    "posture",
+    "qualification_status",
+    "evidence_scope",
+    "plan_metadata_digest"
+  ],
+  "properties": {
+    "schema_version": { "const": "v1" },
+    "kind": { "const": "honua.iac.exact-plan" },
+    "action": { "enum": ["apply", "destroy"] },
+    "created_at_utc": { "type": "string", "format": "date-time" },
+    "expires_at_utc": { "type": "string", "format": "date-time" },
+    "actor_id": { "type": "string", "minLength": 1 },
+    "target_id": { "type": ["string", "null"] },
+    "candidate_digest": { "type": ["string", "null"] },
+    "workload_identity_contract_digest": { "type": ["string", "null"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terraform_root", "iac_revision", "iac_tree_digest", "module_sources"],
+      "properties": {
+        "terraform_root": { "type": "string", "minLength": 1 },
+        "iac_revision": { "type": "string", "minLength": 1 },
+        "iac_tree_digest": { "type": "string", "minLength": 1 },
+        "module_sources": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terraform_version", "provider_lock_digest"],
+      "properties": {
+        "terraform_version": { "type": "string", "minLength": 1 },
+        "provider_lock_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend_config_digest",
+        "backend_kind",
+        "is_remote",
+        "workspace",
+        "object_key",
+        "region",
+        "locking",
+        "encryption"
+      ],
+      "properties": {
+        "backend_config_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "backend_kind": { "type": "string" },
+        "is_remote": { "type": "boolean" },
+        "workspace": { "type": "string", "minLength": 1 },
+        "object_key": { "type": ["string", "null"] },
+        "region": { "type": ["string", "null"] },
+        "bucket_id": { "type": ["string", "null"] },
+        "bucket_arn": { "type": ["string", "null"] },
+        "backend_access_role_arn": { "type": ["string", "null"] },
+        "locking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "type": "string" },
+            "detail": { "type": ["string", "null"] }
+          }
+        },
+        "encryption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": ["boolean", "null"] },
+            "kms_key_reference": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Who executed. Never the token, source credential, or session name.",
+      "required": ["account_id", "partition", "assumed_role_arn", "credential_kind", "evidence_mode"],
+      "properties": {
+        "account_id": { "type": ["string", "null"] },
+        "partition": { "type": ["string", "null"] },
+        "assumed_role_arn": { "type": ["string", "null"] },
+        "role_id": { "type": ["string", "null"] },
+        "issuer": { "type": ["string", "null"] },
+        "session_expires_at_utc": { "type": ["string", "null"] },
+        "credential_kind": { "enum": ["sts-assumed-role", "iam-user", "unknown"] },
+        "evidence_mode": { "enum": ["live", "offline-test"] }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Input values are hashed, never recorded. input_refs names the sources only.",
+      "required": ["input_digest", "input_refs"],
+      "properties": {
+        "input_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "input_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "state_before": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Lineage and serial only. State contents are never captured.",
+      "required": ["lineage", "serial"],
+      "properties": {
+        "lineage": { "type": ["string", "null"] },
+        "serial": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "posture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_qualified", "local_state_allowed", "dirty_source_allowed"],
+      "properties": {
+        "release_qualified": { "type": "boolean" },
+        "local_state_allowed": { "type": "boolean" },
+        "dirty_source_allowed": { "type": "boolean" }
+      }
+    },
+    "qualification_status": { "const": "unqualified" },
+    "evidence_scope": { "const": "metadata-only-pre-apply" },
+    "plan_metadata_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

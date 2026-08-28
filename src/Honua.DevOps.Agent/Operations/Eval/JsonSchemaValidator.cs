@@ -13,9 +13,18 @@ namespace Honua.DevOps.Agent.Operations.Eval;
 /// <para>
 /// Supported keywords: <c>$ref</c> (local <c>#/...</c> pointers only), <c>$defs</c>,
 /// <c>type</c> (string or array of strings), <c>const</c>, <c>enum</c>,
-/// <c>required</c>, <c>properties</c>, <c>additionalProperties</c> (boolean form
-/// only), <c>items</c>, <c>minItems</c>, <c>minLength</c>, <c>minimum</c>,
-/// <c>maximum</c>, and <c>pattern</c>.
+/// <c>required</c>, <c>properties</c>, <c>additionalProperties</c> (boolean and
+/// subschema forms), <c>propertyNames</c>, <c>allOf</c>, <c>if</c>/<c>then</c>/<c>else</c>,
+/// <c>items</c>, <c>minItems</c>, <c>minLength</c>, <c>maxLength</c>,
+/// <c>minimum</c>, <c>maximum</c>, <c>pattern</c>, and <c>format</c>
+/// (<c>date-time</c> and <c>uri</c> only, enforced rather than annotated).
+/// </para>
+/// <para>
+/// The applicator and <c>format</c> support exists so honua-devops can validate the
+/// documents the honua-iac execution substrate emits against honua-iac's OWN
+/// published schemas — read from the configured checkout, never vendored — rather
+/// than against a local restatement that could drift from the contract it claims to
+/// enforce.
 /// </para>
 /// <para>
 /// <b>Fail-closed contract.</b> This validator never silently ignores a keyword it
@@ -24,8 +33,9 @@ namespace Honua.DevOps.Agent.Operations.Eval;
 /// non-validating annotation on the explicit allowlist (<c>$schema</c>, <c>$id</c>,
 /// <c>$comment</c>, <c>title</c>, <c>description</c>, <c>examples</c>,
 /// <c>default</c>, <c>deprecated</c>, <c>readOnly</c>, <c>writeOnly</c>). Anything
-/// else — <c>oneOf</c>, <c>format</c>, <c>maxLength</c>, <c>exclusiveMinimum</c>, an
-/// object-form <c>additionalProperties</c>, a <c>$ref</c> with validation siblings —
+/// else — <c>oneOf</c>, <c>anyOf</c>, <c>not</c>, <c>exclusiveMinimum</c>, an
+/// unrecognized <c>format</c>, a <c>then</c> without an <c>if</c>, a <c>$ref</c>
+/// with validation siblings —
 /// is reported as a validation error and the instance check does not run. The
 /// default posture for an unrecognized keyword is refusal, so "schema-validated on
 /// write" can never quietly degrade into "partially validated" when a contract
@@ -49,12 +59,31 @@ internal static class JsonSchemaValidator
         "required",
         "properties",
         "additionalProperties",
+        "propertyNames",
+        "allOf",
+        "if",
+        "then",
+        "else",
         "items",
         "minItems",
         "minLength",
+        "maxLength",
         "minimum",
         "maximum",
-        "pattern"
+        "pattern",
+        "format"
+    };
+
+    /// <summary>
+    /// The <c>format</c> values this validator actually enforces. <c>format</c> is an
+    /// annotation in JSON Schema, but treating it as one here would let a contract
+    /// declare a constraint that nothing checks, so an unrecognized format is refused
+    /// rather than ignored.
+    /// </summary>
+    internal static readonly IReadOnlySet<string> SupportedFormats = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "date-time",
+        "uri"
     };
 
     /// <summary>
@@ -171,21 +200,58 @@ internal static class JsonSchemaValidator
                     break;
 
                 case "items":
+                case "propertyNames":
+                case "if":
+                case "then":
+                case "else":
                     CheckSchemaNode(property.Value, childPath, errors);
                     break;
 
-                case "additionalProperties":
-                    // Only the boolean form is enforced; the object (subschema) form
-                    // would silently permit unvalidated properties.
-                    if (property.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                case "allOf":
+                    if (property.Value.ValueKind != JsonValueKind.Array)
+                    {
+                        errors.Add($"`allOf` at {path} must be an array of subschemas.");
+                        break;
+                    }
+
+                    int branch = 0;
+                    foreach (JsonElement subSchema in property.Value.EnumerateArray())
+                    {
+                        CheckSchemaNode(subSchema, $"{childPath}[{branch}]", errors);
+                        branch++;
+                    }
+
+                    break;
+
+                case "format":
+                    if (property.Value.ValueKind != JsonValueKind.String
+                        || !SupportedFormats.Contains(property.Value.GetString() ?? string.Empty))
                     {
                         errors.Add(
-                            $"unsupported `additionalProperties` form at {path}; "
-                            + "only the boolean form is enforced.");
+                            $"unsupported `format` value {property.Value.GetRawText()} at {path}; "
+                            + $"enforced formats are: {string.Join(", ", SupportedFormats)}.");
+                    }
+
+                    break;
+
+                case "additionalProperties":
+                    // Both forms are enforced: `false` forbids unlisted properties, and
+                    // the subschema form validates each of them.
+                    if (property.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    {
+                        CheckSchemaNode(property.Value, childPath, errors);
                     }
 
                     break;
             }
+        }
+
+        // `then`/`else` are inert without `if`. Refuse the shape rather than let a
+        // schema author believe a branch is being applied when it never runs.
+        if ((schema.TryGetProperty("then", out _) || schema.TryGetProperty("else", out _))
+            && !schema.TryGetProperty("if", out _))
+        {
+            errors.Add($"`then`/`else` without `if` at {path} would never be applied.");
         }
     }
 
@@ -235,6 +301,31 @@ internal static class JsonSchemaValidator
             errors.Add($"{path}: value {instance.GetRawText()} is not one of {enumElement.GetRawText()}.");
         }
 
+        // Applicators run for every instance kind, so they are applied before the
+        // kind-specific checks below.
+        if (schema.TryGetProperty("allOf", out JsonElement allOf) && allOf.ValueKind == JsonValueKind.Array)
+        {
+            int branch = 0;
+            foreach (JsonElement subSchema in allOf.EnumerateArray())
+            {
+                ValidateNode(instance, subSchema, root, $"{path}/allOf[{branch}]", errors);
+                branch++;
+            }
+        }
+
+        if (schema.TryGetProperty("if", out JsonElement conditionSchema))
+        {
+            // The `if` branch is evaluated for its outcome only; its own errors are
+            // never reported, because a failed `if` is not a validation failure.
+            List<string> conditionErrors = [];
+            ValidateNode(instance, conditionSchema, root, path, conditionErrors);
+            string branchName = conditionErrors.Count == 0 ? "then" : "else";
+            if (schema.TryGetProperty(branchName, out JsonElement branchSchema))
+            {
+                ValidateNode(instance, branchSchema, root, $"{path}/{branchName}", errors);
+            }
+        }
+
         switch (instance.ValueKind)
         {
             case JsonValueKind.Object:
@@ -275,20 +366,36 @@ internal static class JsonSchemaValidator
         bool hasProperties = schema.TryGetProperty("properties", out JsonElement propertiesElement) &&
                              propertiesElement.ValueKind == JsonValueKind.Object;
 
-        bool additionalAllowed = !schema.TryGetProperty("additionalProperties", out JsonElement additionalElement) ||
-                                 additionalElement.ValueKind != JsonValueKind.False;
+        bool hasAdditional = schema.TryGetProperty("additionalProperties", out JsonElement additionalElement);
+        bool additionalForbidden = hasAdditional && additionalElement.ValueKind == JsonValueKind.False;
+        bool additionalSchema = hasAdditional && additionalElement.ValueKind == JsonValueKind.Object;
+
+        bool hasPropertyNames = schema.TryGetProperty("propertyNames", out JsonElement propertyNamesSchema);
 
         foreach (JsonProperty property in instance.EnumerateObject())
         {
+            if (hasPropertyNames)
+            {
+                // `propertyNames` constrains the NAME, validated as a JSON string.
+                using JsonDocument name = JsonDocument.Parse(JsonSerializer.Serialize(property.Name));
+                ValidateNode(name.RootElement, propertyNamesSchema, root, $"{path}: property name `{property.Name}`", errors);
+            }
+
             if (hasProperties && propertiesElement.TryGetProperty(property.Name, out JsonElement propertySchema))
             {
                 ValidateNode(property.Value, propertySchema, root, $"{path}.{property.Name}", errors);
                 continue;
             }
 
-            if (!additionalAllowed)
+            if (additionalForbidden)
             {
                 errors.Add($"{path}: property `{property.Name}` is not allowed by the schema.");
+                continue;
+            }
+
+            if (additionalSchema)
+            {
+                ValidateNode(property.Value, additionalElement, root, $"{path}.{property.Name}", errors);
             }
         }
     }
@@ -333,6 +440,13 @@ internal static class JsonSchemaValidator
             errors.Add($"{path}: expected minLength {minimumLength} but found {value.Length}.");
         }
 
+        if (schema.TryGetProperty("maxLength", out JsonElement maxLength) &&
+            maxLength.TryGetInt32(out int maximumLength) &&
+            value.Length > maximumLength)
+        {
+            errors.Add($"{path}: expected maxLength {maximumLength} but found {value.Length}.");
+        }
+
         if (schema.TryGetProperty("pattern", out JsonElement pattern) &&
             pattern.ValueKind == JsonValueKind.String)
         {
@@ -340,6 +454,36 @@ internal static class JsonSchemaValidator
             if (!Regex.IsMatch(value, expression, RegexOptions.None, PatternTimeout))
             {
                 errors.Add($"{path}: value does not match pattern `{expression}`.");
+            }
+        }
+
+        if (schema.TryGetProperty("format", out JsonElement format) && format.ValueKind == JsonValueKind.String)
+        {
+            switch (format.GetString())
+            {
+                case "date-time":
+                    if (!DateTimeOffset.TryParse(
+                            value,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.RoundtripKind,
+                            out _))
+                    {
+                        errors.Add($"{path}: value is not an RFC 3339 date-time.");
+                    }
+
+                    break;
+
+                case "uri":
+                    // The scheme must be written out. On Unix `Uri.TryCreate` happily
+                    // reads "/relative/path" as an absolute `file:` URI, which would
+                    // let a path masquerade as an endpoint.
+                    if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? parsed)
+                        || !value.StartsWith(parsed.Scheme + ":", StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors.Add($"{path}: value is not an absolute URI with an explicit scheme.");
+                    }
+
+                    break;
             }
         }
     }

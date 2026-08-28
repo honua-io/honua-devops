@@ -1,0 +1,354 @@
+{
+  "honua_url": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": "https://honua.example.com"
+  },
+  "ecs_cluster_name": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": "honuaecs-it-cluster"
+  },
+  "ecs_service_name": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": "honuaecs-it-service"
+  },
+  "operator_contract_status": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": "qualified"
+  },
+  "operator_contract_digest": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229"
+  },
+  "deployment_contract": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": {
+      "schema_version": "honua.operator-contract/v1",
+      "kind": "deployment",
+      "identity": {
+        "status": "qualified",
+        "contract_digest": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229",
+        "candidate_digest": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "manifest_digest": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "iac_revision": "9c1e7f0b2d3a4c5e6f708192a3b4c5d6e7f80912",
+        "iac_root": "infrastructure/terraform/examples/aws",
+        "module_source": "infrastructure/terraform/modules/aws-ecs",
+        "terraform_version": "1.9.8",
+        "provider_lock_digest": "5d4c3b2a1908f7e6d5c4b3a29180716253d4c5b6a7f8e9d0c1b2a3948576a6b5",
+        "image_reference": "ghcr.io/honua-io/honua@sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "image_digest": "sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "backend_config_digest": "c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4",
+        "state_lineage": "8f3b1c2d-4e5a-4b6c-9d7e-0a1b2c3d4e5f",
+        "state_serial": 42,
+        "workload_identity": "arn:aws:iam::123456789012:role/honuaecs-it-task",
+        "artifacts": [
+          {
+            "name": "honua-proxy",
+            "kind": "proxy",
+            "version": "2026.1.0",
+            "digest": "b7a6958473625140f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788"
+          }
+        ],
+        "platform": {
+          "provider": "aws",
+          "partition": "aws",
+          "account_id": "123456789012",
+          "region": "us-east-1"
+        }
+      },
+      "stack": {
+        "id": "aws-ecs",
+        "platform": "aws",
+        "runtime": "ecs-fargate",
+        "environment": "it",
+        "region": "us-east-1",
+        "account_id": "123456789012",
+        "name_prefix": "honuaecs"
+      },
+      "endpoints": {
+        "public_base_url": "https://honua.example.com",
+        "readiness_path": "/healthz/ready",
+        "admin_base_path": "/api/v1/admin",
+        "protocol_path": "/v1",
+        "mcp_path": "/mcp",
+        "ingress_dns_name": "honuaecs-it-alb-1234567890.us-east-1.elb.amazonaws.com",
+        "custom_domain": "honua.example.com"
+      },
+      "workload": {
+        "kind": "AwsEcs",
+        "name": "honuaecs-it-service",
+        "resource_id": "arn:aws:ecs:us-east-1:123456789012:service/honuaecs-it-cluster/honuaecs-it-service",
+        "cluster_name": "honuaecs-it-cluster",
+        "cluster_id": "arn:aws:ecs:us-east-1:123456789012:cluster/honuaecs-it-cluster",
+        "cpu_architecture": "X86_64",
+        "desired_count": 1,
+        "identity": "arn:aws:iam::123456789012:role/honuaecs-it-task"
+      },
+      "rollout": {
+        "backend_name": "honua-gitops-aws-ecs",
+        "target_kind": "AwsEcs",
+        "target_id": "honuaecs-it-service",
+        "target_name": "honuaecs-it-service",
+        "target_resource": "arn:aws:ecs:us-east-1:123456789012:cluster/honuaecs-it-cluster",
+        "current_revision": null,
+        "desired_revision": null,
+        "canary": {
+          "enabled": false,
+          "service_name": null,
+          "target_group_arn": null,
+          "weight_percentage": 0,
+          "verification_header_name": null
+        }
+      },
+      "dependencies": {
+        "database": {
+          "kind": "aws-rds-postgres",
+          "managed": true,
+          "endpoint": "honuaecs-it-db.abcdefghij.us-east-1.rds.amazonaws.com",
+          "secret_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-db-connection-AbCdEf"
+        },
+        "cache": {
+          "kind": "aws-elasticache-redis",
+          "enabled": true,
+          "secret_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-redis-connection-AbCdEf"
+        },
+        "ingress": {
+          "kind": "aws-alb",
+          "endpoint": "https://honua.example.com",
+          "certificate_ref": "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
+          "waf_ref": null
+        },
+        "object_storage": {
+          "kind": null,
+          "enabled": false,
+          "bucket": null,
+          "prefix": null
+        }
+      },
+      "secret_refs": {
+        "admin_password": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-admin-password-AbCdEf",
+        "connection_encryption_master_key": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-master-key-AbCdEf",
+        "db_connection": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-db-connection-AbCdEf",
+        "redis_connection": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-redis-connection-AbCdEf"
+      }
+    }
+  },
+  "validation_contract": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": {
+      "schema_version": "honua.operator-contract/v1",
+      "kind": "validation",
+      "identity": {
+        "status": "qualified",
+        "contract_digest": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229",
+        "candidate_digest": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "manifest_digest": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "iac_revision": "9c1e7f0b2d3a4c5e6f708192a3b4c5d6e7f80912",
+        "iac_root": "infrastructure/terraform/examples/aws",
+        "module_source": "infrastructure/terraform/modules/aws-ecs",
+        "terraform_version": "1.9.8",
+        "provider_lock_digest": "5d4c3b2a1908f7e6d5c4b3a29180716253d4c5b6a7f8e9d0c1b2a3948576a6b5",
+        "image_reference": "ghcr.io/honua-io/honua@sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "image_digest": "sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "backend_config_digest": "c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4",
+        "state_lineage": "8f3b1c2d-4e5a-4b6c-9d7e-0a1b2c3d4e5f",
+        "state_serial": 42,
+        "workload_identity": "arn:aws:iam::123456789012:role/honuaecs-it-task",
+        "artifacts": [
+          {
+            "name": "honua-proxy",
+            "kind": "proxy",
+            "version": "2026.1.0",
+            "digest": "b7a6958473625140f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788"
+          }
+        ],
+        "platform": {
+          "provider": "aws",
+          "partition": "aws",
+          "account_id": "123456789012",
+          "region": "us-east-1"
+        }
+      },
+      "platform": {
+        "name": "aws-ecs",
+        "capabilities": {
+          "deploy_plan": true,
+          "mutation": true,
+          "scale_check": false,
+          "backup_drill": true,
+          "idempotency": true,
+          "http_protocol": true,
+          "mcp": true
+        }
+      },
+      "tests": {
+        "readiness_url": "https://honua.example.com/healthz/ready",
+        "admin_url": "https://honua.example.com/api/v1/admin",
+        "protocol_url": "https://honua.example.com/v1",
+        "mcp_url": "https://honua.example.com/mcp"
+      },
+      "mcp": {
+        "enabled": true,
+        "profile": "honua.mcp/operator.v1",
+        "transport": "http",
+        "required_tools": [
+          "honua.search",
+          "honua.ingest",
+          "honua.admin.status"
+        ]
+      },
+      "test_data": {
+        "seed_mode": "smoke",
+        "tenant_prefix": "honua-it",
+        "reuse_data_stack": false,
+        "admin_credential_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-admin-password-AbCdEf"
+      },
+      "artifacts": {
+        "terraform_root": "infrastructure/terraform/examples/aws",
+        "module_source": "infrastructure/terraform/modules/aws-ecs",
+        "image_reference": "ghcr.io/honua-io/honua@sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "image_digest": "sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "pins": [
+          {
+            "name": "honua-proxy",
+            "kind": "proxy",
+            "version": "2026.1.0",
+            "digest": "b7a6958473625140f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788"
+          }
+        ]
+      },
+      "lifecycle": {
+        "reuse_data_stack": false,
+        "destroy_mode": "ephemeral",
+        "ttl_hours": 8
+      },
+      "selectors": {
+        "account_id": "123456789012",
+        "region": "us-east-1",
+        "cluster_arn": "arn:aws:ecs:us-east-1:123456789012:cluster/honuaecs-it-cluster",
+        "service_arn": "arn:aws:ecs:us-east-1:123456789012:service/honuaecs-it-cluster/honuaecs-it-service",
+        "log_group": "/honua/honuaecs-it",
+        "tag_filters": {
+          "Project": "honua",
+          "Environment": "it"
+        }
+      }
+    }
+  },
+  "operations_contract": {
+    "sensitive": false,
+    "type": "dynamic",
+    "value": {
+      "schema_version": "honua.operator-contract/v1",
+      "kind": "operations",
+      "identity": {
+        "status": "qualified",
+        "contract_digest": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229",
+        "candidate_digest": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "manifest_digest": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "iac_revision": "9c1e7f0b2d3a4c5e6f708192a3b4c5d6e7f80912",
+        "iac_root": "infrastructure/terraform/examples/aws",
+        "module_source": "infrastructure/terraform/modules/aws-ecs",
+        "terraform_version": "1.9.8",
+        "provider_lock_digest": "5d4c3b2a1908f7e6d5c4b3a29180716253d4c5b6a7f8e9d0c1b2a3948576a6b5",
+        "image_reference": "ghcr.io/honua-io/honua@sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "image_digest": "sha256:2f5c1d0e9b7a43c68d1f0a5e4b3c2d1908f7e6d5c4b3a29180716253d4c5b6a7",
+        "backend_config_digest": "c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4",
+        "state_lineage": "8f3b1c2d-4e5a-4b6c-9d7e-0a1b2c3d4e5f",
+        "state_serial": 42,
+        "workload_identity": "arn:aws:iam::123456789012:role/honuaecs-it-task",
+        "artifacts": [
+          {
+            "name": "honua-proxy",
+            "kind": "proxy",
+            "version": "2026.1.0",
+            "digest": "b7a6958473625140f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788"
+          }
+        ],
+        "platform": {
+          "provider": "aws",
+          "partition": "aws",
+          "account_id": "123456789012",
+          "region": "us-east-1"
+        }
+      },
+      "observability": {
+        "telemetry_policy": "honua-http",
+        "prometheus_job": "honua",
+        "prometheus_canary_job": null,
+        "log_group": "/honua/honuaecs-it",
+        "metrics_namespace": "Honua/honuaecs-it"
+      },
+      "secrets": {
+        "provider": "aws-secretsmanager",
+        "references": {
+          "admin_password": {
+            "kind": "admin_password",
+            "provider": "aws-secretsmanager",
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-admin-password-AbCdEf",
+            "kms_key_ref": null,
+            "managed_by": "honua-iac"
+          },
+          "connection_encryption_master_key": {
+            "kind": "connection_encryption_master_key",
+            "provider": "aws-secretsmanager",
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-master-key-AbCdEf",
+            "kms_key_ref": null,
+            "managed_by": "honua-iac"
+          },
+          "db_connection": {
+            "kind": "db_connection",
+            "provider": "aws-secretsmanager",
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-db-connection-AbCdEf",
+            "kms_key_ref": null,
+            "managed_by": "honua-iac"
+          },
+          "redis_connection": {
+            "kind": "redis_connection",
+            "provider": "aws-secretsmanager",
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-redis-connection-AbCdEf",
+            "kms_key_ref": null,
+            "managed_by": "honua-iac"
+          }
+        }
+      },
+      "scaling": {
+        "deployment_mode": "SingleInstance",
+        "desired_count": 1,
+        "max_capacity": 2,
+        "cpu_architecture": "X86_64"
+      },
+      "resilience": {
+        "ingress_deletion_protection": false,
+        "ingress_access_logs_enabled": true,
+        "database_managed": true,
+        "cache_enabled": true
+      },
+      "grouping": {
+        "resource_group": "honuaecs-it-cluster",
+        "name_prefix": "honuaecs",
+        "tags": {
+          "Project": "honua",
+          "Environment": "it"
+        }
+      },
+      "cost": {
+        "owner": "honua-release",
+        "ephemeral": true,
+        "ttl_hours": 8
+      },
+      "state": {
+        "terraform_root": "infrastructure/terraform/examples/aws",
+        "backend_config_digest": "c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4",
+        "lineage": "8f3b1c2d-4e5a-4b6c-9d7e-0a1b2c3d4e5f",
+        "serial": 42
+      }
+    }
+  }
+}

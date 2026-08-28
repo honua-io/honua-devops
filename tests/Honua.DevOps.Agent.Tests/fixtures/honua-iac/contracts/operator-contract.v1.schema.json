@@ -1,0 +1,642 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/contracts/honua.operator-contract.v1.schema.json",
+  "title": "Honua Operator Contract v1",
+  "description": "Canonical honua.operator-contract/v1 handoff between honua-iac (producer) and honua-devops, honua-release, honua-server, and honua-helm (consumers). Carries references and identity only; it never carries secret values, connection strings, tokens, or Terraform state credentials. See docs/operator-contract.md for field semantics, sensitivity rules, canonicalization, and compatibility policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "deployment_contract",
+    "validation_contract",
+    "operations_contract"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "#/$defs/schema_version" },
+    "deployment_contract": { "$ref": "#/$defs/deployment_contract" },
+    "validation_contract": { "$ref": "#/$defs/validation_contract" },
+    "operations_contract": { "$ref": "#/$defs/operations_contract" }
+  },
+  "$defs": {
+    "schema_version": {
+      "description": "Fully qualified contract identifier. Consumers fail closed on any other value, including an absent one.",
+      "const": "honua.operator-contract/v1"
+    },
+    "sha256_hex": {
+      "description": "Lowercase hex SHA-256 with no algorithm prefix.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullable_sha256_hex": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullable_git_revision": {
+      "description": "Full Git object id (SHA-1 or SHA-256). Abbreviated ids, branches, and tags are mutable and are rejected.",
+      "type": ["string", "null"],
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "nullable_image_digest": {
+      "description": "OCI content digest of the deployed image. A bare tag never satisfies this field.",
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullable_image_reference": {
+      "description": "Fully qualified, digest-pinned image reference of the form registry/repository@sha256:<64 hex>. A tag-only reference is mutable and is rejected.",
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\-]*(\\.[A-Za-z0-9._\\-]+)*(:[0-9]+)?(/[A-Za-z0-9._\\-]+)+@sha256:[0-9a-f]{64}$"
+    },
+    "nullable_uuid": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "nullable_https_url": {
+      "type": ["string", "null"],
+      "pattern": "^https?://[^\\s]+$"
+    },
+    "url_path": {
+      "type": "string",
+      "pattern": "^/[^\\s]*$"
+    },
+    "nullable_url_path": {
+      "type": ["string", "null"],
+      "pattern": "^/[^\\s]*$"
+    },
+    "aws_account_id": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{12}$"
+    },
+    "aws_region": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-gov)?(-iso[a-z]?)?-[a-z]+-[0-9]$"
+    },
+    "aws_arn": {
+      "type": "string",
+      "pattern": "^arn:aws[a-z0-9-]*:[a-z0-9-]+:[a-z0-9-]*:[0-9]{12}:.+$"
+    },
+    "nullable_aws_arn": {
+      "type": ["string", "null"],
+      "pattern": "^arn:aws[a-z0-9-]*:[a-z0-9-]+:[a-z0-9-]*:[0-9]{12}:.+$"
+    },
+    "secret_reference_arn": {
+      "description": "Reference to a managed secret. Only AWS Secrets Manager, SSM Parameter Store, and KMS ARNs are accepted. A secret value, a connection string, or a rendered environment value in this position is a contract violation.",
+      "type": "string",
+      "pattern": "^arn:aws[a-z0-9-]*:(secretsmanager|ssm|kms):[a-z0-9-]+:[0-9]{12}:.+$"
+    },
+    "nullable_secret_reference_arn": {
+      "type": ["string", "null"],
+      "pattern": "^arn:aws[a-z0-9-]*:(secretsmanager|ssm|kms):[a-z0-9-]+:[0-9]{12}:.+$"
+    },
+    "secret_reference": {
+      "description": "Typed secret reference. Carries a locator only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "provider", "id"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "admin_password",
+            "connection_encryption_master_key",
+            "db_connection",
+            "redis_connection",
+            "ai_provider_api_key",
+            "other"
+          ]
+        },
+        "provider": { "enum": ["aws-secretsmanager", "aws-ssm", "aws-kms"] },
+        "id": { "$ref": "#/$defs/secret_reference_arn" },
+        "kms_key_ref": { "$ref": "#/$defs/nullable_aws_arn" },
+        "managed_by": { "enum": ["honua-iac", "operator"] }
+      }
+    },
+    "artifact_pin": {
+      "description": "Non-image artifact that is part of the handoff (proxy, CLI, MCP server). Version alone is not sufficient; the digest is the immutable claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "version", "digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["proxy", "cli", "mcp-server", "helm-chart", "package", "other"] },
+        "version": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/sha256_hex" }
+      }
+    },
+    "extensions": {
+      "description": "Platform-specific additive fields. Extensions may add facts; they must never restate, override, or reinterpret a core field.",
+      "type": "object"
+    },
+    "tags": {
+      "description": "Resource tags. Keys and values must be printable ASCII so the canonical encoding is reproducible byte for byte.",
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "propertyNames": { "pattern": "^[\\x20-\\x7e]+$" }
+    },
+
+    "platform_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "partition", "account_id", "region"],
+      "properties": {
+        "provider": { "const": "aws" },
+        "partition": { "type": "string", "pattern": "^aws[a-z0-9-]*$" },
+        "account_id": { "$ref": "#/$defs/aws_account_id" },
+        "region": { "$ref": "#/$defs/aws_region" }
+      }
+    },
+
+    "identity": {
+      "description": "Immutable identity block. Byte-identical in all three contracts. Terraform projects these values; it never derives a Git revision, resolves a tag to a digest, or otherwise converts a mutable reference into an immutable claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "contract_digest",
+        "candidate_digest",
+        "manifest_digest",
+        "iac_revision",
+        "iac_root",
+        "module_source",
+        "terraform_version",
+        "provider_lock_digest",
+        "image_reference",
+        "image_digest",
+        "backend_config_digest",
+        "state_lineage",
+        "state_serial",
+        "workload_identity",
+        "artifacts",
+        "platform"
+      ],
+      "properties": {
+        "status": {
+          "description": "qualified means every immutable pin required for release use is present. unqualified means the contract describes a disposable development plan and must be rejected by certified consumers.",
+          "enum": ["qualified", "unqualified"]
+        },
+        "contract_digest": {
+          "description": "SHA-256 over the canonical bytes of the digest input (see docs/operator-contract.md). Identical in all three contracts.",
+          "$ref": "#/$defs/nullable_sha256_hex"
+        },
+        "candidate_digest": {
+          "description": "honua-release candidate digest. Supplied by the release manifest.",
+          "$ref": "#/$defs/nullable_sha256_hex"
+        },
+        "manifest_digest": {
+          "description": "SHA-256 over the canonical bytes of the honua-release manifest that authorized this deployment.",
+          "$ref": "#/$defs/nullable_sha256_hex"
+        },
+        "iac_revision": {
+          "description": "Exact honua-iac commit that produced this contract. Supplied by the caller; Terraform cannot observe it.",
+          "$ref": "#/$defs/nullable_git_revision"
+        },
+        "iac_root": {
+          "description": "Repository-relative Terraform root that produced this contract.",
+          "type": "string",
+          "minLength": 1
+        },
+        "module_source": {
+          "description": "Repository-relative source of the platform module composed by the root.",
+          "type": "string",
+          "minLength": 1
+        },
+        "terraform_version": { "type": ["string", "null"], "minLength": 1 },
+        "provider_lock_digest": {
+          "description": "SHA-256 over the root's .terraform.lock.hcl bytes.",
+          "$ref": "#/$defs/nullable_sha256_hex"
+        },
+        "image_reference": { "$ref": "#/$defs/nullable_image_reference" },
+        "image_digest": { "$ref": "#/$defs/nullable_image_digest" },
+        "backend_config_digest": { "$ref": "#/$defs/nullable_sha256_hex" },
+        "state_lineage": { "$ref": "#/$defs/nullable_uuid" },
+        "state_serial": { "type": ["integer", "null"], "minimum": 0 },
+        "workload_identity": {
+          "description": "Identity the workload assumes at runtime (task role ARN or equivalent).",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact_pin" }
+        },
+        "platform": { "$ref": "#/$defs/platform_identity" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "qualified" } }, "required": ["status"] },
+          "then": {
+            "properties": {
+              "contract_digest": { "$ref": "#/$defs/sha256_hex" },
+              "candidate_digest": { "$ref": "#/$defs/sha256_hex" },
+              "manifest_digest": { "$ref": "#/$defs/sha256_hex" },
+              "iac_revision": { "type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$" },
+              "terraform_version": { "type": "string", "minLength": 1 },
+              "provider_lock_digest": { "$ref": "#/$defs/sha256_hex" },
+              "image_reference": { "type": "string" },
+              "image_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "backend_config_digest": { "$ref": "#/$defs/sha256_hex" },
+              "state_lineage": { "type": "string" },
+              "state_serial": { "type": "integer", "minimum": 0 },
+              "workload_identity": { "type": "string", "minLength": 1 },
+              "platform": {
+                "properties": { "account_id": { "type": "string", "pattern": "^[0-9]{12}$" } },
+                "required": ["account_id"]
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "deployment_contract": {
+      "description": "What was deployed and how traffic reaches it. Primary consumer: honua-devops install handoff.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "identity",
+        "stack",
+        "endpoints",
+        "workload",
+        "rollout",
+        "dependencies",
+        "secret_refs"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schema_version" },
+        "kind": { "const": "deployment" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "extensions": { "$ref": "#/$defs/extensions" },
+        "stack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "platform", "runtime", "environment", "region", "account_id", "name_prefix"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "platform": { "const": "aws" },
+            "runtime": { "enum": ["ecs-fargate", "lambda", "eks", "aks", "aca", "azure-functions"] },
+            "environment": { "type": "string", "minLength": 1 },
+            "region": { "$ref": "#/$defs/aws_region" },
+            "account_id": { "$ref": "#/$defs/aws_account_id" },
+            "name_prefix": { "type": "string", "minLength": 1 }
+          }
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "public_base_url",
+            "readiness_path",
+            "admin_base_path",
+            "protocol_path",
+            "mcp_path",
+            "ingress_dns_name",
+            "custom_domain"
+          ],
+          "properties": {
+            "public_base_url": { "$ref": "#/$defs/nullable_https_url" },
+            "readiness_path": { "$ref": "#/$defs/url_path" },
+            "admin_base_path": { "$ref": "#/$defs/url_path" },
+            "protocol_path": { "$ref": "#/$defs/url_path" },
+            "mcp_path": { "$ref": "#/$defs/nullable_url_path" },
+            "ingress_dns_name": { "type": ["string", "null"], "minLength": 1 },
+            "custom_domain": { "type": ["string", "null"], "minLength": 1 }
+          }
+        },
+        "workload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "resource_id", "cluster_name", "cluster_id", "cpu_architecture", "desired_count", "identity"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "resource_id": { "$ref": "#/$defs/nullable_aws_arn" },
+            "cluster_name": { "type": "string", "minLength": 1 },
+            "cluster_id": { "$ref": "#/$defs/nullable_aws_arn" },
+            "cpu_architecture": { "type": "string", "minLength": 1 },
+            "desired_count": { "type": "integer", "minimum": 0 },
+            "identity": { "type": ["string", "null"], "minLength": 1 }
+          }
+        },
+        "rollout": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "backend_name",
+            "target_kind",
+            "target_id",
+            "target_name",
+            "target_resource",
+            "current_revision",
+            "desired_revision",
+            "canary"
+          ],
+          "properties": {
+            "backend_name": { "type": "string", "minLength": 1 },
+            "target_kind": { "type": "string", "minLength": 1 },
+            "target_id": { "type": "string", "minLength": 1 },
+            "target_name": { "type": "string", "minLength": 1 },
+            "target_resource": { "type": ["string", "null"], "minLength": 1 },
+            "current_revision": { "type": ["string", "null"] },
+            "desired_revision": { "type": ["string", "null"] },
+            "canary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enabled", "service_name", "target_group_arn", "weight_percentage", "verification_header_name"],
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "service_name": { "type": ["string", "null"] },
+                "target_group_arn": { "$ref": "#/$defs/nullable_aws_arn" },
+                "weight_percentage": { "type": "integer", "minimum": 0, "maximum": 100 },
+                "verification_header_name": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["database", "cache", "ingress", "object_storage"],
+          "properties": {
+            "database": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "managed", "endpoint", "secret_ref"],
+              "properties": {
+                "kind": { "type": "string", "minLength": 1 },
+                "managed": { "type": "boolean" },
+                "endpoint": { "type": ["string", "null"], "minLength": 1 },
+                "secret_ref": { "$ref": "#/$defs/nullable_secret_reference_arn" }
+              }
+            },
+            "cache": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "enabled", "secret_ref"],
+              "properties": {
+                "kind": { "type": "string", "minLength": 1 },
+                "enabled": { "type": "boolean" },
+                "secret_ref": { "$ref": "#/$defs/nullable_secret_reference_arn" }
+              }
+            },
+            "ingress": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "endpoint", "certificate_ref", "waf_ref"],
+              "properties": {
+                "kind": { "type": "string", "minLength": 1 },
+                "endpoint": { "$ref": "#/$defs/nullable_https_url" },
+                "certificate_ref": { "$ref": "#/$defs/nullable_aws_arn" },
+                "waf_ref": { "$ref": "#/$defs/nullable_aws_arn" }
+              }
+            },
+            "object_storage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "enabled", "bucket", "prefix"],
+              "properties": {
+                "kind": { "type": ["string", "null"] },
+                "enabled": { "type": "boolean" },
+                "bucket": { "type": ["string", "null"] },
+                "prefix": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
+        "secret_refs": {
+          "description": "Secret references the install handoff needs, keyed by logical name. Values are locators only and must agree with operations_contract.secrets.references for shared keys.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/secret_reference_arn" },
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "required": ["admin_password"]
+        }
+      }
+    },
+
+    "validation_contract": {
+      "description": "How a certified lane should exercise and tear down the deployment. Primary consumers: honua-devops verification, honua-release smoke and teardown receipts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "identity",
+        "platform",
+        "tests",
+        "mcp",
+        "test_data",
+        "artifacts",
+        "lifecycle",
+        "selectors"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schema_version" },
+        "kind": { "const": "validation" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "extensions": { "$ref": "#/$defs/extensions" },
+        "platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "capabilities"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "capabilities": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["deploy_plan", "mutation", "scale_check", "backup_drill", "idempotency", "http_protocol", "mcp"],
+              "properties": {
+                "deploy_plan": { "type": "boolean" },
+                "mutation": { "type": "boolean" },
+                "scale_check": { "type": "boolean" },
+                "backup_drill": { "type": "boolean" },
+                "idempotency": { "type": "boolean" },
+                "http_protocol": { "type": "boolean" },
+                "mcp": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        "tests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["readiness_url", "admin_url", "protocol_url", "mcp_url"],
+          "properties": {
+            "readiness_url": { "$ref": "#/$defs/nullable_https_url" },
+            "admin_url": { "$ref": "#/$defs/nullable_https_url" },
+            "protocol_url": { "$ref": "#/$defs/nullable_https_url" },
+            "mcp_url": { "$ref": "#/$defs/nullable_https_url" }
+          }
+        },
+        "mcp": {
+          "description": "MCP profile the verified handoff must exercise. required_tools is the roster a consumer asserts against; an empty roster is only valid when the mcp capability is false.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "profile", "transport", "required_tools"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "profile": { "type": ["string", "null"] },
+            "transport": { "enum": ["http", "stdio", null] },
+            "required_tools": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "test_data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seed_mode", "tenant_prefix", "reuse_data_stack", "admin_credential_ref"],
+          "properties": {
+            "seed_mode": { "enum": ["none", "smoke", "full"] },
+            "tenant_prefix": { "type": "string", "minLength": 1 },
+            "reuse_data_stack": { "type": "boolean" },
+            "admin_credential_ref": {
+              "description": "Reference the harness resolves at test time. Never a credential value.",
+              "$ref": "#/$defs/nullable_secret_reference_arn"
+            }
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["terraform_root", "module_source", "image_reference", "image_digest", "pins"],
+          "properties": {
+            "terraform_root": { "type": "string", "minLength": 1 },
+            "module_source": { "type": "string", "minLength": 1 },
+            "image_reference": { "$ref": "#/$defs/nullable_image_reference" },
+            "image_digest": { "$ref": "#/$defs/nullable_image_digest" },
+            "pins": { "type": "array", "items": { "$ref": "#/$defs/artifact_pin" } }
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reuse_data_stack", "destroy_mode", "ttl_hours"],
+          "properties": {
+            "reuse_data_stack": { "type": "boolean" },
+            "destroy_mode": { "enum": ["ephemeral", "protected", "manual"] },
+            "ttl_hours": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "selectors": {
+          "description": "Evidence-safe selectors. A consumer may use these to read cloud state; they must not be sufficient to read a secret value.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["account_id", "region", "cluster_arn", "service_arn", "log_group", "tag_filters"],
+          "properties": {
+            "account_id": { "$ref": "#/$defs/aws_account_id" },
+            "region": { "$ref": "#/$defs/aws_region" },
+            "cluster_arn": { "$ref": "#/$defs/nullable_aws_arn" },
+            "service_arn": { "$ref": "#/$defs/nullable_aws_arn" },
+            "log_group": { "type": ["string", "null"] },
+            "tag_filters": { "$ref": "#/$defs/tags" }
+          }
+        }
+      }
+    },
+
+    "operations_contract": {
+      "description": "Day-2 resources and attachments. Primary consumers: honua-devops operations bootstrap, honua-server runtime configuration, operator runbooks.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "identity",
+        "observability",
+        "secrets",
+        "scaling",
+        "resilience",
+        "grouping",
+        "cost",
+        "state"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schema_version" },
+        "kind": { "const": "operations" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "extensions": { "$ref": "#/$defs/extensions" },
+        "observability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["telemetry_policy", "prometheus_job", "prometheus_canary_job", "log_group", "metrics_namespace"],
+          "properties": {
+            "telemetry_policy": { "type": "string", "minLength": 1 },
+            "prometheus_job": { "type": ["string", "null"] },
+            "prometheus_canary_job": { "type": ["string", "null"] },
+            "log_group": { "type": ["string", "null"] },
+            "metrics_namespace": { "type": ["string", "null"] }
+          }
+        },
+        "secrets": {
+          "description": "Authoritative typed secret-reference registry. Locators only.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "references"],
+          "properties": {
+            "provider": { "enum": ["aws-secretsmanager"] },
+            "references": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/secret_reference" },
+              "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+              "required": ["admin_password"]
+            }
+          }
+        },
+        "scaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["deployment_mode", "desired_count", "max_capacity", "cpu_architecture"],
+          "properties": {
+            "deployment_mode": { "type": "string", "minLength": 1 },
+            "desired_count": { "type": "integer", "minimum": 0 },
+            "max_capacity": { "type": "integer", "minimum": 0 },
+            "cpu_architecture": { "type": "string", "minLength": 1 }
+          }
+        },
+        "resilience": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ingress_deletion_protection", "ingress_access_logs_enabled", "database_managed", "cache_enabled"],
+          "properties": {
+            "ingress_deletion_protection": { "type": "boolean" },
+            "ingress_access_logs_enabled": { "type": "boolean" },
+            "database_managed": { "type": "boolean" },
+            "cache_enabled": { "type": "boolean" }
+          }
+        },
+        "grouping": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resource_group", "name_prefix", "tags"],
+          "properties": {
+            "resource_group": { "type": "string", "minLength": 1 },
+            "name_prefix": { "type": "string", "minLength": 1 },
+            "tags": { "$ref": "#/$defs/tags" }
+          }
+        },
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner", "ephemeral", "ttl_hours"],
+          "properties": {
+            "owner": { "type": ["string", "null"] },
+            "ephemeral": { "type": "boolean" },
+            "ttl_hours": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "state": {
+          "description": "Backend and state lineage reference. Values are supplied by the governed execution lane; this contract only projects them.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["terraform_root", "backend_config_digest", "lineage", "serial"],
+          "properties": {
+            "terraform_root": { "type": "string", "minLength": 1 },
+            "backend_config_digest": { "$ref": "#/$defs/nullable_sha256_hex" },
+            "lineage": { "$ref": "#/$defs/nullable_uuid" },
+            "serial": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}
