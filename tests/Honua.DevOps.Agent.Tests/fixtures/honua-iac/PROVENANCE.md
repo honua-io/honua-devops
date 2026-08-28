@@ -16,7 +16,7 @@ At runtime honua-devops reads these schemas from the **configured honua-iac
 checkout**, never from a vendored copy — see `TerraformExactSubstrate`. The
 copies here are test inputs only, standing in for that checkout.
 
-## `artifacts/`
+## `documents/`
 
 | File | Origin |
 |---|---|

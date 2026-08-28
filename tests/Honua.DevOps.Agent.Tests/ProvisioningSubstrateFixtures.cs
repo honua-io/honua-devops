@@ -13,7 +13,7 @@ namespace Honua.DevOps.Agent.Tests;
 /// </summary>
 /// <remarks>
 /// The seam under test is the process runner, so the honua-iac wrappers are faked —
-/// but the DOCUMENTS they hand back are not. `fixtures/honua-iac/artifacts` holds
+/// but the DOCUMENTS they hand back are not. `fixtures/honua-iac/documents` holds
 /// real output from one offline run of the real `terraform-exact-plan.sh` /
 /// `terraform-exact-apply.sh` pair, and the schemas are honua-iac's own. That keeps
 /// these tests honest about the shapes honua-devops must consume: nothing here is a
@@ -24,11 +24,11 @@ internal static class ProvisioningSubstrateFixtures
     private static readonly string FixtureRoot =
         Path.Combine(AppContext.BaseDirectory, "fixtures", "honua-iac");
 
-    internal static string ExactPlanMetadataJson => ReadFixture(Path.Combine("artifacts", "exact-plan-metadata.json"));
+    internal static string ExactPlanMetadataJson => ReadFixture(Path.Combine("documents", "exact-plan-metadata.json"));
 
-    internal static string ExecReceiptJson => ReadFixture(Path.Combine("artifacts", "exec-receipt.json"));
+    internal static string ExecReceiptJson => ReadFixture(Path.Combine("documents", "exec-receipt.json"));
 
-    internal static string TerraformOutputJson => ReadFixture(Path.Combine("artifacts", "terraform-output.json"));
+    internal static string TerraformOutputJson => ReadFixture(Path.Combine("documents", "terraform-output.json"));
 
     internal static string OperatorContractSchemaJson => ReadFixture(Path.Combine("contracts", "operator-contract.v1.schema.json"));
 

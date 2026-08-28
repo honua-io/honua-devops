@@ -77,6 +77,24 @@ for contract in "${PROVISIONING_CONTRACTS[@]}"; do
   fi
 done
 
+# 3. Every honua-iac test fixture must be tracked by git.
+#
+# The repo-wide `.gitignore` excludes `artifacts/`, which once silently swallowed
+# the captured substrate documents: the suite passed locally, where the files
+# existed on disk, and failed in CI, which never received them. An untracked
+# fixture is therefore an error here rather than a red build later.
+FIXTURE_DIR="$REPO_ROOT/tests/Honua.DevOps.Agent.Tests/fixtures/honua-iac"
+if [[ -d "$FIXTURE_DIR" ]]; then
+  while IFS= read -r fixture; do
+    relative="${fixture#"$REPO_ROOT/"}"
+    if git -C "$REPO_ROOT" ls-files --error-unmatch "$relative" >/dev/null 2>&1; then
+      pass "tracked: $relative"
+    else
+      fail "$relative is not tracked by git (check .gitignore); CI would not receive it"
+    fi
+  done < <(find "$FIXTURE_DIR" -type f | sort)
+fi
+
 if [[ "$FAILURES" -ne 0 ]]; then
   echo "[ERROR] provisioning contract smoke: $FAILURES failure(s)" >&2
   exit 1
