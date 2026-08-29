@@ -29,8 +29,18 @@ internal sealed partial class HonuaOperationsToolkit(
     SupportGateway? supportGateway = null,
     string? defaultEdition = null,
     IProvisioningProcessRunner? provisioningProcessRunner = null,
-    IInstallHandoffVerifier? installHandoffVerifier = null)
+    IInstallHandoffVerifier? installHandoffVerifier = null,
+    IApprovalSignatureProvider? approvalSignatureProvider = null)
 {
+    // Approval-receipt signature provider (honua-devops#175). Resolved once per toolkit
+    // so the configured mode cannot change underneath a single session; the KMS client
+    // it may wrap constructs its SDK client lazily, so nothing here touches AWS unless
+    // kms-mac is actually configured and used.
+    private readonly IApprovalSignatureProvider _approvalSignatureProvider =
+        approvalSignatureProvider ?? ApprovalSignatureProviders.FromRuntime(runtime);
+
+    internal IApprovalSignatureProvider ApprovalSignatureProvider => _approvalSignatureProvider;
+
     // One actuation spine per toolkit instance (issue #153). It is the single write
     // authority for this session: every mutating backend call is issued under a grant it
     // minted, and its at-most-once ledger makes a retry or a concurrent delivery resume the

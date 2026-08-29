@@ -1464,6 +1464,9 @@ internal sealed partial class HonuaOperationsToolkit
                 [
                     "The exact approved saved plan was consumed by `scripts/terraform-exact-apply.sh`; no plan was regenerated after approval.",
                     $"Trusted issuer `{approvalReceipt.Issuer}` approved receipt `{approvalReceipt.ApprovalReceiptId}` for plan_metadata_digest {receipt.PlanMetadataDigest}.",
+                    ApprovalSigningModes.IsEvidentiary(approvalReceipt.SigningMode)
+                        ? $"Approval signing mode `{approvalReceipt.SigningMode}`: the verifying principal holds kms:VerifyMac only and could not have produced this receipt, so it is admissible as approval evidence."
+                        : $"NON-EVIDENTIARY approval: signing mode `{approvalReceipt.SigningMode}` keeps the symmetric key in this verifier, so this receipt could have been produced by the party that accepted it. Do not cite it as approval evidence; certification requires `{ApprovalSigningModes.KmsMac}`.",
                     "The substrate re-derived the backend, account, role, inputs, source and state before the mutation and did not refuse.",
                     $"Backend {receipt.BackendKind} workspace `{receipt.Workspace}` object key {receipt.ObjectKey ?? "(none)"} backend_config_digest {receipt.BackendConfigDigest}.",
                     $"State moved from lineage {receipt.StateLineageBefore} serial {receipt.StateSerialBefore} to lineage {receipt.StateLineageAfter} serial {receipt.StateSerialAfter}.",
@@ -1778,6 +1781,16 @@ internal sealed partial class HonuaOperationsToolkit
         {
             return false;
         }
+        // Check the receipt against the published schema before anything else, the same
+        // way every other contract document in this agent is validated. The hand-rolled
+        // checks below still run; this closes the gap where a receipt could satisfy them
+        // while violating the contract honua-release issues against.
+        IReadOnlyList<string> schemaFindings = ProvisioningContracts.ValidateProvisionApproval(receiptJson);
+        if (schemaFindings.Count > 0)
+        {
+            error = $"The provision approval receipt does not satisfy honua.devops.provision-approval/v1: {string.Join("; ", schemaFindings)}";
+            return false;
+        }
         try
         {
             receipt = JsonSerializer.Deserialize<ProvisionApprovalReceipt>(receiptJson,
@@ -1812,60 +1825,69 @@ internal sealed partial class HonuaOperationsToolkit
             error = "The approval receipt is expired, not yet valid, or exceeds the one-hour validity ceiling.";
             return false;
         }
-        if (runtime.ProvisionApprovalIssuerKeys is null
-            || !runtime.ProvisionApprovalIssuerKeys.TryGetValue(receipt.Issuer, out string? encodedKey))
+        // The signing mode has to be declared, known, and the one this verifier is
+        // configured for. Accepting a receipt whose mode we did not expect would let an
+        // issuer choose the weaker primitive on the verifier's behalf.
+        IApprovalSignatureProvider signatureProvider = ApprovalSignatureProvider;
+        if (string.IsNullOrWhiteSpace(receipt.SigningMode) || !ApprovalSigningModes.IsKnown(receipt.SigningMode))
+        {
+            error = "The approval receipt does not declare a known signing mode.";
+            return false;
+        }
+        if (!string.Equals(receipt.SigningMode, signatureProvider.SigningMode, StringComparison.Ordinal))
+        {
+            error = $"The approval receipt was signed in `{receipt.SigningMode}` mode but this verifier is configured for `{signatureProvider.SigningMode}`.";
+            return false;
+        }
+        string? expectedKeyId = signatureProvider.ResolveKeyId(receipt.Issuer);
+        if (expectedKeyId is null)
         {
             error = $"Approval issuer `{receipt.Issuer}` is not in the configured trusted-issuer allowlist.";
             return false;
         }
-        byte[] key;
-        try
-        {
-            key = Convert.FromBase64String(encodedKey);
-        }
-        catch (FormatException)
-        {
-            error = "The configured trusted issuer key is invalid.";
-            return false;
-        }
-        string expectedKeyId = ComputeSha256(key)[..16];
         if (!string.Equals(receipt.KeyId, expectedKeyId, StringComparison.Ordinal))
         {
             error = "The approval receipt key id does not match the trusted issuer key.";
             return false;
         }
-        string canonical = string.Join('\n',
+        string canonical = CanonicalApprovalPayload(receipt);
+
+        // Sync-over-async at exactly one boundary. This host has no SynchronizationContext
+        // (console + MCP stdio), so there is no deadlock hazard, and this runs once per
+        // apply immediately before a multi-minute terraform run. The provider stays async
+        // because the KMS adapter is.
+        ApprovalVerificationResult verification = signatureProvider
+            .VerifyAsync(receipt.Issuer, canonical, receipt.Signature)
+            .GetAwaiter()
+            .GetResult();
+        if (!verification.Verified)
+        {
+            error = verification.Detail;
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The exact bytes an issuer signs. Every field that changes what the receipt
+    /// authorizes is covered, including the signing mode itself.
+    /// </summary>
+    private static string CanonicalApprovalPayload(ProvisionApprovalReceipt receipt)
+        => ApprovalReceiptCanonicalization.Payload(
             receipt.SchemaVersion,
             receipt.ApprovalReceiptId,
             receipt.Issuer,
             receipt.KeyId,
             receipt.ProvisioningOperationId,
-            receipt.PlanSha256.ToLowerInvariant(),
-            receipt.PlanMetadataDigest.ToLowerInvariant(),
+            receipt.PlanSha256,
+            receipt.PlanMetadataDigest,
             receipt.Action,
             receipt.Stack,
             receipt.Environment,
             receipt.Decision,
-            receipt.IssuedAtUtc.ToUniversalTime().ToString("O"),
-            receipt.ExpiresAtUtc.ToUniversalTime().ToString("O"));
-        byte[] expectedSignature = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(canonical));
-        byte[] actualSignature;
-        try
-        {
-            actualSignature = Convert.FromBase64String(receipt.Signature);
-        }
-        catch (FormatException)
-        {
-            error = "The approval receipt signature is malformed.";
-            return false;
-        }
-        if (!CryptographicOperations.FixedTimeEquals(expectedSignature, actualSignature))
-        {
-            error = "The approval receipt signature could not be verified by its trusted issuer key.";
-            return false;
-        }
-        return true;
-    }
+            receipt.IssuedAtUtc,
+            receipt.ExpiresAtUtc,
+            receipt.SigningMode);
 
     private static void CleanupExpiredSavedPlans()
     {
@@ -1994,6 +2016,13 @@ internal sealed partial class HonuaOperationsToolkit
         string Stack,
         string Environment,
         string Decision,
+        /// <summary>
+        /// How the signature was produced (honua-devops#175). It is covered by the
+        /// signature itself, so an attacker cannot downgrade a <c>kms-mac</c> receipt to
+        /// <c>local-hmac-dev</c> without invalidating it. A receipt that omits this field
+        /// is refused: the verifier will not guess how a signature was made.
+        /// </summary>
+        string SigningMode,
         DateTimeOffset IssuedAtUtc,
         DateTimeOffset ExpiresAtUtc,
         string Signature);
