@@ -72,7 +72,20 @@ internal static class ProvisioningSubstrateFixtures
     internal static readonly byte[] ApprovalKey =
         SHA256.HashData(Encoding.UTF8.GetBytes("honua-devops-test-approval-key"));
 
-    internal static OperationRuntime CreateRuntime(string iacRoot, ExecutionMode mode, ExecutionTier tier)
+    /// <summary>The KMS key ARN the kms-mac tests sign and verify against.</summary>
+    internal const string ApprovalKeyArn =
+        "arn:aws:kms:us-east-1:123456789012:key/11111111-2222-3333-4444-555555555555";
+
+    /// <summary>A second key, so "signed under a different key" is a real key, not a corrupted MAC.</summary>
+    internal const string OtherApprovalKeyArn =
+        "arn:aws:kms:us-east-1:123456789012:key/99999999-8888-7777-6666-555555555555";
+
+    internal static OperationRuntime CreateRuntime(
+        string iacRoot,
+        ExecutionMode mode,
+        ExecutionTier tier,
+        string signingMode = ApprovalSigningModes.LocalHmacDev,
+        IReadOnlyDictionary<string, string>? issuerKeyArns = null)
     {
         return new OperationRuntime(
             mode,
@@ -90,7 +103,10 @@ internal static class ProvisioningSubstrateFixtures
             },
             McpProxyPackage: "@honua/mcp-server@2026.1.1",
             McpProxyIntegrity: "sha512-dGVzdC1pbnRlZ3JpdHk=",
-            CandidateReference: "honua-2026.1.1-test");
+            CandidateReference: "honua-2026.1.1-test",
+            ProvisionApprovalSigningMode: signingMode,
+            ProvisionApprovalIssuerKeyArns: issuerKeyArns
+                ?? new Dictionary<string, string>(StringComparer.Ordinal) { [ApprovalIssuer] = ApprovalKeyArn });
     }
 
     internal static OperatorPolicyModel DirectAllowedPolicy()
@@ -110,47 +126,75 @@ internal static class ProvisioningSubstrateFixtures
         OperationResponse plan,
         string action,
         string environment = "dev",
-        string? overridePlanMetadataDigest = null)
+        string? overridePlanMetadataDigest = null,
+        IApprovalSignatureProvider? signatureProvider = null,
+        string? issuer = null,
+        string? declaredSigningMode = null,
+        bool omitSigningMode = false)
     {
         ProvisioningLineage lineage = Assert.IsType<ProvisioningLineage>(plan.ProvisioningLineage);
         DateTimeOffset issued = DateTimeOffset.UtcNow.AddSeconds(-1);
         DateTimeOffset expires = issued.AddMinutes(15);
-        string keyId = Convert.ToHexString(SHA256.HashData(ApprovalKey)).ToLowerInvariant()[..16];
+        // Signs through the SAME provider the verifier uses, over the SAME canonical
+        // payload helper. The fixture used to carry its own copy of the HMAC and the
+        // field order; two copies of a signature scheme can drift apart without any
+        // test noticing, which is exactly the bug a signing test cannot afford.
+        IApprovalSignatureProvider provider = signatureProvider ?? LocalApprovalSignatureProvider();
+        string issuerId = issuer ?? ApprovalIssuer;
+        string keyId = provider.ResolveKeyId(issuerId)
+            ?? throw new InvalidOperationException($"No key configured for approval issuer `{issuerId}`.");
         string receiptId = $"approval-{Guid.NewGuid():n}";
         string planMetadataDigest = overridePlanMetadataDigest ?? lineage.PlanMetadataDigest!;
-        string canonical = string.Join('\n',
+        string signingMode = declaredSigningMode ?? provider.SigningMode;
+        string canonical = ApprovalReceiptCanonicalization.Payload(
             "honua.devops.provision-approval/v1",
             receiptId,
-            ApprovalIssuer,
+            issuerId,
             keyId,
             lineage.ProvisioningOperationId,
-            lineage.PlanSha256!.ToLowerInvariant(),
-            planMetadataDigest.ToLowerInvariant(),
+            lineage.PlanSha256!,
+            planMetadataDigest,
             action,
             "aws-ecs",
             environment,
             "approved",
-            issued.ToUniversalTime().ToString("O"),
-            expires.ToUniversalTime().ToString("O"));
-        string signature = Convert.ToBase64String(HMACSHA256.HashData(ApprovalKey, Encoding.UTF8.GetBytes(canonical)));
-        return JsonSerializer.Serialize(new
+            issued,
+            expires,
+            signingMode);
+        ApprovalSignature signature = provider.SignAsync(issuerId, canonical).GetAwaiter().GetResult();
+
+        Dictionary<string, object?> receipt = new()
         {
-            schemaVersion = "honua.devops.provision-approval/v1",
-            approvalReceiptId = receiptId,
-            issuer = ApprovalIssuer,
-            keyId,
-            provisioningOperationId = lineage.ProvisioningOperationId,
-            planSha256 = lineage.PlanSha256,
-            planMetadataDigest,
-            action,
-            stack = "aws-ecs",
-            environment,
-            decision = "approved",
-            issuedAtUtc = issued,
-            expiresAtUtc = expires,
-            signature
-        });
+            ["schemaVersion"] = "honua.devops.provision-approval/v1",
+            ["approvalReceiptId"] = receiptId,
+            ["issuer"] = issuerId,
+            ["keyId"] = keyId,
+            ["provisioningOperationId"] = lineage.ProvisioningOperationId,
+            ["planSha256"] = lineage.PlanSha256,
+            ["planMetadataDigest"] = planMetadataDigest,
+            ["action"] = action,
+            ["stack"] = "aws-ecs",
+            ["environment"] = environment,
+            ["decision"] = "approved",
+            ["signingMode"] = signingMode,
+            ["issuedAtUtc"] = issued,
+            ["expiresAtUtc"] = expires,
+            ["signature"] = signature.Signature,
+        };
+        if (omitSigningMode)
+        {
+            receipt.Remove("signingMode");
+        }
+
+        return JsonSerializer.Serialize(receipt);
     }
+
+    /// <summary>The development provider: one process holds the key, so it can both sign and verify.</summary>
+    internal static IApprovalSignatureProvider LocalApprovalSignatureProvider()
+        => new LocalHmacApprovalSignatureProvider(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ApprovalIssuer] = Convert.ToBase64String(ApprovalKey)
+        });
 
     internal static BackendGateway CreateGateway()
     {

@@ -36,6 +36,8 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.BedrockRuntime" Version="4.0.21.1" />
+    <!-- Approval-receipt MAC provider (honua-devops#175): KMS GenerateMac / VerifyMac. -->
+    <PackageReference Include="AWSSDK.KeyManagementService" Version="4.0.4" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc3" />
     <!--
       Keep Microsoft.Extensions.AI aligned with the Microsoft.Extensions.AI.Abstractions

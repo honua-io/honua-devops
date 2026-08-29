@@ -11,6 +11,15 @@
           "AWSSDK.Core": "[4.0.9.4, 5.0.0)"
         }
       },
+      "AWSSDK.KeyManagementService": {
+        "type": "Direct",
+        "requested": "[4.0.4, )",
+        "resolved": "4.0.4",
+        "contentHash": "eGF4rTk4KkyA0LfDpnB6JSVUMvouwUX/rLfT32JiMfD1Hj9M80RE6XG3ElReUB9URueDeCVlCNza7Mrpx8aiWw==",
+        "dependencies": {
+          "AWSSDK.Core": "[4.0.0.24, 5.0.0)"
+        }
+      },
       "Microsoft.Agents.AI.OpenAI": {
         "type": "Direct",
         "requested": "[1.0.0-rc3, )",

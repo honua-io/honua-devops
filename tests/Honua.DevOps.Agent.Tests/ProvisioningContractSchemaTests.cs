@@ -236,6 +236,7 @@ public sealed class ProvisioningContractSchemaTests
       "stack": "aws-ecs",
       "environment": "dev",
       "decision": "approved",
+      "signingMode": "kms-mac",
       "issuedAtUtc": "2026-08-28T21:00:00Z",
       "expiresAtUtc": "2026-08-28T21:30:00Z",
       "signature": "ZmFrZS1zaWduYXR1cmU="
