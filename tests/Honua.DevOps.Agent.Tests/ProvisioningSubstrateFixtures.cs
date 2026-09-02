@@ -503,6 +503,11 @@ internal sealed class FakeInstallHandoffVerifier(bool succeed) : IInstallHandoff
             succeed ? "verified" : "missing required tool",
             succeed ? "server-fixture" : null,
             succeed ? request.RequiredTools : [],
-            [step]));
+            [step],
+            succeed ? new string('b', 64) : null,
+            succeed ? new string('c', 64) : null,
+            succeed ? 137 : null,
+            ChildReaped: succeed,
+            SecretScanPassed: succeed));
     }
 }

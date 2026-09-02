@@ -819,7 +819,13 @@ internal sealed partial class HonuaOperationsToolkit
             proxyIntegrity = request.ProxyIntegrity,
             secretReferenceSha256 = ComputeSha256(Encoding.UTF8.GetBytes(request.AdminKeySecretReference)),
             serverIdentity = verification.ServerIdentity,
+            serverEndpointIdentity = verification.ServerEndpointIdentity,
             observedTools = verification.ObservedTools,
+            observedRosterSha256 = verification.ObservedRosterSha256,
+            verifierOutcome = verification.Status,
+            childExitCode = verification.ChildExitCode,
+            childReaped = verification.ChildReaped,
+            secretScanPassed = verification.SecretScanPassed,
             verifiedAtUtc = DateTimeOffset.UtcNow
         });
         string verificationSha = ComputeSha256(Encoding.UTF8.GetBytes(verificationCore));
