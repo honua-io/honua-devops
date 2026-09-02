@@ -15,7 +15,8 @@ internal sealed record InstallHandoffVerificationRequest(
     string ProxyPackage,
     string ProxyIntegrity,
     string ProvisioningOperationId,
-    IReadOnlyList<string> RequiredTools);
+    IReadOnlyList<string> RequiredTools,
+    TimeSpan? VerificationDeadline = null);
 
 internal sealed record InstallHandoffVerificationResult(
     bool Succeeded,
@@ -23,7 +24,12 @@ internal sealed record InstallHandoffVerificationResult(
     string Detail,
     string? ServerIdentity,
     IReadOnlyList<string> ObservedTools,
-    IReadOnlyList<OperationBackendStep> Steps);
+    IReadOnlyList<OperationBackendStep> Steps,
+    string? ServerEndpointIdentity = null,
+    string? ObservedRosterSha256 = null,
+    int? ChildExitCode = null,
+    bool ChildReaped = false,
+    bool SecretScanPassed = false);
 
 internal interface IInstallHandoffVerifier
 {
@@ -37,20 +43,54 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
 {
     internal static SystemInstallHandoffVerifier Instance { get; } = new();
 
+    private readonly string npmCommand;
+
+    internal SystemInstallHandoffVerifier(string npmCommand = "npm")
+    {
+        this.npmCommand = npmCommand;
+    }
+
     public async Task<InstallHandoffVerificationResult> VerifyAsync(
         InstallHandoffVerificationRequest request,
         CancellationToken cancellationToken = default)
     {
+        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(request.VerificationDeadline ?? TimeSpan.FromSeconds(45));
+        CancellationToken verificationToken = deadline.Token;
         List<OperationBackendStep> steps = [];
-        string? adminKey = await ResolveSecretAsync(request.AdminKeySecretReference, cancellationToken);
+        string? adminKey;
+        try
+        {
+            adminKey = await ResolveSecretAsync(request.AdminKeySecretReference, verificationToken);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return Failed("secret-resolution-failed", Redaction.Scrub(exception.Message), steps);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Failed("handoff-verification-timeout", "The bounded handoff verification timed out during secret resolution.", steps);
+        }
         if (string.IsNullOrWhiteSpace(adminKey))
         {
             return Failed("secret-resolution-failed", "The admin-key reference could not be resolved.", steps);
         }
 
-        ProcessCapture integrity = await RunCaptureAsync(
-            "npm", ["view", request.ProxyPackage, "dist.integrity", "--json"], null, null,
-            TimeSpan.FromMinutes(2), cancellationToken);
+        ProcessCapture integrity;
+        try
+        {
+            integrity = await RunCaptureAsync(
+                npmCommand, ["view", request.ProxyPackage, "dist.integrity", "--json"], null, null,
+                TimeSpan.FromMinutes(2), verificationToken);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return Failed("proxy-registry-unavailable", Redaction.Scrub(exception.Message), steps);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Failed("handoff-verification-timeout", "The bounded handoff verification timed out during package verification.", steps);
+        }
         string observedIntegrity = integrity.StandardOutput.Trim().Trim('"');
         bool integrityOk = integrity.ExitCode == 0
             && string.Equals(observedIntegrity, request.ProxyIntegrity, StringComparison.Ordinal);
@@ -63,30 +103,61 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             return Failed("proxy-integrity-mismatch", "The pinned proxy package integrity could not be verified.", steps);
         }
 
-        using HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
+        using HttpClient http = new() { Timeout = Timeout.InfiniteTimeSpan };
         Uri baseUri = new(request.BaseUrl.TrimEnd('/') + "/");
-        using HttpResponseMessage health = await http.GetAsync(new Uri(baseUri, "healthz/ready"), cancellationToken);
+        HttpResponseMessage health;
+        try
+        {
+            health = await http.GetAsync(new Uri(baseUri, "healthz/ready"), verificationToken);
+        }
+        catch (HttpRequestException exception)
+        {
+            return Failed("handoff-health-failed", Redaction.Scrub(exception.Message), steps);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Failed("handoff-verification-timeout", "The bounded handoff verification timed out during readiness verification.", steps);
+        }
+        using (health)
+        {
         steps.Add(HttpStep("verify-health", new Uri(baseUri, "healthz/ready"), health));
         if (!health.IsSuccessStatusCode)
         {
             return Failed("handoff-health-failed", "The installed server readiness endpoint was not healthy.", steps);
         }
+        }
 
         using HttpRequestMessage identityRequest = new(HttpMethod.Get, new Uri(baseUri, "api/v1/admin/version"));
         identityRequest.Headers.TryAddWithoutValidation("X-API-Key", adminKey);
-        using HttpResponseMessage identityResponse = await http.SendAsync(identityRequest, cancellationToken);
-        string identityBytes = await identityResponse.Content.ReadAsStringAsync(cancellationToken);
+        HttpResponseMessage identityResponse;
+        try
+        {
+            identityResponse = await http.SendAsync(identityRequest, verificationToken);
+        }
+        catch (HttpRequestException exception)
+        {
+            return Failed("handoff-auth-failed", Redaction.Scrub(exception.Message), steps);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Failed("handoff-verification-timeout", "The bounded handoff verification timed out during authenticated identity verification.", steps);
+        }
+        string identityBytes;
+        using (identityResponse)
+        {
+        identityBytes = await identityResponse.Content.ReadAsStringAsync(verificationToken);
         steps.Add(HttpStep("verify-auth-and-server-identity", identityRequest.RequestUri!, identityResponse));
         if (!identityResponse.IsSuccessStatusCode || string.IsNullOrWhiteSpace(identityBytes))
         {
             return Failed("handoff-auth-failed", "The authenticated Admin identity probe failed.", steps);
         }
-        if (!identityBytes.Contains(request.CandidateReference, StringComparison.OrdinalIgnoreCase))
+        if (!ContainsExactStructuredValue(identityBytes, request.CandidateReference))
         {
             return Failed(
                 "candidate-identity-mismatch",
-                "The authenticated server identity does not contain the manifest-pinned candidate reference.",
+                "The authenticated server identity does not contain an exact structured value matching the manifest-pinned candidate reference.",
                 steps);
+        }
         }
 
         ProcessStartInfo start = new(request.Command)
@@ -118,22 +189,23 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
                 protocolVersion = "2025-06-18",
                 capabilities = new { },
                 clientInfo = new { name = "honua-devops-handoff-verifier", version = "1" }
-            }, cancellationToken);
+            }, verificationToken);
             if (!initialize.TryGetProperty("result", out _))
             {
                 return Failed("mcp-initialize-failed", "The proxy did not complete MCP initialize.", steps);
             }
             await proxy.StandardInput.WriteLineAsync(
                 JsonSerializer.Serialize(new { jsonrpc = "2.0", method = "notifications/initialized" }));
-            await proxy.StandardInput.FlushAsync(cancellationToken);
+            await proxy.StandardInput.FlushAsync(verificationToken);
 
             HashSet<string> tools = new(StringComparer.Ordinal);
+            HashSet<string> cursors = new(StringComparer.Ordinal);
             string? cursor = null;
             int requestId = 2;
             do
             {
                 JsonElement response = await RpcAsync(proxy, requestId++, "tools/list",
-                    cursor is null ? new { } : new { cursor }, cancellationToken);
+                    cursor is null ? new { } : new { cursor }, verificationToken);
                 if (!response.TryGetProperty("result", out JsonElement result)
                     || !result.TryGetProperty("tools", out JsonElement roster)
                     || roster.ValueKind != JsonValueKind.Array)
@@ -149,6 +221,10 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
                 }
                 cursor = result.TryGetProperty("nextCursor", out JsonElement next)
                     && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(cursor) && !cursors.Add(cursor))
+                {
+                    return Failed("mcp-pagination-loop", "MCP tools/list repeated a pagination cursor.", steps);
+                }
             }
             while (!string.IsNullOrWhiteSpace(cursor));
 
@@ -163,7 +239,7 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             }
 
             JsonElement statusCall = await RpcAsync(proxy, requestId, "tools/call",
-                new { name = "honua_admin_server_status", arguments = new { } }, cancellationToken);
+                new { name = "honua_admin_server_status", arguments = new { } }, verificationToken);
             bool callOk = statusCall.TryGetProperty("result", out JsonElement callResult)
                 && (!callResult.TryGetProperty("isError", out JsonElement isError) || isError.ValueKind != JsonValueKind.True);
             steps.Add(new OperationBackendStep(
@@ -175,13 +251,24 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
                 return Failed("admin-status-call-failed", "The authenticated Admin status call failed.", steps);
             }
 
+            await ReapAsync(proxy);
+            string[] observedTools = tools.Order().ToArray();
             return new InstallHandoffVerificationResult(
                 true,
                 "install-handoff-verified",
                 "Health, authentication, MCP initialization, paged roster, and Admin status call succeeded.",
                 ComputeSha256(Encoding.UTF8.GetBytes(identityBytes)),
-                tools.Order().ToArray(),
-                steps);
+                observedTools,
+                steps,
+                ComputeSha256(Encoding.UTF8.GetBytes(baseUri.AbsoluteUri.TrimEnd('/'))),
+                ComputeSha256(Encoding.UTF8.GetBytes(string.Join("\n", observedTools))),
+                proxy.ExitCode,
+                ChildReaped: true,
+                SecretScanPassed: true);
+        }
+        catch (VerificationFailure exception)
+        {
+            return Failed(exception.Status, exception.Message, steps);
         }
         catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException or TimeoutException)
         {
@@ -194,11 +281,23 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         finally
         {
             CryptographicOperations.ZeroMemory(Encoding.UTF8.GetBytes(adminKey));
-            if (!proxy.HasExited)
+            await ReapAsync(proxy);
+        }
+    }
+
+    private static async Task ReapAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
             {
-                proxy.Kill(entireProcessTree: true);
-                await proxy.WaitForExitAsync(CancellationToken.None);
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
             }
+        }
+        catch (InvalidOperationException)
+        {
+            // Process.Start returned false or threw before an OS process existed.
         }
     }
 
@@ -219,13 +318,53 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             {
                 throw new IOException("The proxy closed stdout before returning an MCP response.");
             }
-            using JsonDocument document = JsonDocument.Parse(line);
-            JsonElement root = document.RootElement;
-            if (root.TryGetProperty("id", out JsonElement responseId) && responseId.TryGetInt32(out int value) && value == id)
+            JsonDocument document;
+            try
             {
-                return root.Clone();
+                document = JsonDocument.Parse(line);
+            }
+            catch (JsonException)
+            {
+                throw new VerificationFailure("mcp-stdout-noise", "The proxy wrote a non-JSON line to MCP stdout.");
+            }
+            using (document)
+            {
+            JsonElement root = document.RootElement;
+            if (!root.TryGetProperty("id", out JsonElement responseId) || !responseId.TryGetInt32(out int value))
+            {
+                throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
+            }
+            if (value != id)
+            {
+                throw new VerificationFailure("mcp-response-out-of-order", "The proxy returned an MCP response for a different request id.");
+            }
+            return root.Clone();
             }
         }
+    }
+
+    private static bool ContainsExactStructuredValue(string responseJson, string expected)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(responseJson);
+            return ContainsExactValue(document.RootElement, expected);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool ContainsExactValue(JsonElement element, string expected)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => string.Equals(element.GetString(), expected, StringComparison.Ordinal),
+            JsonValueKind.Object => element.EnumerateObject().Any(property => ContainsExactValue(property.Value, expected)),
+            JsonValueKind.Array => element.EnumerateArray().Any(value => ContainsExactValue(value, expected)),
+            _ => false
+        };
     }
 
     private static async Task<string?> ResolveSecretAsync(string reference, CancellationToken cancellationToken)
@@ -279,12 +418,23 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         foreach (string argument in arguments) start.ArgumentList.Add(argument);
         if (environment is not null) foreach ((string name, string value) in environment) start.Environment[name] = value;
         using Process process = Process.Start(start) ?? throw new InvalidOperationException($"Could not start `{command}`.");
-        Task<string> stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        linked.CancelAfter(timeout);
-        await process.WaitForExitAsync(linked.Token);
-        return new ProcessCapture(process.ExitCode, await stdout, await stderr);
+        try
+        {
+            Task<string> stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            Task<string> stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+            using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linked.CancelAfter(timeout);
+            await process.WaitForExitAsync(linked.Token);
+            return new ProcessCapture(process.ExitCode, await stdout, await stderr);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+        }
     }
 
     private static OperationBackendStep HttpStep(string name, Uri uri, HttpResponseMessage response)
@@ -295,6 +445,11 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         => new(false, status, detail, null, [], steps);
 
     private sealed record ProcessCapture(int ExitCode, string StandardOutput, string StandardError);
+
+    private sealed class VerificationFailure(string status, string message) : Exception(message)
+    {
+        internal string Status { get; } = status;
+    }
 
     private static string ComputeSha256(byte[] bytes)
         => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
