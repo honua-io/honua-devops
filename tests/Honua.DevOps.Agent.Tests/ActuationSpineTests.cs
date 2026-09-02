@@ -70,6 +70,19 @@ public class ActuationSpineTests
     }
 
     [Fact]
+    public void Authorize_FailsClosed_WhenTheConfiguredAuditFileCannotBeOpened()
+    {
+        string missingParent = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("n"), "audit.jsonl");
+        OperatorPolicyModel policy = DirectAllowedPolicy() with { AuditHookTarget = $"file://{missingParent}" };
+        ActuationSpine spine = new(ExecuteRuntime(), policy);
+
+        ActuationAuthorization authorization = spine.Authorize(SyncRequest());
+
+        Assert.False(authorization.IsGranted);
+        Assert.Equal("audit-sink-unavailable", authorization.BlockingReason);
+    }
+
+    [Fact]
     public void Authorize_FailsClosed_WhenNoIdempotencyKeyIsSupplied()
     {
         ActuationSpine spine = new(ExecuteRuntime(), DirectAllowedPolicy());

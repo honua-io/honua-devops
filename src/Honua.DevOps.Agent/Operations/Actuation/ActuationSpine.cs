@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 
 using Honua.DevOps.Agent.Operations.GitOps;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -229,11 +230,11 @@ internal sealed class ActuationSpine
 
         // Fail closed when the audit/receipt sink is unavailable: a mutation whose evidence
         // cannot be persisted is not permitted to start.
-        if (string.IsNullOrWhiteSpace(_policy.AuditHookTarget))
+        if (!DurableAuditGate.TryProbe(_policy.AuditHookTarget, out string auditFailure))
         {
             return ActuationAuthorization.Refused(
                 ActuationOutcome.ContractUnavailable,
-                "No audit hook target is configured; a mutation whose evidence cannot be recorded is refused before it starts.",
+                $"Durable audit evidence is unavailable: {auditFailure}. Mutation refused before it starts.",
                 "audit-sink-unavailable",
                 decision);
         }

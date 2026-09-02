@@ -158,18 +158,11 @@ internal static class ToolCallAuditor
             Evidence: evidence,
             ProvisioningLineage: provisioningLineage);
 
-        try
-        {
-            await context.Sink.WriteAsync(record, cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            Console.Error.WriteLine($"warn: audit sink write failed: {exception.Message}");
-        }
+        // Audit acknowledgement is part of the tool result commit.  Never turn
+        // append/flush failure into a warning: after mutation that would expose
+        // an unaudited success to the caller.  The host returns an error and the
+        // stable operation/idempotency lineage is used for reconciliation.
+        await context.Sink.WriteAsync(record, cancellationToken);
     }
 
     private static bool TryGetProperty(JsonElement element, string pascalCaseName, out JsonElement value)
