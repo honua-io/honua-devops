@@ -218,6 +218,17 @@ internal static class DeployOperationReader
     internal static IReadOnlyList<string> ReadBlockingReasons(JsonElement root)
         => ReadStringArray(root, "blockingReasons", "blocking_reasons");
 
+    internal static IReadOnlyDictionary<string, string> ReadParameters(JsonElement root)
+    {
+        if (root.TryGetProperty("parameters", out JsonElement parameters) && parameters.ValueKind == JsonValueKind.Object)
+        {
+            return parameters.EnumerateObject()
+                .Where(property => property.Value.ValueKind == JsonValueKind.String)
+                .ToDictionary(property => property.Name, property => property.Value.GetString()!, StringComparer.Ordinal);
+        }
+        return new Dictionary<string, string>(StringComparer.Ordinal);
+    }
+
     internal static string? ReadActuatorReceiptId(JsonElement root)
     {
         string? direct = ReadString(root, "actuatorReceiptId", "actuator_receipt_id", "receiptId", "receipt_id");

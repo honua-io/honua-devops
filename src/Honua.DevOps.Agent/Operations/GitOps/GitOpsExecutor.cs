@@ -106,6 +106,14 @@ internal sealed class GitOpsExecutor(
         ManifestApplyRequest? desiredState = null)
     {
         List<OperationBackendStep> steps = [];
+        Dictionary<string, string> sealedParameters = new(parameters, StringComparer.Ordinal);
+        if (desiredState is not null)
+        {
+            string sealedJson = JsonSerializer.Serialize(desiredState);
+            byte[] sealedBytes = Encoding.UTF8.GetBytes(sealedJson);
+            sealedParameters["honua.devops/desired-state-json-base64"] = Convert.ToBase64String(sealedBytes);
+            sealedParameters["honua.devops/desired-state-digest"] = Convert.ToHexString(SHA256.HashData(sealedBytes)).ToLowerInvariant();
+        }
         List<string> findings =
         [
             $"Actuation kind: {kind}.",
@@ -136,8 +144,8 @@ internal sealed class GitOpsExecutor(
             ActuatorId: $"honua.gitops.{kind}",
             Action: kind,
             Target: _runtime.DeployTargetId ?? string.Empty,
-            Environments: ReadEnvironments(parameters),
-            DesiredState: BuildDesiredStateIdentity(desiredRevision, currentRevision, parameters),
+            Environments: ReadEnvironments(sealedParameters),
+            DesiredState: BuildDesiredStateIdentity(desiredRevision, currentRevision, sealedParameters),
             IdempotencyKey: idempotencyKey,
             PolicyGate: decision.PolicyGate,
             AuthorizationDryRun: !decision.Mutating,
@@ -171,7 +179,7 @@ internal sealed class GitOpsExecutor(
         // records the same identity the spine authorized. The digest is taken FROM the grant
         // rather than recomputed here: one source of truth, so the value the server stores
         // cannot drift from the value that gated the mutation.
-        Dictionary<string, string> lineageParameters = new(parameters, StringComparer.Ordinal)
+        Dictionary<string, string> lineageParameters = new(sealedParameters, StringComparer.Ordinal)
         {
             ["honua.devops/request-digest"] = operationGrant.RequestDigest,
             ["honua.devops/idempotency-key"] = operationGrant.IdempotencyKey
@@ -379,14 +387,26 @@ internal sealed class GitOpsExecutor(
 
         string? serverStatus = DeployOperationReader.ReadStatus(current.Payload.RootElement);
         IReadOnlyList<string> blockers = DeployOperationReader.ReadBlockingReasons(current.Payload.RootElement);
+        IReadOnlyDictionary<string, string> persistedParameters = DeployOperationReader.ReadParameters(current.Payload.RootElement);
+        if (!TryRecoverDesiredState(persistedParameters, out ManifestApplyRequest? recoveredDesiredState, out string sealFailure))
+        {
+            findings.Add($"Sealed desired state could not be recovered: {sealFailure}.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.ContractUnavailable, operationId, serverStatus, false, decision, steps, findings,
+                ["desired-state-seal-invalid"]);
+        }
+
+        string requestDigest = persistedParameters.GetValueOrDefault("honua.devops/request-digest") ?? string.Empty;
+        string idempotencyKey = persistedParameters.GetValueOrDefault("honua.devops/idempotency-key")
+            ?? $"honua-devops:submit:{operationId}";
 
         ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
             ActuatorId: "honua.deploy-operation.submit",
             Action: "submit",
             Target: _runtime.DeployTargetId ?? operationId,
             Environments: [],
-            DesiredState: $"submit:{operationId}",
-            IdempotencyKey: $"honua-devops:submit:{operationId}",
+            DesiredState: string.IsNullOrWhiteSpace(requestDigest) ? $"submit:{operationId}" : requestDigest,
+            IdempotencyKey: idempotencyKey,
             PolicyGate: decision.PolicyGate,
             AuthorizationDryRun: !decision.Mutating,
             Actor: $"honua-devops:runbook:deploy-submit",
@@ -400,12 +420,14 @@ internal sealed class GitOpsExecutor(
                 authorization.BlockingReason is null ? [] : [authorization.BlockingReason]);
         }
 
-        ApprovalEvidence approval = ApprovalEvidence
-            .FromDirectExecutionPolicy(decision)
-            .And(ApprovalEvidence.FromControlPlane(
-                operationId,
-                DeployOperationReader.IsAwaitingApproval(serverStatus),
-                blockers));
+        // This is an explicit resume of an already-created operation. Under
+        // pr-first the authoritative control-plane transition is the external
+        // approval; requiring MayAutoSubmit here would make approved parked
+        // operations permanently impossible to resume.
+        ApprovalEvidence approval = ApprovalEvidence.FromControlPlane(
+            operationId,
+            DeployOperationReader.IsAwaitingApproval(serverStatus),
+            blockers);
 
         if (!_spine.TryAuthorizeMutation(
                 authorization.Grant!,
@@ -420,7 +442,73 @@ internal sealed class GitOpsExecutor(
                 GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings, blockers);
         }
 
+        if (recoveredDesiredState is not null)
+        {
+            if (!_spine.TryAuthorizeMutation(
+                    authorization.Grant!, BackendMutation.ManifestApply, operationId, approval,
+                    out ActuationSpine.MutationGrant? applyGrant, out string applyRefusal))
+            {
+                findings.Add($"Desired-state resume was refused: {applyRefusal}");
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings, blockers);
+            }
+
+            BackendCallResult applied = await _gateway.ApplyManifestAsync(recoveredDesiredState, applyGrant!, cancellationToken);
+            steps.Add(OperationBackendStep.From("manifest-apply-resume", applied, mutatesState: applied.IsSuccess));
+            if (!applied.IsSuccess)
+            {
+                findings.Add("Desired-state acknowledgement is ambiguous; reconcile the original operation before retrying.");
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.Indeterminate, operationId, serverStatus, true, decision, steps, findings,
+                    ["manifest-apply-unconfirmed"]);
+            }
+        }
+
         return await SubmitAndPollAsync(operationId, reason, decision, steps, findings, grant!, cancellationToken);
+    }
+
+    private static bool TryRecoverDesiredState(
+        IReadOnlyDictionary<string, string> parameters,
+        out ManifestApplyRequest? desiredState,
+        out string failure)
+    {
+        desiredState = null;
+        failure = string.Empty;
+        bool hasPayload = parameters.TryGetValue("honua.devops/desired-state-json-base64", out string? encoded);
+        bool hasDigest = parameters.TryGetValue("honua.devops/desired-state-digest", out string? expectedDigest);
+        if (!hasPayload && !hasDigest)
+        {
+            return true;
+        }
+        if (!hasPayload || !hasDigest || string.IsNullOrWhiteSpace(encoded) || string.IsNullOrWhiteSpace(expectedDigest))
+        {
+            failure = "the durable operation contains an incomplete desired-state seal";
+            return false;
+        }
+
+        try
+        {
+            byte[] json = Convert.FromBase64String(encoded);
+            string actualDigest = Convert.ToHexString(SHA256.HashData(json)).ToLowerInvariant();
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(actualDigest), Encoding.ASCII.GetBytes(expectedDigest.ToLowerInvariant())))
+            {
+                failure = "the persisted desired-state digest does not match its sealed bytes";
+                return false;
+            }
+            desiredState = JsonSerializer.Deserialize<ManifestApplyRequest>(json);
+            if (desiredState is null || desiredState.DryRun)
+            {
+                failure = "the sealed manifest is absent or not an actuation request";
+                return false;
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is FormatException or JsonException)
+        {
+            failure = "the persisted desired-state seal is malformed";
+            return false;
+        }
     }
 
     internal async Task<GitOpsExecutionResult> SubmitAndPollAsync(

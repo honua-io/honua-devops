@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations;
@@ -682,6 +683,70 @@ public class GitOpsExecutorTests
         Assert.False(result.Mutated);
         Assert.Contains("audit-sink-unavailable", result.BlockingReasons);
         Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task ExecuteSubmitAsync_PrFirstResume_RecoversSealedManifestBeforeSubmittingOriginalOperation()
+    {
+        ManifestApplyRequest manifest = DesiredState();
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
+        Dictionary<string, string> parameters = new(StringComparer.Ordinal)
+        {
+            ["honua.devops/desired-state-json-base64"] = Convert.ToBase64String(bytes),
+            ["honua.devops/desired-state-digest"] = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+            ["honua.devops/request-digest"] = new('a', 64),
+            ["honua.devops/idempotency-key"] = "idem-op-resume"
+        };
+        List<string> order = [];
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post) order.Add(path);
+            if (request.Method == HttpMethod.Get)
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-resume", status = "Approved", parameters });
+            return path.Contains("/manifest/apply", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { status = "Applied", operationId = "op-resume" })
+                : TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-resume", status = "Succeeded",
+                    actuatorReceipt = new { receiptId = "receipt-resume", operationId = "op-resume" }
+                });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-resume", "approved", false, "prod-promotion-gated", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.Succeeded, result.Status);
+        Assert.Equal(1, order.Count(path => path.Contains("/manifest/apply", StringComparison.Ordinal)));
+        Assert.Equal(1, order.Count(path => path.EndsWith("/submit", StringComparison.Ordinal)));
+        Assert.True(order.FindIndex(path => path.Contains("/manifest/apply", StringComparison.Ordinal))
+                    < order.FindIndex(path => path.EndsWith("/submit", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ExecuteSubmitAsync_ChangedSealedManifest_RefusesBeforeMutation()
+    {
+        Dictionary<string, string> parameters = new(StringComparer.Ordinal)
+        {
+            ["honua.devops/desired-state-json-base64"] = Convert.ToBase64String("{}"u8.ToArray()),
+            ["honua.devops/desired-state-digest"] = new('0', 64),
+            ["honua.devops/idempotency-key"] = "idem-op-resume"
+        };
+        TestHttpMessageHandler handler = new(request => TestHttpMessageHandler.JsonOk(
+            new { operationId = "op-resume", status = "Approved", parameters }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-resume", "approved", false, "prod-promotion-gated", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.Contains("desired-state-seal-invalid", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
     }
 
     private static ManifestApplyRequest DesiredState()
