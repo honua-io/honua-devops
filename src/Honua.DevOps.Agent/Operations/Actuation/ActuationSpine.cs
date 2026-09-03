@@ -416,6 +416,22 @@ internal sealed record ApprovalEvidence(
             Reason: "The control plane did not require approval for this operation.");
     }
 
+    // The deploy-submit runbook is itself the explicit operator approval action. The caller
+    // reaches it only after confirmed=true, and the server's POST /submit transition consumes
+    // that approval. Keep this evidence distinct from the direct-execution policy result.
+    internal static ApprovalEvidence FromExplicitRunbookConfirmation(string operationId, bool confirmed)
+        => confirmed
+            ? new(
+                Satisfied: true,
+                Kind: "explicit-runbook-confirmation",
+                ReceiptId: operationId,
+                Reason: "The deploy-submit runbook was explicitly confirmed by the operator.")
+            : new(
+                Satisfied: false,
+                Kind: "explicit-runbook-confirmation",
+                ReceiptId: null,
+                Reason: "The deploy-submit runbook was not explicitly confirmed by the operator.");
+
     // A registered deterministic direct-execution policy result (direct-allowed /
     // break-glass-only in the break-glass tier). This is a pre-authorization recorded in the
     // operator policy, not a per-call boolean.

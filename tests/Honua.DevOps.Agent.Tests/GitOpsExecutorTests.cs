@@ -703,7 +703,11 @@ public class GitOpsExecutorTests
             string path = request.RequestUri!.AbsolutePath;
             if (request.Method == HttpMethod.Post) order.Add(path);
             if (request.Method == HttpMethod.Get)
-                return TestHttpMessageHandler.JsonOk(new { operationId = "op-resume", status = "Approved", parameters });
+                return TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-resume", status = "Planned",
+                    target = new { parameters }
+                });
             return path.Contains("/manifest/apply", StringComparison.Ordinal)
                 ? TestHttpMessageHandler.JsonOk(new { status = "Applied", operationId = "op-resume" })
                 : TestHttpMessageHandler.JsonOk(new
@@ -717,7 +721,7 @@ public class GitOpsExecutorTests
             CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, OperatorPolicyModel.Default);
 
         GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
-            "op-resume", "approved", false, "prod-promotion-gated", CancellationToken.None);
+            "op-resume", "approved", true, false, "prod-promotion-gated", CancellationToken.None);
 
         Assert.Equal(GitOpsExecutionStatus.Succeeded, result.Status);
         Assert.Equal(1, order.Count(path => path.Contains("/manifest/apply", StringComparison.Ordinal)));
@@ -736,16 +740,36 @@ public class GitOpsExecutorTests
             ["honua.devops/idempotency-key"] = "idem-op-resume"
         };
         TestHttpMessageHandler handler = new(request => TestHttpMessageHandler.JsonOk(
-            new { operationId = "op-resume", status = "Approved", parameters }));
+            new { operationId = "op-resume", status = "Planned", target = new { parameters } }));
         using BackendGateway gateway = CreateGateway(handler);
         GitOpsExecutor executor = new(
             CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, OperatorPolicyModel.Default);
 
         GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
-            "op-resume", "approved", false, "prod-promotion-gated", CancellationToken.None);
+            "op-resume", "approved", true, false, "prod-promotion-gated", CancellationToken.None);
 
         Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
         Assert.Contains("desired-state-seal-invalid", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    [Theory]
+    [InlineData("UnknownStatus")]
+    [InlineData("Succeeded")]
+    [InlineData("Submitted")]
+    public async Task ExecuteSubmitAsync_NonPlannedStatus_RefusesBeforeMutation(string status)
+    {
+        TestHttpMessageHandler handler = new(request => TestHttpMessageHandler.JsonOk(
+            new { operationId = "op-resume", status }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-resume", "approved", true, false, "prod-promotion-gated", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.Contains("submit-status-not-resumable", result.BlockingReasons);
         Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
     }
 

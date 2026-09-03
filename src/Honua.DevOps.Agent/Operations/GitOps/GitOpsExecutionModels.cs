@@ -215,18 +215,44 @@ internal static class DeployOperationReader
     internal static bool IsAwaitingApproval(string? status)
         => ServerOperationStatusParser.IsAwaitingApproval(status);
 
+    internal static bool IsPlanned(string? status)
+        => ServerOperationStatusParser.Recognize(status) == ServerOperationStatus.Planned;
+
     internal static IReadOnlyList<string> ReadBlockingReasons(JsonElement root)
         => ReadStringArray(root, "blockingReasons", "blocking_reasons");
 
     internal static IReadOnlyDictionary<string, string> ReadParameters(JsonElement root)
     {
+        Dictionary<string, string> values = new(StringComparer.Ordinal);
+
+        // DeployOperationResponse carries the create-request parameters on the deployed
+        // target. Read that shape first, then let the legacy root shape override it when
+        // both are present.
+        if (root.TryGetProperty("target", out JsonElement target)
+            && target.ValueKind == JsonValueKind.Object
+            && target.TryGetProperty("parameters", out JsonElement targetParameters)
+            && targetParameters.ValueKind == JsonValueKind.Object)
+        {
+            AddStringParameters(values, targetParameters);
+        }
+
         if (root.TryGetProperty("parameters", out JsonElement parameters) && parameters.ValueKind == JsonValueKind.Object)
         {
-            return parameters.EnumerateObject()
-                .Where(property => property.Value.ValueKind == JsonValueKind.String)
-                .ToDictionary(property => property.Name, property => property.Value.GetString()!, StringComparer.Ordinal);
+            AddStringParameters(values, parameters);
         }
-        return new Dictionary<string, string>(StringComparer.Ordinal);
+
+        return values;
+    }
+
+    private static void AddStringParameters(Dictionary<string, string> destination, JsonElement parameters)
+    {
+        foreach (JsonProperty property in parameters.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.String && property.Value.GetString() is { } value)
+            {
+                destination[property.Name] = value;
+            }
+        }
     }
 
     internal static string? ReadActuatorReceiptId(JsonElement root)

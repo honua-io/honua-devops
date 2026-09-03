@@ -350,6 +350,7 @@ internal sealed class GitOpsExecutor(
     internal async Task<GitOpsExecutionResult> ExecuteSubmitAsync(
         string operationId,
         string reason,
+        bool confirmed,
         bool authorizationDryRun,
         string policyGate,
         CancellationToken cancellationToken)
@@ -396,6 +397,17 @@ internal sealed class GitOpsExecutor(
                 ["desired-state-seal-invalid"]);
         }
 
+        // POST /submit is the server's manual approval transition. Only a still-planned
+        // operation can safely enter that transition; unknown, active, and terminal states
+        // are not evidence of approval and must not trigger a resumed manifest apply or submit.
+        if (!DeployOperationReader.IsPlanned(serverStatus))
+        {
+            findings.Add($"Deploy operation status `{serverStatus ?? "unknown"}` is not resumable from the explicit submit runbook.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.ContractUnavailable, operationId, serverStatus, false, decision, steps, findings,
+                ["submit-status-not-resumable"]);
+        }
+
         string requestDigest = persistedParameters.GetValueOrDefault("honua.devops/request-digest") ?? string.Empty;
         string idempotencyKey = persistedParameters.GetValueOrDefault("honua.devops/idempotency-key")
             ?? $"honua-devops:submit:{operationId}";
@@ -420,14 +432,12 @@ internal sealed class GitOpsExecutor(
                 authorization.BlockingReason is null ? [] : [authorization.BlockingReason]);
         }
 
-        // This is an explicit resume of an already-created operation. Under
-        // pr-first the authoritative control-plane transition is the external
-        // approval; requiring MayAutoSubmit here would make approved parked
-        // operations permanently impossible to resume.
-        ApprovalEvidence approval = ApprovalEvidence.FromControlPlane(
-            operationId,
-            DeployOperationReader.IsAwaitingApproval(serverStatus),
-            blockers);
+        // This is an explicit resume of an already-created operation. The confirmed runbook
+        // is the approval action for the server's Planned -> Submitted transition; it is not
+        // inferred from the mere absence of AwaitingApproval or from an unknown status.
+        ApprovalEvidence approval = ApprovalEvidence
+            .FromExplicitRunbookConfirmation(operationId, confirmed)
+            .And(ApprovalEvidence.FromControlPlane(operationId, awaitingApproval: false, blockers));
 
         if (!_spine.TryAuthorizeMutation(
                 authorization.Grant!,
