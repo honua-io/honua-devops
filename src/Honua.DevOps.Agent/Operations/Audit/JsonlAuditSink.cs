@@ -25,6 +25,34 @@ internal sealed class JsonlAuditSink : IAuditSink
 
     public string Target { get; }
 
+    internal bool TryProbe(out string reason)
+    {
+        reason = string.Empty;
+        try
+        {
+            _writeMutex.Wait();
+            try
+            {
+                _writer.Flush();
+                if (_writer is StreamWriter streamWriter && streamWriter.BaseStream is FileStream fileStream)
+                {
+                    fileStream.Flush(flushToDisk: true);
+                }
+
+                return true;
+            }
+            finally
+            {
+                _writeMutex.Release();
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ObjectDisposedException)
+        {
+            reason = $"audit sink probe failed ({exception.GetType().Name})";
+            return false;
+        }
+    }
+
     internal static JsonlAuditSink ForStdout()
     {
         return new JsonlAuditSink(Console.Out, ownsWriter: false, target: "stdout-evidence");

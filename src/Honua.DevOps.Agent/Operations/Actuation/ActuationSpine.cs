@@ -46,11 +46,13 @@ internal sealed class ActuationSpine
 
     private readonly OperationRuntime _runtime;
     private readonly OperatorPolicyModel _policy;
+    private readonly IAuditSink? _auditSink;
 
-    internal ActuationSpine(OperationRuntime runtime, OperatorPolicyModel policy)
+    internal ActuationSpine(OperationRuntime runtime, OperatorPolicyModel policy, IAuditSink? auditSink = null)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
+        _auditSink = auditSink;
     }
 
     // ---------------------------------------------------------------------------------
@@ -230,7 +232,7 @@ internal sealed class ActuationSpine
 
         // Fail closed when the audit/receipt sink is unavailable: a mutation whose evidence
         // cannot be persisted is not permitted to start.
-        if (!DurableAuditGate.TryProbe(_policy.AuditHookTarget, out string auditFailure))
+        if (!DurableAuditGate.TryProbe(_policy.AuditHookTarget, _auditSink, out string auditFailure))
         {
             return ActuationAuthorization.Refused(
                 ActuationOutcome.ContractUnavailable,

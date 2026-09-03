@@ -229,7 +229,7 @@ try
 
     string detectedEdition = await EditionDetector.DetectAsync(backendGateway, cancellationTokenSource.Token);
 
-    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition);
+    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition, auditSink);
     ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
     AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
 

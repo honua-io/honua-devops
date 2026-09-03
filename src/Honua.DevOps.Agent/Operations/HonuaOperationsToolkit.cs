@@ -28,6 +28,7 @@ internal sealed partial class HonuaOperationsToolkit(
     OperatorPolicyModel? policy = null,
     SupportGateway? supportGateway = null,
     string? defaultEdition = null,
+    IAuditSink? auditSink = null,
     IProvisioningProcessRunner? provisioningProcessRunner = null,
     IInstallHandoffVerifier? installHandoffVerifier = null,
     IApprovalSignatureProvider? approvalSignatureProvider = null)
@@ -45,7 +46,7 @@ internal sealed partial class HonuaOperationsToolkit(
     // authority for this session: every mutating backend call is issued under a grant it
     // minted, and its at-most-once ledger makes a retry or a concurrent delivery resume the
     // original operation instead of starting a second one.
-    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default);
+    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default, auditSink);
 
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 

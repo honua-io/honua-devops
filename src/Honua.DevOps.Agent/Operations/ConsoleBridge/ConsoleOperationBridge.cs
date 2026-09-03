@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -23,13 +24,14 @@ namespace Honua.DevOps.Agent.Operations.ConsoleBridge;
 internal sealed class ConsoleOperationBridge(
     OperationRuntime runtime,
     BackendGateway gateway,
-    OperatorPolicyModel? policy = null)
+    OperatorPolicyModel? policy = null,
+    IAuditSink? auditSink = null)
 {
     private const string OperationKind = "gitops-deploy";
     private const int MaxReadableKeyLength = 200;
     private const string AgentIdentity = "honua-devops";
 
-    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default);
+    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default, auditSink);
 
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 

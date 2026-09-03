@@ -1,5 +1,6 @@
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -80,6 +81,28 @@ public class ActuationSpineTests
 
         Assert.False(authorization.IsGranted);
         Assert.Equal("audit-sink-unavailable", authorization.BlockingReason);
+    }
+
+    [Fact]
+    public async Task Authorize_ProbesTheAlreadyOpenAuditSink()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"honua-audit-{Guid.NewGuid():n}.jsonl");
+        try
+        {
+            await using (IAuditSink sink = JsonlAuditSink.ForFile(path))
+            {
+                OperatorPolicyModel policy = DirectAllowedPolicy() with { AuditHookTarget = $"file://{path}" };
+                ActuationSpine spine = new(ExecuteRuntime(), policy, sink);
+
+                ActuationAuthorization authorization = spine.Authorize(SyncRequest());
+
+                Assert.True(authorization.IsGranted);
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

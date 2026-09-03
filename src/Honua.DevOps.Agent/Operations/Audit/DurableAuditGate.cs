@@ -3,12 +3,35 @@ namespace Honua.DevOps.Agent.Operations.Audit;
 /// <summary>Verifies that a configured durable sink can append and flush before actuation.</summary>
 internal static class DurableAuditGate
 {
-    internal static bool TryProbe(string target, out string reason)
+    internal static bool TryProbe(string target, IAuditSink? sink, out string reason)
     {
         reason = string.Empty;
         if (string.IsNullOrWhiteSpace(target))
         {
             reason = "audit sink is not configured";
+            return false;
+        }
+
+        if (sink is not null)
+        {
+            if (target.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            {
+                string expectedTarget = $"file:{Path.GetFullPath(target["file://".Length..])}";
+                if (!string.Equals(sink.Target, expectedTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    reason = "configured audit sink does not match the active sink";
+                    return false;
+                }
+            }
+
+            if (sink is JsonlAuditSink jsonlSink)
+            {
+                return jsonlSink.TryProbe(out reason);
+            }
+
+            reason = sink is NullAuditSink
+                ? "audit sink is disabled"
+                : "active audit sink cannot be probed for durability";
             return false;
         }
 
