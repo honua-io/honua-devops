@@ -1,4 +1,5 @@
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Microsoft.Extensions.AI;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -12,10 +13,11 @@ internal static class CapabilityToolset
         BackendGateway gateway,
         OperatorPolicyModel? policy = null,
         SupportGateway? supportGateway = null,
-        string? defaultEdition = null)
+        string? defaultEdition = null,
+        IAuditSink? auditSink = null)
     {
-        HonuaOperationsToolkit toolkit = new(runtime, gateway, policy, supportGateway, defaultEdition);
-        ConsoleOperationBridge consoleBridge = new(runtime, gateway, policy);
+        HonuaOperationsToolkit toolkit = new(runtime, gateway, policy, supportGateway, defaultEdition, auditSink);
+        ConsoleOperationBridge consoleBridge = new(runtime, gateway, policy, auditSink);
         ReleasePackageExplainer releaseExplainer = new(gateway.Configuration);
 
         List<AITool> tools =

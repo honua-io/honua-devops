@@ -4,6 +4,7 @@ using Honua.DevOps.Agent.Operations.Deliverable;
 using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.ReleaseOrchestration;
 using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
+using Honua.DevOps.Agent.Operations.Actuation;
 
 namespace Honua.DevOps.Agent.Operations;
 
@@ -30,4 +31,5 @@ internal sealed record OperationResponse(
     [property: JsonIgnore] IReadOnlyList<OperationBackendStep>? BackendSteps = null,
     [property: JsonIgnore] ConsoleBridgeProjection? ConsoleBridge = null,
     [property: JsonIgnore] MetadataReleaseChangeSet? MetadataReleaseChangeSet = null,
-    [property: JsonIgnore] DeliverableProjection? DeliverableLifecycle = null);
+    [property: JsonIgnore] DeliverableProjection? DeliverableLifecycle = null,
+    [property: JsonIgnore] ActuationResult? Actuation = null);

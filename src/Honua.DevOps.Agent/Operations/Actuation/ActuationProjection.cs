@@ -40,7 +40,7 @@ internal static class ActuationProjection
             ? null
             : new ActuationReceipt(
                 actuatorId,
-                execution.OperationId!,
+                execution.ActuatorReceiptId ?? execution.OperationId!,
                 "honua-server.deploy-control",
                 execution.ServerStatus);
 
@@ -54,7 +54,8 @@ internal static class ActuationProjection
             OperationId: execution.OperationId,
             BackendSteps: execution.BackendSteps,
             Findings: execution.Findings,
-            BlockingReasons: execution.BlockingReasons);
+            BlockingReasons: execution.BlockingReasons,
+            IdempotencyKey: execution.IdempotencyKey);
     }
 
     // Projection for a registered READ-ONLY actuator: a real backend read that mutated

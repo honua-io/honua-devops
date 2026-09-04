@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 
 using Honua.DevOps.Agent.Operations.GitOps;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -45,12 +46,22 @@ internal sealed class ActuationSpine
 
     private readonly OperationRuntime _runtime;
     private readonly OperatorPolicyModel _policy;
+    private readonly IAuditSink? _auditSink;
+    private readonly AuditRecoveryStore _recoveryStore;
 
-    internal ActuationSpine(OperationRuntime runtime, OperatorPolicyModel policy)
+    internal ActuationSpine(
+        OperationRuntime runtime,
+        OperatorPolicyModel policy,
+        IAuditSink? auditSink = null,
+        AuditRecoveryStore? recoveryStore = null)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
+        _auditSink = auditSink;
+        _recoveryStore = recoveryStore ?? AuditRecoveryStore.Default;
     }
+
+    internal AuditRecoveryStore RecoveryStore => _recoveryStore;
 
     // ---------------------------------------------------------------------------------
     // Grants
@@ -229,11 +240,11 @@ internal sealed class ActuationSpine
 
         // Fail closed when the audit/receipt sink is unavailable: a mutation whose evidence
         // cannot be persisted is not permitted to start.
-        if (string.IsNullOrWhiteSpace(_policy.AuditHookTarget))
+        if (!DurableAuditGate.TryProbe(_policy.AuditHookTarget, _auditSink, out string auditFailure))
         {
             return ActuationAuthorization.Refused(
                 ActuationOutcome.ContractUnavailable,
-                "No audit hook target is configured; a mutation whose evidence cannot be recorded is refused before it starts.",
+                $"Durable audit evidence is unavailable: {auditFailure}. Mutation refused before it starts.",
                 "audit-sink-unavailable",
                 decision);
         }
@@ -244,6 +255,15 @@ internal sealed class ActuationSpine
                 ActuationOutcome.ContractUnavailable,
                 "The request carries no idempotency key; a retry could not be proven to resume the original operation.",
                 "idempotency-key-missing",
+                decision);
+        }
+
+        if (_recoveryStore.HasPending(request.IdempotencyKey))
+        {
+            return ActuationAuthorization.Refused(
+                ActuationOutcome.Indeterminate,
+                $"A prior attempt for idempotency key `{request.IdempotencyKey}` has indeterminate durable audit state; reconcile its original operation before retrying.",
+                "audit-reconciliation-required",
                 decision);
         }
 
@@ -260,6 +280,30 @@ internal sealed class ActuationSpine
             decision);
 
         return ActuationAuthorization.Granted(grant, decision);
+    }
+
+    // Local process/filesystem mutation seams do not have a BackendGateway grant, but they
+    // still enter the same durable-audit preflight. The returned grant is intentionally not
+    // exposed to the local actuator; it is only a sealed authorization record for the gate.
+    internal bool TryAuthorizeLocalMutation(
+        string action,
+        string target,
+        string idempotencyKey,
+        string desiredState,
+        out string refusalReason)
+    {
+        ActuationAuthorization authorization = Authorize(new ActuationRequest(
+            ActuatorId: $"honua.local.{action}",
+            Action: action,
+            Target: target,
+            Environments: [],
+            DesiredState: desiredState,
+            IdempotencyKey: idempotencyKey,
+            PolicyGate: "durable-audit-required",
+            AuthorizationDryRun: true,
+            Actor: "honua-devops"));
+        refusalReason = authorization.Reason;
+        return authorization.IsGranted;
     }
 
     // ---------------------------------------------------------------------------------

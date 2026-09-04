@@ -9,7 +9,8 @@ internal sealed record AuditContext(
     string ExecutionTier,
     string ApprovalMode,
     string Provider,
-    IAuditSink Sink);
+    IAuditSink Sink,
+    AuditRecoveryStore? RecoveryStore = null);
 
 internal sealed record ToolCallRecord(string ToolName, IDictionary<string, object?>? Arguments);
 
@@ -55,14 +56,15 @@ internal static class ToolCallAuditor
         IReadOnlyList<OperationBackendStep>? backendSteps = null;
         OperationEvidence? evidence = null;
         ProvisioningLineage? provisioningLineage = null;
+        OperationResponse? operationResponse = toolResult as OperationResponse;
 
-        if (toolResult is OperationResponse response)
+        if (operationResponse is not null)
         {
-            status = response.Status;
-            summary = Redaction.Scrub(response.Summary);
-            evidence = response.Evidence;
-            provisioningLineage = response.ProvisioningLineage;
-            if (response.BackendSteps is { } steps)
+            status = operationResponse.Status;
+            summary = Redaction.Scrub(operationResponse.Summary);
+            evidence = operationResponse.Evidence;
+            provisioningLineage = operationResponse.ProvisioningLineage;
+            if (operationResponse.BackendSteps is { } steps)
             {
                 List<OperationBackendStep> scrubbedSteps = new(steps.Count);
                 foreach (OperationBackendStep step in steps)
@@ -141,6 +143,33 @@ internal static class ToolCallAuditor
             auditEventId = provisioningLineage.ApplyAuditEventId;
         }
 
+        string? operationId = operationResponse?.Actuation?.OperationId
+            ?? provisioningLineage?.ProvisioningOperationId;
+        string? idempotencyKey = operationResponse?.Actuation?.IdempotencyKey;
+        if (idempotencyKey is null && provisioningLineage is not null)
+        {
+            idempotencyKey = call.ToolName switch
+            {
+                "install_handoff" => $"honua-devops:install-handoff:{provisioningLineage.ProvisioningOperationId}",
+                "verify_install_handoff" => $"honua-devops:verify-install-handoff:{provisioningLineage.ProvisioningOperationId}",
+                _ => string.Join(
+                    ":",
+                    "honua-devops",
+                    "terraform",
+                    provisioningLineage.ProvisioningOperationId,
+                    status == "infrastructure-destroyed" ? "destroy" : "apply")
+            };
+        }
+        string route = operationResponse?.Actuation?.Action
+            ?? (provisioningLineage is not null
+                ? call.ToolName switch
+                {
+                    "install_handoff" => "install-handoff",
+                    "verify_install_handoff" => "verify-install-handoff",
+                    _ => $"terraform-exact:{call.ToolName}"
+                }
+                : call.ToolName);
+
         AuditRecord record = new(
             Timestamp: DateTimeOffset.UtcNow,
             SessionId: context.SessionId,
@@ -158,6 +187,10 @@ internal static class ToolCallAuditor
             Evidence: evidence,
             ProvisioningLineage: provisioningLineage);
 
+        // Audit acknowledgement is part of the tool result commit.  Never turn
+        // append/flush failure into a warning: after mutation that would expose
+        // an unaudited success to the caller.  The host returns an error and the
+        // stable operation/idempotency lineage is used for reconciliation.
         try
         {
             await context.Sink.WriteAsync(record, cancellationToken);
@@ -166,9 +199,37 @@ internal static class ToolCallAuditor
         {
             throw;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ObjectDisposedException)
         {
-            Console.Error.WriteLine($"warn: audit sink write failed: {exception.Message}");
+            if (mutated)
+            {
+                AuditRecoveryStore recoveryStore = context.RecoveryStore ?? AuditRecoveryStore.Default;
+                recoveryStore.Record(new AuditRecoveryEvidence(
+                    RecoveryState: "indeterminate/reconciliation-required",
+                    RecordedAtUtc: DateTimeOffset.UtcNow,
+                    AuditEventId: auditEventId,
+                    ToolName: call.ToolName,
+                    Route: route,
+                    OperationId: operationId,
+                    IdempotencyKey: idempotencyKey,
+                    ProvisioningOperationId: provisioningLineage?.ProvisioningOperationId,
+                    ApprovalReference: operationResponse?.Actuation?.Receipt?.ReceiptId
+                        ?? provisioningLineage?.ApprovalReceiptId,
+                    SinkFailure: $"{exception.GetType().Name}: {Redaction.Scrub(exception.Message)}",
+                    ReturnedStatus: status,
+                    MutationAttempted: true,
+                    BackendAcknowledged: backendSteps?.Any(step => step.MutatesState && step.Success) == true,
+                    BackendSteps: backendSteps is null
+                        ? []
+                        : backendSteps.Select(step => new AuditRecoveryStep(
+                            step.Name,
+                            Redaction.Scrub(step.Endpoint),
+                            step.Success,
+                            Redaction.Scrub(step.Detail),
+                            step.MutatesState)).ToArray()));
+            }
+
+            throw;
         }
     }
 

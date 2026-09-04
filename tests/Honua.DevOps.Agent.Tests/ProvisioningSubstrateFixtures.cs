@@ -196,9 +196,9 @@ internal static class ProvisioningSubstrateFixtures
             [ApprovalIssuer] = Convert.ToBase64String(ApprovalKey)
         });
 
-    internal static BackendGateway CreateGateway()
+    internal static BackendGateway CreateGateway(TestHttpMessageHandler? handler = null)
     {
-        HttpClient client = new(new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)))
+        HttpClient client = new(handler ?? new TestHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)))
         {
             Timeout = TimeSpan.FromSeconds(5)
         };
