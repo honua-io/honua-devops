@@ -34,7 +34,9 @@ internal sealed class GitOpsExecutor(
     DeployPollPolicy? pollPolicy = null,
     Func<TimeSpan, CancellationToken, Task>? delay = null,
     TimeProvider? timeProvider = null,
-    ActuationSpine? spine = null)
+    ActuationSpine? spine = null,
+    IManifestApplyCheckpointStore? checkpointStore = null,
+    Func<Task>? afterManifestAcknowledgement = null)
 {
     private readonly OperationRuntime _runtime = runtime;
     private readonly BackendGateway _gateway = gateway;
@@ -43,6 +45,9 @@ internal sealed class GitOpsExecutor(
     private readonly DeployPollPolicy _pollPolicy = pollPolicy ?? DeployPollPolicy.Resolve();
     private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly IManifestApplyCheckpointStore _checkpointStore =
+        checkpointStore ?? ManifestApplyCheckpointStoreFactory.Create(policy.AuditHookTarget);
+    private readonly Func<Task>? _afterManifestAcknowledgement = afterManifestAcknowledgement;
 
     internal OperationRuntime Runtime => _runtime;
 
@@ -106,6 +111,15 @@ internal sealed class GitOpsExecutor(
         ManifestApplyRequest? desiredState = null)
     {
         List<OperationBackendStep> steps = [];
+        Dictionary<string, string> sealedParameters = new(parameters, StringComparer.Ordinal);
+        string? manifestAcknowledgementDigest = null;
+        if (desiredState is not null)
+        {
+            string sealedJson = JsonSerializer.Serialize(desiredState);
+            byte[] sealedBytes = Encoding.UTF8.GetBytes(sealedJson);
+            sealedParameters["honua.devops/desired-state-json-base64"] = Convert.ToBase64String(sealedBytes);
+            sealedParameters["honua.devops/desired-state-digest"] = Convert.ToHexString(SHA256.HashData(sealedBytes)).ToLowerInvariant();
+        }
         List<string> findings =
         [
             $"Actuation kind: {kind}.",
@@ -136,8 +150,8 @@ internal sealed class GitOpsExecutor(
             ActuatorId: $"honua.gitops.{kind}",
             Action: kind,
             Target: _runtime.DeployTargetId ?? string.Empty,
-            Environments: ReadEnvironments(parameters),
-            DesiredState: BuildDesiredStateIdentity(desiredRevision, currentRevision, parameters),
+            Environments: ReadEnvironments(sealedParameters),
+            DesiredState: BuildDesiredStateIdentity(desiredRevision, currentRevision, sealedParameters),
             IdempotencyKey: idempotencyKey,
             PolicyGate: decision.PolicyGate,
             AuthorizationDryRun: !decision.Mutating,
@@ -171,7 +185,7 @@ internal sealed class GitOpsExecutor(
         // records the same identity the spine authorized. The digest is taken FROM the grant
         // rather than recomputed here: one source of truth, so the value the server stores
         // cannot drift from the value that gated the mutation.
-        Dictionary<string, string> lineageParameters = new(parameters, StringComparer.Ordinal)
+        Dictionary<string, string> lineageParameters = new(sealedParameters, StringComparer.Ordinal)
         {
             ["honua.devops/request-digest"] = operationGrant.RequestDigest,
             ["honua.devops/idempotency-key"] = operationGrant.IdempotencyKey
@@ -289,14 +303,19 @@ internal sealed class GitOpsExecutor(
                     BlockingReasons: createBlockers);
             }
 
-            BackendCallResult applied = await _gateway.ApplyManifestAsync(desiredState, applyGrant!, cancellationToken);
-            steps.Add(OperationBackendStep.From("manifest-apply", applied, mutatesState: applied.IsSuccess));
-            if (!applied.IsSuccess)
+            ManifestApplyOutcome apply = await ApplyManifestOnceAsync(
+                operationId,
+                desiredState,
+                applyGrant!,
+                cancellationToken,
+                "manifest-apply");
+            steps.Add(apply.Step);
+            if (!apply.Acknowledged)
             {
                 // The apply was issued but did not succeed. Do not submit on top of an
                 // unknown desired state; report the ambiguity rather than a failure or a
                 // success we cannot substantiate.
-                findings.Add($"Desired-state apply did not succeed ({applied.Detail}); operation `{operationId}` was not submitted.");
+                findings.Add($"Desired-state apply was not durably acknowledged ({apply.Failure}); operation `{operationId}` was not submitted.");
                 return new GitOpsExecutionResult(
                     Status: GitOpsExecutionStatus.Indeterminate,
                     OperationId: operationId,
@@ -308,11 +327,22 @@ internal sealed class GitOpsExecutor(
                     BlockingReasons: ["manifest-apply-unconfirmed"]);
             }
 
+            manifestAcknowledgementDigest = apply.AcknowledgementDigest;
             findings.Add($"Desired state applied for operation `{operationId}`.");
         }
 
         // Approval satisfied -> submit, then poll to terminal.
-        return await SubmitAndPollAsync(operationId, reason, decision, steps, findings, submitGrant!, cancellationToken);
+        return await SubmitAndPollAsync(
+            operationId,
+            reason,
+            decision,
+            steps,
+            findings,
+            submitGrant!,
+            cancellationToken,
+            desiredState is null ? null : ComputeDesiredStateDigest(desiredState),
+            manifestAcknowledgementDigest,
+            approval.ReceiptId);
     }
 
     private static IReadOnlyList<string> ReadEnvironments(IReadOnlyDictionary<string, string> parameters)
@@ -342,9 +372,11 @@ internal sealed class GitOpsExecutor(
     internal async Task<GitOpsExecutionResult> ExecuteSubmitAsync(
         string operationId,
         string reason,
+        bool confirmed,
         bool authorizationDryRun,
         string policyGate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? approvalReference = null)
     {
         GitOpsActuationDecision decision = GitOpsActuationDecision.Resolve(
             _runtime.ExecutionMode,
@@ -379,14 +411,59 @@ internal sealed class GitOpsExecutor(
 
         string? serverStatus = DeployOperationReader.ReadStatus(current.Payload.RootElement);
         IReadOnlyList<string> blockers = DeployOperationReader.ReadBlockingReasons(current.Payload.RootElement);
+        string? persistedApprovalReference = DeployOperationReader.ReadApprovalReference(current.Payload.RootElement);
+        IReadOnlyDictionary<string, string> persistedParameters = DeployOperationReader.ReadParameters(current.Payload.RootElement);
+        if (!TryRecoverDesiredState(
+                persistedParameters,
+                out ManifestApplyRequest? recoveredDesiredState,
+                out string? recoveredDesiredStateDigest,
+                out string sealFailure))
+        {
+            findings.Add($"Sealed desired state could not be recovered: {sealFailure}.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.ContractUnavailable, operationId, serverStatus, false, decision, steps, findings,
+                ["desired-state-seal-invalid"]);
+        }
+
+        // POST /submit is the server's manual approval transition. Only a still-planned
+        // operation can safely enter that transition; unknown, active, and terminal states
+        // are not evidence of approval and must not trigger a resumed manifest apply or submit.
+        if (!DeployOperationReader.IsPlanned(serverStatus))
+        {
+            if (DeployOperationReader.IsAwaitingApproval(serverStatus))
+            {
+                findings.Add($"Deploy operation `{operationId}` is still awaiting approval; nothing was submitted.");
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings,
+                    blockers.Count > 0 ? blockers : ["approval-required"]);
+            }
+
+            findings.Add($"Deploy operation status `{serverStatus ?? "unknown"}` is not resumable from the explicit submit runbook.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.ContractUnavailable, operationId, serverStatus, false, decision, steps, findings,
+                ["submit-status-not-resumable"]);
+        }
+
+        if (persistedApprovalReference is not null
+            && !string.Equals(persistedApprovalReference, approvalReference?.Trim(), StringComparison.Ordinal))
+        {
+            findings.Add("The supplied approval reference does not match the control plane's approved transition.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings,
+                ["approval-reference-mismatch"]);
+        }
+
+        string requestDigest = persistedParameters.GetValueOrDefault("honua.devops/request-digest") ?? string.Empty;
+        string idempotencyKey = persistedParameters.GetValueOrDefault("honua.devops/idempotency-key")
+            ?? $"honua-devops:submit:{operationId}";
 
         ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
             ActuatorId: "honua.deploy-operation.submit",
             Action: "submit",
             Target: _runtime.DeployTargetId ?? operationId,
             Environments: [],
-            DesiredState: $"submit:{operationId}",
-            IdempotencyKey: $"honua-devops:submit:{operationId}",
+            DesiredState: string.IsNullOrWhiteSpace(requestDigest) ? $"submit:{operationId}" : requestDigest,
+            IdempotencyKey: idempotencyKey,
             PolicyGate: decision.PolicyGate,
             AuthorizationDryRun: !decision.Mutating,
             Actor: $"honua-devops:runbook:deploy-submit",
@@ -400,12 +477,21 @@ internal sealed class GitOpsExecutor(
                 authorization.BlockingReason is null ? [] : [authorization.BlockingReason]);
         }
 
-        ApprovalEvidence approval = ApprovalEvidence
-            .FromDirectExecutionPolicy(decision)
-            .And(ApprovalEvidence.FromControlPlane(
-                operationId,
-                DeployOperationReader.IsAwaitingApproval(serverStatus),
-                blockers));
+        // This is an explicit resume of an already-created operation. The confirmed runbook
+        // is the approval action for the server's Planned -> Submitted transition; it is not
+        // inferred from the mere absence of AwaitingApproval or from an unknown status.
+        ApprovalEvidence explicitApproval = ApprovalEvidence
+            .FromExplicitRunbookConfirmation(operationId, confirmed, approvalReference ?? persistedApprovalReference);
+        ApprovalEvidence controlPlaneApproval = ApprovalEvidence.FromControlPlane(
+            operationId,
+            awaitingApproval: false,
+            blockers);
+        // Keep the explicit approval receipt when both gates are satisfied. The receipt is
+        // the lineage binding carried into the terminal actuator receipt; replacing it with
+        // the operation id would lose the approval decision's identity across a restart.
+        ApprovalEvidence approval = explicitApproval.Satisfied && controlPlaneApproval.Satisfied
+            ? explicitApproval
+            : explicitApproval.And(controlPlaneApproval);
 
         if (!_spine.TryAuthorizeMutation(
                 authorization.Grant!,
@@ -420,8 +506,185 @@ internal sealed class GitOpsExecutor(
                 GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings, blockers);
         }
 
-        return await SubmitAndPollAsync(operationId, reason, decision, steps, findings, grant!, cancellationToken);
+        if (recoveredDesiredState is not null)
+        {
+            if (!_spine.TryAuthorizeMutation(
+                    authorization.Grant!, BackendMutation.ManifestApply, operationId, approval,
+                    out ActuationSpine.MutationGrant? applyGrant, out string applyRefusal))
+            {
+                findings.Add($"Desired-state resume was refused: {applyRefusal}");
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings, blockers);
+            }
+
+            ManifestApplyOutcome apply = await ApplyManifestOnceAsync(
+                operationId,
+                recoveredDesiredState,
+                applyGrant!,
+                cancellationToken,
+                "manifest-apply-resume");
+            steps.Add(apply.Step);
+            if (!apply.Acknowledged)
+            {
+                findings.Add($"Desired-state acknowledgement is ambiguous ({apply.Failure}); reconcile the original operation before retrying.");
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.Indeterminate, operationId, serverStatus, true, decision, steps, findings,
+                    ["manifest-apply-unconfirmed"]);
+            }
+
+            return await SubmitAndPollAsync(
+                operationId,
+                reason,
+                decision,
+                steps,
+                findings,
+                grant!,
+                cancellationToken,
+                recoveredDesiredStateDigest,
+                apply.AcknowledgementDigest,
+                approval.ReceiptId);
+        }
+
+        return await SubmitAndPollAsync(
+            operationId,
+            reason,
+            decision,
+            steps,
+            findings,
+            grant!,
+            cancellationToken,
+            null,
+            null,
+            approval.ReceiptId);
     }
+
+    private static bool TryRecoverDesiredState(
+        IReadOnlyDictionary<string, string> parameters,
+        out ManifestApplyRequest? desiredState,
+        out string? desiredStateDigest,
+        out string failure)
+    {
+        desiredState = null;
+        desiredStateDigest = null;
+        failure = string.Empty;
+        bool hasPayload = parameters.TryGetValue("honua.devops/desired-state-json-base64", out string? encoded);
+        bool hasDigest = parameters.TryGetValue("honua.devops/desired-state-digest", out string? expectedDigest);
+        if (!hasPayload && !hasDigest)
+        {
+            return true;
+        }
+        if (!hasPayload || !hasDigest || string.IsNullOrWhiteSpace(encoded) || string.IsNullOrWhiteSpace(expectedDigest))
+        {
+            failure = "the durable operation contains an incomplete desired-state seal";
+            return false;
+        }
+
+        try
+        {
+            byte[] json = Convert.FromBase64String(encoded);
+            string actualDigest = Convert.ToHexString(SHA256.HashData(json)).ToLowerInvariant();
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(actualDigest), Encoding.ASCII.GetBytes(expectedDigest.ToLowerInvariant())))
+            {
+                failure = "the persisted desired-state digest does not match its sealed bytes";
+                return false;
+            }
+            desiredState = JsonSerializer.Deserialize<ManifestApplyRequest>(json);
+            if (desiredState is null || desiredState.DryRun)
+            {
+                failure = "the sealed manifest is absent or not an actuation request";
+                return false;
+            }
+            desiredStateDigest = actualDigest;
+            return true;
+        }
+        catch (Exception exception) when (exception is FormatException or JsonException)
+        {
+            failure = "the persisted desired-state seal is malformed";
+            return false;
+        }
+    }
+
+    private async Task<ManifestApplyOutcome> ApplyManifestOnceAsync(
+        string operationId,
+        ManifestApplyRequest desiredState,
+        ActuationSpine.MutationGrant grant,
+        CancellationToken cancellationToken,
+        string stepName)
+    {
+        string desiredStateDigest = ComputeDesiredStateDigest(desiredState);
+        ManifestApplyCheckpoint? checkpoint = await _checkpointStore.ReadAsync(
+            operationId,
+            desiredStateDigest,
+            cancellationToken);
+        if (checkpoint is not null)
+        {
+            return new ManifestApplyOutcome(
+                new OperationBackendStep(
+                    Name: $"{stepName}-replay",
+                    Endpoint: BackendGateway.BuildEndpoint(
+                        _gateway.Configuration.HonuaApiBaseUri,
+                        _gateway.Configuration.HonuaManifestApplyPath).ToString(),
+                    Success: true,
+                    Detail: "manifest acknowledgement recovered from the durable checkpoint; no second mutation was issued",
+                    PayloadPreview: checkpoint.AcknowledgementDigest,
+                    MutatesState: false),
+                Acknowledged: true,
+                AcknowledgementDigest: checkpoint.AcknowledgementDigest,
+                Failure: null);
+        }
+
+        BackendCallResult applied = await _gateway.ApplyManifestAsync(desiredState, grant, cancellationToken);
+        if (!applied.IsSuccess)
+        {
+            return new ManifestApplyOutcome(
+                OperationBackendStep.From(stepName, applied, mutatesState: false),
+                Acknowledged: false,
+                AcknowledgementDigest: null,
+                Failure: applied.Detail);
+        }
+
+        string acknowledgementDigest = ComputeAcknowledgementDigest(applied);
+        try
+        {
+            // This hook is deliberately between the backend acknowledgement and the durable
+            // checkpoint commit so the denominator can fault the exact split boundary.
+            if (_afterManifestAcknowledgement is not null)
+            {
+                await _afterManifestAcknowledgement().ConfigureAwait(false);
+            }
+
+            await _checkpointStore.CommitAsync(
+                new ManifestApplyCheckpoint(operationId, desiredStateDigest, acknowledgementDigest),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return new ManifestApplyOutcome(
+                OperationBackendStep.From(stepName, applied, mutatesState: true),
+                Acknowledged: false,
+                AcknowledgementDigest: acknowledgementDigest,
+                Failure: $"backend acknowledged the manifest but checkpoint commit failed ({exception.GetType().Name})");
+        }
+
+        return new ManifestApplyOutcome(
+            OperationBackendStep.From(stepName, applied, mutatesState: true),
+            Acknowledged: true,
+            AcknowledgementDigest: acknowledgementDigest,
+            Failure: null);
+    }
+
+    private static string ComputeDesiredStateDigest(ManifestApplyRequest desiredState)
+        => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(desiredState))).ToLowerInvariant();
+
+    private static string ComputeAcknowledgementDigest(BackendCallResult result)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(result.PayloadPreview))).ToLowerInvariant();
+
+    private sealed record ManifestApplyOutcome(
+        OperationBackendStep Step,
+        bool Acknowledged,
+        string? AcknowledgementDigest,
+        string? Failure);
 
     internal async Task<GitOpsExecutionResult> SubmitAndPollAsync(
         string operationId,
@@ -430,8 +693,12 @@ internal sealed class GitOpsExecutor(
         List<OperationBackendStep> steps,
         List<string> findings,
         ActuationSpine.MutationGrant grant,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? desiredStateDigest = null,
+        string? manifestAcknowledgementDigest = null,
+        string? approvalReference = null)
     {
+        List<string> receiptBindingFailures = [];
         using BackendJsonResult submitted = await _gateway.SubmitDeployOperationJsonAsync(operationId, reason, grant, cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-operation-submit", submitted.CallResult, mutatesState: submitted.CallResult.IsSuccess));
 
@@ -456,6 +723,17 @@ internal sealed class GitOpsExecutor(
         string? status = submitted.Payload is null ? null : DeployOperationReader.ReadStatus(submitted.Payload.RootElement);
         string? receiptId = submitted.Payload is null ? null : DeployOperationReader.ReadActuatorReceiptId(submitted.Payload.RootElement);
         string? receiptOperationId = submitted.Payload is null ? null : DeployOperationReader.ReadActuatorReceiptOperationId(submitted.Payload.RootElement);
+        if (desiredStateDigest is not null && submitted.Payload is not null)
+        {
+            receiptBindingFailures.AddRange(DeployOperationReader.ReadActuatorReceiptBindingFailures(
+                submitted.Payload.RootElement,
+                operationId,
+                grant.IdempotencyKey,
+                desiredStateDigest,
+                manifestAcknowledgementDigest ?? string.Empty,
+                approvalReference ?? string.Empty,
+                decision.PolicyGate));
+        }
         findings.Add($"Operation `{operationId}` submitted (status {status ?? "unknown"}).");
 
         // Poll to a terminal status with capped exponential backoff up to the configured
@@ -491,6 +769,20 @@ internal sealed class GitOpsExecutor(
                 status = DeployOperationReader.ReadStatus(polled.Payload.RootElement);
                 receiptId = DeployOperationReader.ReadActuatorReceiptId(polled.Payload.RootElement) ?? receiptId;
                 receiptOperationId = DeployOperationReader.ReadActuatorReceiptOperationId(polled.Payload.RootElement) ?? receiptOperationId;
+                if (desiredStateDigest is not null && DeployOperationReader.IsTerminal(status))
+                {
+                    receiptBindingFailures =
+                    [
+                        .. DeployOperationReader.ReadActuatorReceiptBindingFailures(
+                            polled.Payload.RootElement,
+                            operationId,
+                            grant.IdempotencyKey,
+                            desiredStateDigest,
+                            manifestAcknowledgementDigest ?? string.Empty,
+                            approvalReference ?? string.Empty,
+                            decision.PolicyGate)
+                    ];
+                }
             }
         }
 
@@ -527,6 +819,21 @@ internal sealed class GitOpsExecutor(
         else
         {
             findings.Add($"Terminal status for `{operationId}`: {status ?? "unknown"}.");
+        }
+
+        if (resultStatus == GitOpsExecutionStatus.Succeeded && receiptBindingFailures.Count > 0)
+        {
+            findings.Add(
+                $"Operation `{operationId}` reached success with incomplete actuator receipt lineage: {string.Join(", ", receiptBindingFailures)}.");
+            return new GitOpsExecutionResult(
+                Status: GitOpsExecutionStatus.Indeterminate,
+                OperationId: operationId,
+                ServerStatus: status,
+                Mutated: true,
+                Decision: decision,
+                BackendSteps: steps,
+                Findings: findings,
+                BlockingReasons: receiptBindingFailures);
         }
 
         if (resultStatus == GitOpsExecutionStatus.Succeeded &&

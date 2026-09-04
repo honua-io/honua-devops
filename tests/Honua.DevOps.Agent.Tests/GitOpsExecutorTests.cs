@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 using Honua.DevOps.Agent.Operations;
@@ -562,6 +564,7 @@ public class GitOpsExecutorTests
     [Fact]
     public async Task ExecuteSyncAsync_ExecuteDirectAllowed_AppliesDesiredStateAfterTheOperationExists()
     {
+        ManifestApplyRequest desiredState = DesiredState();
         List<string> order = [];
         TestHttpMessageHandler handler = new(request =>
         {
@@ -573,11 +576,20 @@ public class GitOpsExecutorTests
 
             return path.EndsWith("/deploy/operations", StringComparison.Ordinal)
                 ? TestHttpMessageHandler.JsonOk(new { operationId = "op-1", status = "Planned" })
+                : path.Contains("/manifest/apply", StringComparison.Ordinal)
+                    ? TestHttpMessageHandler.JsonOk(new { status = "Applied", operationId = "op-1" })
                 : TestHttpMessageHandler.JsonOk(new
                 {
                     operationId = "op-1",
                     status = "Succeeded",
-                    actuatorReceipt = new { receiptId = "rcpt-1", operationId = "op-1" }
+                    actuatorReceipt = FullActuatorReceipt(
+                        "rcpt-1",
+                        "op-1",
+                        "honua-devops:proposal:prod-api:roads-api:dev:release/2026.03:sync",
+                        DesiredStateDigest(desiredState),
+                        Sha256("{\"status\":\"Applied\",\"operationId\":\"op-1\"}"),
+                        "op-1",
+                        "lower-env-execution")
                 });
         });
         using BackendGateway gateway = CreateGateway(handler);
@@ -586,9 +598,11 @@ public class GitOpsExecutorTests
             gateway,
             DirectAllowedPolicy());
 
-        GitOpsExecutionResult result = await ExecuteSyncAsync(executor, desiredState: DesiredState());
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor, desiredState: desiredState);
 
-        Assert.Equal(GitOpsExecutionStatus.Succeeded, result.Status);
+        Assert.True(
+            GitOpsExecutionStatus.Succeeded == result.Status,
+            string.Join(" | ", result.BlockingReasons) + " :: " + string.Join(" | ", result.Findings));
 
         int createIndex = order.FindIndex(path => path.EndsWith("/deploy/operations", StringComparison.Ordinal));
         int applyIndex = order.FindIndex(path => path.Contains("/manifest/apply", StringComparison.Ordinal));
@@ -684,6 +698,426 @@ public class GitOpsExecutorTests
         Assert.Empty(handler.CapturedRequests);
     }
 
+    [Fact]
+    public async Task ExecuteSubmitAsync_PrFirstResume_RecoversSealedManifestBeforeSubmittingOriginalOperation()
+    {
+        ManifestApplyRequest manifest = DesiredState();
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
+        Dictionary<string, string> parameters = new(StringComparer.Ordinal)
+        {
+            ["honua.devops/desired-state-json-base64"] = Convert.ToBase64String(bytes),
+            ["honua.devops/desired-state-digest"] = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+            ["honua.devops/request-digest"] = new('a', 64),
+            ["honua.devops/idempotency-key"] = "idem-op-resume"
+        };
+        List<string> order = [];
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post) order.Add(path);
+            if (request.Method == HttpMethod.Get)
+                return TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-resume", status = "Planned",
+                    target = new { parameters }
+                });
+            return path.Contains("/manifest/apply", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(new { status = "Applied", operationId = "op-resume" })
+                : TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-resume", status = "Succeeded",
+                    actuatorReceipt = FullActuatorReceipt(
+                        "receipt-resume",
+                        "op-resume",
+                        "idem-op-resume",
+                        parameters["honua.devops/desired-state-digest"],
+                        Sha256("{\"status\":\"Applied\",\"operationId\":\"op-resume\"}"),
+                        "op-resume",
+                        "prod-promotion-gated")
+                });
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-resume", "approved", true, false, "prod-promotion-gated", CancellationToken.None,
+            approvalReference: "op-resume");
+
+        Assert.Equal(GitOpsExecutionStatus.Succeeded, result.Status);
+        Assert.Equal(1, order.Count(path => path.Contains("/manifest/apply", StringComparison.Ordinal)));
+        Assert.Equal(1, order.Count(path => path.EndsWith("/submit", StringComparison.Ordinal)));
+        Assert.True(order.FindIndex(path => path.Contains("/manifest/apply", StringComparison.Ordinal))
+                    < order.FindIndex(path => path.EndsWith("/submit", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ExecuteSubmitAsync_ChangedSealedManifest_RefusesBeforeMutation()
+    {
+        Dictionary<string, string> parameters = new(StringComparer.Ordinal)
+        {
+            ["honua.devops/desired-state-json-base64"] = Convert.ToBase64String("{}"u8.ToArray()),
+            ["honua.devops/desired-state-digest"] = new('0', 64),
+            ["honua.devops/idempotency-key"] = "idem-op-resume"
+        };
+        TestHttpMessageHandler handler = new(request => TestHttpMessageHandler.JsonOk(
+            new { operationId = "op-resume", status = "Planned", target = new { parameters } }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-resume", "approved", true, false, "prod-promotion-gated", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.Contains("desired-state-seal-invalid", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    [Fact]
+    public async Task Issue180_PrFirstApprovalRestartCrashResume_AppliesOnceBeforeOneSubmitAndWritesTrace()
+    {
+        ManifestApplyRequest desiredState = DesiredState();
+        string desiredStateDigest = DesiredStateDigest(desiredState);
+        string checkpointPath = Path.Combine(Path.GetTempPath(), $"honua-180-{Guid.NewGuid():N}.jsonl");
+        FileManifestApplyCheckpointStore checkpointStore = new(checkpointPath);
+        ResumeControlPlane controlPlane = new("op-180", approvalReference: "approval-180", policyGate: "resume-policy");
+        TestHttpMessageHandler? handler = null;
+        handler = new(request => controlPlane.Handle(handler!, request));
+        using BackendGateway gateway = CreateGateway(handler);
+
+        GitOpsExecutor initialProcess = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default,
+            checkpointStore: checkpointStore);
+        GitOpsExecutionResult parked = await ExecuteSyncAsync(initialProcess, desiredState: desiredState);
+
+        Assert.Equal(GitOpsExecutionStatus.AwaitingApproval, parked.Status);
+        Assert.Equal(0, controlPlane.ManifestCallCount);
+        Assert.Equal(0, controlPlane.SubmitCallCount);
+        Assert.Equal(desiredStateDigest, controlPlane.SealedDesiredStateDigest);
+
+        controlPlane.Approve();
+        GitOpsExecutor crashedProcess = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default,
+            checkpointStore: checkpointStore,
+            afterManifestAcknowledgement: () => throw new InvalidOperationException("injected crash after manifest acknowledgement"));
+        GitOpsExecutionResult crashed = await crashedProcess.ExecuteSubmitAsync(
+            controlPlane.OperationId,
+            "approval-180",
+            confirmed: true,
+            authorizationDryRun: false,
+            policyGate: controlPlane.PolicyGate,
+            CancellationToken.None,
+            approvalReference: controlPlane.ApprovalReference);
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, crashed.Status);
+        Assert.Equal(1, controlPlane.ManifestMutationCount);
+        Assert.Equal(0, controlPlane.SubmitCallCount);
+
+        GitOpsExecutor resumedProcess = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default,
+            checkpointStore: checkpointStore);
+        GitOpsExecutionResult resumed = await resumedProcess.ExecuteSubmitAsync(
+            controlPlane.OperationId,
+            "approval-180",
+            confirmed: true,
+            authorizationDryRun: false,
+            policyGate: controlPlane.PolicyGate,
+            CancellationToken.None,
+            approvalReference: controlPlane.ApprovalReference);
+
+        Assert.True(
+            GitOpsExecutionStatus.Succeeded == resumed.Status,
+            string.Join(" | ", resumed.BlockingReasons) + " :: " + string.Join(" | ", resumed.Findings));
+        Assert.Equal(2, controlPlane.ManifestCallCount);
+        Assert.Equal(1, controlPlane.ManifestMutationCount);
+        Assert.Equal(1, controlPlane.SubmitCallCount);
+        Assert.Equal(desiredStateDigest, controlPlane.AppliedDesiredStateDigest);
+        Assert.Equal(controlPlane.OperationId, controlPlane.ManifestOperationIdHeader);
+        Assert.Equal(64, controlPlane.ManifestRequestDigestHeader!.Length);
+        Assert.Equal(controlPlane.ManifestRequestDigestHeader, controlPlane.ManifestReplayRequestDigestHeader);
+        Assert.Equal(controlPlane.SealedIdempotencyKey, controlPlane.ManifestIdempotencyKeyHeader);
+        Assert.Equal(
+            controlPlane.ManifestRequestBody,
+            controlPlane.ReplayedManifestRequestBody);
+        Assert.True(
+            controlPlane.Trace.FindIndex(entry => entry == "manifest-apply")
+                < controlPlane.Trace.FindIndex(entry => entry == "deploy-operation-submit"));
+        Assert.Equal("approval-180", controlPlane.TerminalApprovalReference);
+
+        string tracePath = Path.Combine(AppContext.BaseDirectory, "issue-180-acceptance-trace.json");
+        await File.WriteAllTextAsync(
+            tracePath,
+            JsonSerializer.Serialize(
+                new
+                {
+                    scenario = "pr-first-approval-restart-crash-resume",
+                    durableOperationTransitions = controlPlane.Trace,
+                    processBoundary = "crash after manifest acknowledgement before checkpoint commit",
+                    approvalReceiptId = controlPlane.ApprovalReference,
+                    desiredStateDigest,
+                    manifestCallCount = controlPlane.ManifestCallCount,
+                    manifestMutationCount = controlPlane.ManifestMutationCount,
+                    manifestAcknowledgement = controlPlane.ManifestAcknowledgementDigest,
+                    submitCallCount = controlPlane.SubmitCallCount,
+                    terminalStatus = resumed.Status,
+                    actuatorReceiptDigest = controlPlane.TerminalReceiptDigest
+                },
+                new JsonSerializerOptions { WriteIndented = true }));
+        Assert.True(File.Exists(tracePath));
+    }
+
+    [Fact]
+    public async Task Issue180_ExpiredApproval_ProducesZeroManifestAndSubmitCalls()
+    {
+        ManifestApplyRequest desiredState = DesiredState();
+        Dictionary<string, string> parameters = SealedParameters(desiredState);
+        TestHttpMessageHandler handler = new(request => request.Method == HttpMethod.Get
+            ? TestHttpMessageHandler.JsonOk(new
+            {
+                operationId = "op-expired",
+                status = "Planned",
+                target = new { parameters }
+            })
+            : TestHttpMessageHandler.JsonOk(new { status = "unexpected" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-expired", "expired approval", confirmed: false, authorizationDryRun: false,
+            "resume-policy", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.AwaitingApproval, result.Status);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    [Fact]
+    public async Task Issue180_MismatchedApprovalReference_ProducesZeroManifestAndSubmitCalls()
+    {
+        Dictionary<string, string> parameters = SealedParameters(DesiredState());
+        TestHttpMessageHandler handler = new(request => request.Method == HttpMethod.Get
+            ? TestHttpMessageHandler.JsonOk(new
+            {
+                operationId = "op-mismatched-approval",
+                status = "Planned",
+                approvalReceiptId = "approval-expected",
+                target = new { parameters }
+            })
+            : TestHttpMessageHandler.JsonOk(new { status = "unexpected" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-mismatched-approval", "mismatched approval", confirmed: true, authorizationDryRun: false,
+            "resume-policy", CancellationToken.None, approvalReference: "approval-wrong");
+
+        Assert.Equal(GitOpsExecutionStatus.AwaitingApproval, result.Status);
+        Assert.Contains("approval-reference-mismatch", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    [Fact]
+    public async Task Issue180_ChangedDesiredStateDigest_ProducesZeroManifestAndSubmitCalls()
+    {
+        Dictionary<string, string> parameters = SealedParameters(DesiredState());
+        parameters["honua.devops/desired-state-digest"] = new('f', 64);
+        TestHttpMessageHandler handler = new(request => request.Method == HttpMethod.Get
+            ? TestHttpMessageHandler.JsonOk(new
+            {
+                operationId = "op-changed",
+                status = "Planned",
+                target = new { parameters }
+            })
+            : TestHttpMessageHandler.JsonOk(new { status = "unexpected" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-changed", "changed desired state", confirmed: true, authorizationDryRun: false,
+            "resume-policy", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.Contains("desired-state-seal-invalid", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    private static Dictionary<string, string> SealedParameters(ManifestApplyRequest manifest)
+    {
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["honua.devops/desired-state-json-base64"] = Convert.ToBase64String(bytes),
+            ["honua.devops/desired-state-digest"] = Sha256(Encoding.UTF8.GetString(bytes)),
+            ["honua.devops/request-digest"] = new('a', 64),
+            ["honua.devops/idempotency-key"] = "idem-op-resume"
+        };
+    }
+
+    private sealed class ResumeControlPlane(
+        string operationId,
+        string approvalReference,
+        string policyGate)
+    {
+        private readonly HashSet<string> _appliedIdempotencyKeys = new(StringComparer.Ordinal);
+        private Dictionary<string, string>? _sealedParameters;
+        private bool _approved;
+        private bool _submitted;
+
+        internal string OperationId { get; } = operationId;
+        internal string ApprovalReference { get; } = approvalReference;
+        internal string PolicyGate { get; } = policyGate;
+        internal List<string> Trace { get; } = [];
+        internal int ManifestCallCount { get; private set; }
+        internal int ManifestMutationCount { get; private set; }
+        internal int SubmitCallCount { get; private set; }
+        internal string? SealedDesiredStateDigest { get; private set; }
+        internal string? SealedIdempotencyKey { get; private set; }
+        internal string? AppliedDesiredStateDigest { get; private set; }
+        internal string? ManifestAcknowledgementDigest { get; private set; }
+        internal string? ManifestRequestBody { get; private set; }
+        internal string? ReplayedManifestRequestBody { get; private set; }
+        internal string? ManifestOperationIdHeader { get; private set; }
+        internal string? ManifestRequestDigestHeader { get; private set; }
+        internal string? ManifestReplayRequestDigestHeader { get; private set; }
+        internal string? ManifestIdempotencyKeyHeader { get; private set; }
+        internal string? TerminalApprovalReference { get; private set; }
+        internal string? TerminalReceiptDigest { get; private set; }
+
+        internal void Approve()
+        {
+            _approved = true;
+            Trace.Add("approval-recorded: approval-180");
+            Trace.Add("process-boundary: first process terminated");
+        }
+
+        internal HttpResponseMessage Handle(TestHttpMessageHandler handler, HttpRequestMessage request)
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            CapturedRequest captured = handler.CapturedRequests[^1];
+
+            if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                using JsonDocument body = JsonDocument.Parse(captured.Body!);
+                JsonElement jsonParameters = body.RootElement.GetProperty("parameters");
+                Dictionary<string, string> parameters = jsonParameters.EnumerateObject()
+                    .ToDictionary(property => property.Name, property => property.Value.GetString()!, StringComparer.Ordinal);
+                _sealedParameters = parameters;
+                SealedDesiredStateDigest = parameters["honua.devops/desired-state-digest"];
+                SealedIdempotencyKey = parameters["honua.devops/idempotency-key"];
+                Trace.Add("durable-operation-created: AwaitingApproval");
+                return TestHttpMessageHandler.JsonOk(new { operationId = OperationId, status = "AwaitingApproval" });
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith($"/{OperationId}", StringComparison.Ordinal))
+            {
+                if (_submitted)
+                {
+                    object receipt = FullActuatorReceipt(
+                        "receipt-180",
+                        OperationId,
+                        _sealedParameters!["honua.devops/idempotency-key"],
+                        AppliedDesiredStateDigest!,
+                        ManifestAcknowledgementDigest!,
+                        TerminalApprovalReference!,
+                        PolicyGate);
+                    TerminalReceiptDigest ??= Sha256(JsonSerializer.Serialize(receipt));
+                    return TestHttpMessageHandler.JsonOk(new
+                    {
+                        operationId = OperationId,
+                        status = "Succeeded",
+                        actuatorReceipt = receipt
+                    });
+                }
+
+                Dictionary<string, string> parameters = _sealedParameters ?? SealedParameters(DesiredState());
+                return TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = OperationId,
+                    status = _approved ? "Planned" : "AwaitingApproval",
+                    approvalReceiptId = _approved ? ApprovalReference : null,
+                    target = new { parameters }
+                });
+            }
+
+            if (request.Method == HttpMethod.Post && path.Contains("/manifest/apply", StringComparison.Ordinal))
+            {
+                ManifestCallCount++;
+                ManifestOperationIdHeader = request.Headers.GetValues("X-Honua-Operation-Id").Single();
+                ManifestRequestDigestHeader = request.Headers.GetValues("X-Honua-Request-Digest").Single();
+                string idempotencyKey = request.Headers.GetValues("Idempotency-Key").Single();
+                ManifestIdempotencyKeyHeader = idempotencyKey;
+                string body = captured.Body!;
+                if (_appliedIdempotencyKeys.Add(idempotencyKey))
+                {
+                    ManifestMutationCount++;
+                    ManifestRequestBody = body;
+                    AppliedDesiredStateDigest = Sha256(body);
+                    Trace.Add("manifest-apply");
+                }
+                else
+                {
+                    ReplayedManifestRequestBody = body;
+                    ManifestReplayRequestDigestHeader = request.Headers.GetValues("X-Honua-Request-Digest").Single();
+                    Trace.Add("manifest-apply-replay");
+                }
+
+                ManifestAcknowledgementDigest = Sha256("{\"status\":\"Applied\",\"operationId\":\"op-180\"}");
+                return TestHttpMessageHandler.JsonOk(new { status = "Applied", operationId = OperationId });
+            }
+
+            if (request.Method == HttpMethod.Post && path.EndsWith("/submit", StringComparison.Ordinal))
+            {
+                SubmitCallCount++;
+                _submitted = true;
+                TerminalApprovalReference = ApprovalReference;
+                Trace.Add("deploy-operation-submit");
+                return TestHttpMessageHandler.JsonOk(new { operationId = OperationId, status = "Reconciling" });
+            }
+
+            if (request.Method == HttpMethod.Post)
+            {
+                return TestHttpMessageHandler.JsonOk(new { status = "ok" });
+            }
+
+            return TestHttpMessageHandler.JsonOk(new { status = "ok" });
+        }
+    }
+
+    [Theory]
+    [InlineData("UnknownStatus")]
+    [InlineData("Succeeded")]
+    [InlineData("Submitted")]
+    public async Task ExecuteSubmitAsync_NonPlannedStatus_RefusesBeforeMutation(string status)
+    {
+        TestHttpMessageHandler handler = new(request => TestHttpMessageHandler.JsonOk(
+            new { operationId = "op-resume", status }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-resume", "approved", true, false, "prod-promotion-gated", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.Contains("submit-status-not-resumable", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
     private static ManifestApplyRequest DesiredState()
         => BackendGateway.BuildGitOpsManifestRequest(
             service: "roads-api",
@@ -699,6 +1133,33 @@ public class GitOpsExecutorTests
             executionMode: ExecutionMode.Execute,
             executionTier: ExecutionTier.ExecuteLowerEnv,
             allowedEnvironments: ["dev", "staging", "prod"]);
+
+    private static string DesiredStateDigest(ManifestApplyRequest manifest)
+        => Sha256(JsonSerializer.Serialize(manifest));
+
+    private static string Sha256(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static object FullActuatorReceipt(
+        string receiptId,
+        string operationId,
+        string idempotencyKey,
+        string desiredStateDigest,
+        string manifestAcknowledgement,
+        string approvalReference,
+        string policyDecision)
+        => new
+        {
+            receiptId,
+            operationId,
+            idempotencyKey,
+            desiredStateDigest,
+            manifestAcknowledgement,
+            approvalReference,
+            policyDecision,
+            reconcileResult = "succeeded",
+            verificationResult = "verified"
+        };
 
     private static Task<GitOpsExecutionResult> ExecuteSyncAsync(
         GitOpsExecutor executor,

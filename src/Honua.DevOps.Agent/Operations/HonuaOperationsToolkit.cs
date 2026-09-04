@@ -1728,9 +1728,12 @@ internal sealed partial class HonuaOperationsToolkit(
             rollbackExecution = await submitExecutor.ExecuteSubmitAsync(
                 ExtractRequiredParameter(parameters, "operationId"),
                 SanitizeFreeText(parameters, "approved runbook submit"),
+                confirmed: confirmed,
                 authorizationDryRun: false,
                 policyGate: "runbook-deploy-submit",
-                cancellationToken);
+                cancellationToken,
+                approvalReference: TryExtractParameter(parameters, "approvalReceiptId")
+                    ?? TryExtractParameter(parameters, "approvalReference"));
             actuation = rollbackExecution.ToActuationResult(descriptor.ActuatorId, descriptor.Action, runbookTarget);
         }
 
