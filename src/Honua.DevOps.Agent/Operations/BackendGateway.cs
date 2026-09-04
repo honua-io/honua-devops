@@ -352,7 +352,16 @@ internal sealed class BackendGateway : IDisposable
         return PostToHonuaAsync(
             configuration.HonuaManifestApplyPath,
             requestBody,
-            cancellationToken);
+            cancellationToken,
+            request =>
+            {
+                // The manifest endpoint must deduplicate a replay after a process crash in
+                // the acknowledgement -> checkpoint gap. These values bind that replay to
+                // the same durable operation and exact desired-state request.
+                request.Headers.TryAddWithoutValidation("Idempotency-Key", grant.IdempotencyKey);
+                request.Headers.TryAddWithoutValidation("X-Honua-Operation-Id", grant.OperationId);
+                request.Headers.TryAddWithoutValidation("X-Honua-Request-Digest", grant.RequestDigest);
+            });
     }
 
     // Shared builder so the preview and the post-approval apply are byte-identical apart
@@ -648,6 +657,7 @@ internal sealed class BackendGateway : IDisposable
             payload: null,
             configuration.OTelApiKey,
             ApiKeyTransport.Bearer,
+            configureRequest: null,
             cancellationToken);
     }
 
@@ -715,6 +725,7 @@ internal sealed class BackendGateway : IDisposable
             payload: null,
             configuration.HonuaApiKey,
             ApiKeyTransport.XApiKey,
+            configureRequest: null,
             cancellationToken);
     }
 
@@ -729,7 +740,11 @@ internal sealed class BackendGateway : IDisposable
         }
     }
 
-    private Task<BackendCallResult> PostToHonuaAsync(string relativePath, object payload, CancellationToken cancellationToken)
+    private Task<BackendCallResult> PostToHonuaAsync(
+        string relativePath,
+        object payload,
+        CancellationToken cancellationToken,
+        Action<HttpRequestMessage>? configureRequest = null)
     {
         return SendAsync(
             configuration.HonuaApiBaseUri,
@@ -738,6 +753,7 @@ internal sealed class BackendGateway : IDisposable
             payload,
             configuration.HonuaApiKey,
             ApiKeyTransport.XApiKey,
+            request => configureRequest?.Invoke(request),
             cancellationToken);
     }
 
@@ -750,6 +766,7 @@ internal sealed class BackendGateway : IDisposable
             payload,
             configuration.OTelApiKey,
             ApiKeyTransport.Bearer,
+            configureRequest: null,
             cancellationToken);
     }
 
@@ -784,6 +801,7 @@ internal sealed class BackendGateway : IDisposable
         object? payload,
         string? apiKey,
         ApiKeyTransport apiKeyTransport,
+        Action<HttpRequestMessage>? configureRequest,
         CancellationToken cancellationToken)
     {
         Uri endpoint = BuildEndpoint(baseUri, relativePath);
@@ -791,7 +809,11 @@ internal sealed class BackendGateway : IDisposable
             method,
             endpoint,
             payload,
-            request => ApplyApiKey(request, apiKey, apiKeyTransport),
+            request =>
+            {
+                ApplyApiKey(request, apiKey, apiKeyTransport);
+                configureRequest?.Invoke(request);
+            },
             cancellationToken);
     }
 

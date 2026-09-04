@@ -295,6 +295,59 @@ internal static class DeployOperationReader
         return ReadString(root, "receiptOperationId", "receipt_operation_id");
     }
 
+    internal static string? ReadApprovalReference(JsonElement root)
+        => ReadString(root, "approvalReceiptId", "approval_receipt_id", "approvalReference", "approval_reference");
+
+    internal static IReadOnlyList<string> ReadActuatorReceiptBindingFailures(
+        JsonElement root,
+        string operationId,
+        string idempotencyKey,
+        string desiredStateDigest,
+        string manifestAcknowledgementDigest,
+        string approvalReference,
+        string policyDecision)
+    {
+        JsonElement receipt = root;
+        foreach (string propertyName in new[] { "actuatorReceipt", "actuator_receipt", "receipt" })
+        {
+            if (root.TryGetProperty(propertyName, out JsonElement nested) && nested.ValueKind == JsonValueKind.Object)
+            {
+                receipt = nested;
+                break;
+            }
+        }
+
+        List<string> failures = [];
+        RequireReceiptValue(receipt, "operationId", operationId, failures, "receipt-operation-mismatch");
+        RequireReceiptValue(receipt, "idempotencyKey", idempotencyKey, failures, "receipt-idempotency-mismatch");
+        RequireReceiptValue(receipt, "desiredStateDigest", desiredStateDigest, failures, "receipt-desired-state-mismatch");
+        RequireReceiptValue(receipt, "manifestAcknowledgement", manifestAcknowledgementDigest, failures, "receipt-manifest-ack-missing");
+        RequireReceiptValue(receipt, "approvalReference", approvalReference, failures, "receipt-approval-mismatch");
+        RequireReceiptValue(receipt, "policyDecision", policyDecision, failures, "receipt-policy-mismatch");
+        RequireReceiptValue(receipt, "reconcileResult", null, failures, "receipt-reconcile-result-missing");
+        RequireReceiptValue(receipt, "verificationResult", null, failures, "receipt-verification-result-missing");
+        return failures;
+    }
+
+    private static void RequireReceiptValue(
+        JsonElement receipt,
+        string name,
+        string? expected,
+        List<string> failures,
+        string failure)
+    {
+        string? actual = ReadString(receipt, name, ToSnakeCase(name));
+        if (string.IsNullOrWhiteSpace(actual)
+            || (expected is not null && !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)))
+        {
+            failures.Add(failure);
+        }
+    }
+
+    private static string ToSnakeCase(string value)
+        => string.Concat(value.Select((character, index) =>
+            index > 0 && char.IsUpper(character) ? $"_{char.ToLowerInvariant(character)}" : character.ToString()));
+
     // metadataRelease.rollbackPlan.isDataAffecting drives the server's OperatorApprovalGate.
     // When absent the server defaults isDestructive=true, so we mirror that conservative
     // default: unknown => treat as data-affecting (requires explicit approval).

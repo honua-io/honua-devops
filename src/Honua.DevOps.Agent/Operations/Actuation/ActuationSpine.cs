@@ -419,12 +419,15 @@ internal sealed record ApprovalEvidence(
     // The deploy-submit runbook is itself the explicit operator approval action. The caller
     // reaches it only after confirmed=true, and the server's POST /submit transition consumes
     // that approval. Keep this evidence distinct from the direct-execution policy result.
-    internal static ApprovalEvidence FromExplicitRunbookConfirmation(string operationId, bool confirmed)
+    internal static ApprovalEvidence FromExplicitRunbookConfirmation(
+        string operationId,
+        bool confirmed,
+        string? approvalReference = null)
         => confirmed
             ? new(
                 Satisfied: true,
                 Kind: "explicit-runbook-confirmation",
-                ReceiptId: operationId,
+                ReceiptId: string.IsNullOrWhiteSpace(approvalReference) ? operationId : approvalReference.Trim(),
                 Reason: "The deploy-submit runbook was explicitly confirmed by the operator.")
             : new(
                 Satisfied: false,
