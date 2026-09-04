@@ -47,13 +47,21 @@ internal sealed class ActuationSpine
     private readonly OperationRuntime _runtime;
     private readonly OperatorPolicyModel _policy;
     private readonly IAuditSink? _auditSink;
+    private readonly AuditRecoveryStore _recoveryStore;
 
-    internal ActuationSpine(OperationRuntime runtime, OperatorPolicyModel policy, IAuditSink? auditSink = null)
+    internal ActuationSpine(
+        OperationRuntime runtime,
+        OperatorPolicyModel policy,
+        IAuditSink? auditSink = null,
+        AuditRecoveryStore? recoveryStore = null)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _auditSink = auditSink;
+        _recoveryStore = recoveryStore ?? AuditRecoveryStore.Default;
     }
+
+    internal AuditRecoveryStore RecoveryStore => _recoveryStore;
 
     // ---------------------------------------------------------------------------------
     // Grants
@@ -250,6 +258,15 @@ internal sealed class ActuationSpine
                 decision);
         }
 
+        if (_recoveryStore.HasPending(request.IdempotencyKey))
+        {
+            return ActuationAuthorization.Refused(
+                ActuationOutcome.Indeterminate,
+                $"A prior attempt for idempotency key `{request.IdempotencyKey}` has indeterminate durable audit state; reconcile its original operation before retrying.",
+                "audit-reconciliation-required",
+                decision);
+        }
+
         OperationGrant grant = OperationGrant.Issue(
             IssuanceSeal,
             request.ActuatorId,
@@ -263,6 +280,30 @@ internal sealed class ActuationSpine
             decision);
 
         return ActuationAuthorization.Granted(grant, decision);
+    }
+
+    // Local process/filesystem mutation seams do not have a BackendGateway grant, but they
+    // still enter the same durable-audit preflight. The returned grant is intentionally not
+    // exposed to the local actuator; it is only a sealed authorization record for the gate.
+    internal bool TryAuthorizeLocalMutation(
+        string action,
+        string target,
+        string idempotencyKey,
+        string desiredState,
+        out string refusalReason)
+    {
+        ActuationAuthorization authorization = Authorize(new ActuationRequest(
+            ActuatorId: $"honua.local.{action}",
+            Action: action,
+            Target: target,
+            Environments: [],
+            DesiredState: desiredState,
+            IdempotencyKey: idempotencyKey,
+            PolicyGate: "durable-audit-required",
+            AuthorizationDryRun: true,
+            Actor: "honua-devops"));
+        refusalReason = authorization.Reason;
+        return authorization.IsGranted;
     }
 
     // ---------------------------------------------------------------------------------

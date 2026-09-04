@@ -989,7 +989,25 @@ internal sealed class ConsoleOperationBridge(
                 "Proposal scope can drift from reality if submitted long after creation."
             ],
             BackendSteps: backendSteps,
-            ConsoleBridge: projection);
+            ConsoleBridge: projection,
+            Actuation: proposal.OperationId is null
+                ? null
+                : new ActuationResult(
+                    ActuatorId: "honua.gitops.proposal",
+                    Action: "proposal",
+                    Target: proposal.OperationId,
+                    Outcome: ActuationOutcome.Observed,
+                    Mutated: backendSteps?.Any(step => step.MutatesState && step.Success) == true,
+                    Receipt: new ActuationReceipt(
+                        "honua.gitops.proposal",
+                        proposal.OperationId,
+                        "honua-server.deploy-control",
+                        proposal.ProposalStatus),
+                    OperationId: proposal.OperationId,
+                    BackendSteps: backendSteps ?? [],
+                    Findings: findings,
+                    BlockingReasons: [],
+                    IdempotencyKey: proposal.IdempotencyKey));
     }
 
     private DevOpsOperationStatus BuildOperationStatus(

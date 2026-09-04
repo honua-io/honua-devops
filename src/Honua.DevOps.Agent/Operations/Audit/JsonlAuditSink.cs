@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace Honua.DevOps.Agent.Operations.Audit;
 
-internal sealed class JsonlAuditSink : IAuditSink
+internal sealed class JsonlAuditSink : IAuditSink, IProbeableAuditSink
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -25,7 +25,7 @@ internal sealed class JsonlAuditSink : IAuditSink
 
     public string Target { get; }
 
-    internal bool TryProbe(out string reason)
+    public bool TryProbe(out string reason)
     {
         reason = string.Empty;
         try

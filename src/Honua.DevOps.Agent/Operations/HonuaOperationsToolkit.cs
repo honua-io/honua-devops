@@ -31,7 +31,8 @@ internal sealed partial class HonuaOperationsToolkit(
     IAuditSink? auditSink = null,
     IProvisioningProcessRunner? provisioningProcessRunner = null,
     IInstallHandoffVerifier? installHandoffVerifier = null,
-    IApprovalSignatureProvider? approvalSignatureProvider = null)
+    IApprovalSignatureProvider? approvalSignatureProvider = null,
+    AuditRecoveryStore? auditRecoveryStore = null)
 {
     // Approval-receipt signature provider (honua-devops#175). Resolved once per toolkit
     // so the configured mode cannot change underneath a single session; the KMS client
@@ -46,7 +47,7 @@ internal sealed partial class HonuaOperationsToolkit(
     // authority for this session: every mutating backend call is issued under a grant it
     // minted, and its at-most-once ledger makes a retry or a concurrent delivery resume the
     // original operation instead of starting a second one.
-    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default, auditSink);
+    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default, auditSink, auditRecoveryStore);
 
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 
@@ -630,7 +631,13 @@ internal sealed partial class HonuaOperationsToolkit(
             GitOpsPlan: gitOpsPlan,
             ReleaseOrchestration: releaseOrchestration,
             ServiceBundleReconciliation: serviceBundleReconciliation,
-            BackendSteps: backendSteps);
+            BackendSteps: backendSteps,
+            Actuation: execution is null
+                ? null
+                : execution.ToActuationResult(
+                    actuatorId: $"honua.gitops.{normalizedAction}",
+                    action: normalizedAction,
+                    target: runtime.DeployTargetId ?? normalizedService));
     }
 
     // Decide whether this deploy request should actuate through the deploy-control executors,
@@ -777,7 +784,11 @@ internal sealed partial class HonuaOperationsToolkit(
                 "A data-affecting rollback can lose or rewrite data; only governed, evidenced approval should authorize it.",
                 "Rolling back after long reconcile windows can diverge from the last known-good revision."
             ],
-            BackendSteps: execution.BackendSteps);
+            BackendSteps: execution.BackendSteps,
+            Actuation: execution.ToActuationResult(
+                actuatorId: "honua.gitops.rollback",
+                action: "rollback",
+                target: normalizedOperationId));
     }
 
     // The sole toolkit path for rollback actuation. It applies the release capability gate,
@@ -1800,7 +1811,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 "enterprise-runbook",
                 status,
                 SanitizeFreeText(parameters, "none")),
-            BackendSteps: actuation.BackendSteps.Count == 0 ? null : actuation.BackendSteps);
+            BackendSteps: actuation.BackendSteps.Count == 0 ? null : actuation.BackendSteps,
+            Actuation: actuation);
     }
 
     // The read-only half of the runbook router. Every entry here is a GET; the mutating
@@ -2061,7 +2073,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 "enterprise-auto-remediation",
                 status,
                 sanitizedIssue),
-            BackendSteps: actuation.BackendSteps.Count == 0 ? null : actuation.BackendSteps);
+            BackendSteps: actuation.BackendSteps.Count == 0 ? null : actuation.BackendSteps,
+            Actuation: actuation);
     }
 
     [Description(

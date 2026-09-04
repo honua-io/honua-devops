@@ -1,5 +1,10 @@
 namespace Honua.DevOps.Agent.Operations.Audit;
 
+internal interface IProbeableAuditSink
+{
+    bool TryProbe(out string reason);
+}
+
 /// <summary>Verifies that a configured durable sink can append and flush before actuation.</summary>
 internal static class DurableAuditGate
 {
@@ -24,9 +29,9 @@ internal static class DurableAuditGate
                 }
             }
 
-            if (sink is JsonlAuditSink jsonlSink)
+            if (sink is IProbeableAuditSink probeableSink)
             {
-                return jsonlSink.TryProbe(out reason);
+                return probeableSink.TryProbe(out reason);
             }
 
             reason = sink is NullAuditSink

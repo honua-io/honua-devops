@@ -93,7 +93,8 @@ internal sealed record ActuationResult(
     string? OperationId,
     IReadOnlyList<OperationBackendStep> BackendSteps,
     IReadOnlyList<string> Findings,
-    IReadOnlyList<string> BlockingReasons)
+    IReadOnlyList<string> BlockingReasons,
+    string? IdempotencyKey = null)
 {
     internal static ActuationResult Unsupported(string action, string target, string reason)
         => new(
