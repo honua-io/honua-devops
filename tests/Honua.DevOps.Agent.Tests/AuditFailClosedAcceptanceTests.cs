@@ -17,6 +17,8 @@ namespace Honua.DevOps.Agent.Tests;
 /// </summary>
 public sealed class AuditFailClosedAcceptanceTests
 {
+    private static readonly SemaphoreSlim TerraformExecutableOverrideGate = new(1, 1);
+
     [Theory]
     [InlineData("audit parent unwritable")]
     [InlineData("audit append failed")]
@@ -208,6 +210,11 @@ public sealed class AuditFailClosedAcceptanceTests
         string tierName,
         string failure)
     {
+        await TerraformExecutableOverrideGate.WaitAsync();
+        string? previousTerraformExecutable = Environment.GetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable);
+        Environment.SetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable, Environment.ProcessPath);
+        try
+        {
         using TerraformTestRoot root = new();
         FakeSubstrateRunner plannerRunner = new();
         using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
@@ -261,6 +268,12 @@ public sealed class AuditFailClosedAcceptanceTests
             {
                 Directory.Delete(recoveryRoot, recursive: true);
             }
+        }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable, previousTerraformExecutable);
+            TerraformExecutableOverrideGate.Release();
         }
     }
 
