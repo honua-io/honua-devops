@@ -4,7 +4,7 @@ name: Blocked-Label Sweep
 # `state/blocked` label against the LIVE state of the blockers it cites, and
 # publish the result to the job summary.
 #
-# READ-ONLY. This lane mutates nothing â€” no comments, no label changes, no issue
+# READ-ONLY. This lane mutates nothing — no comments, no label changes, no issue
 # edits. The sweeper's `--enforce` flag is a guard that refuses unless
 # `ENFORCE_SWEEP=true` is set, and refuses even then because no mutation path is
 # implemented yet. It is deliberately not passed anywhere in this workflow.
@@ -17,11 +17,11 @@ name: Blocked-Label Sweep
 #
 # TOKEN / SCOPE
 #   Preferred: the org bot App (`honua-io-bot`) via the org secrets
-#   `BOT_APP_ID` + `BOT_APP_PRIVATE_KEY` â€” a short-lived installation token is
+#   `BOT_APP_ID` + `BOT_APP_PRIVATE_KEY` — a short-lived installation token is
 #   minted per run (Issues/Metadata/Pull requests read across honua-io), the
 #   same pattern as agent-delivery-spec's drift check. This is also the
 #   identity enforcement will act as when a later slice implements it.
-#   Fallback: `SWEEPER_GH_TOKEN` (repository or organization secret) â€” a PAT
+#   Fallback: `SWEEPER_GH_TOKEN` (repository or organization secret) — a PAT
 #   able to read the target repos and every repository their issues cite.
 #   Cited blockers live in honua-server, honua-sdk-js, honua-iac,
 #   honua-demo-infra and others, and `github.token` is scoped to this
@@ -173,7 +173,7 @@ jobs:
       # No `continue-on-error` and no `|| true`. A dry run exits 0 whether or not
       # it finds anything, so a non-zero exit here means the sweep could not run
       # (no auth, no gh) and that must be visible, not swallowed.
-      - name: Sweep (dry run â€” reads only, mutates nothing)
+      - name: Sweep (dry run — reads only, mutates nothing)
         env:
           # Through the environment, never template interpolation: the target list
           # is operator-supplied and must not be able to become shell.

@@ -95,7 +95,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # 1 + 2: PRODUCE per-repo conformance evidence, then GATE it for live-ness.
-      - name: Conformance gate â€” run consumer conformance against the candidate
+      - name: Conformance gate — run consumer conformance against the candidate
         id: conformance
         continue-on-error: true
         env:
@@ -108,7 +108,7 @@ jobs:
           COMPAT_TRAIN_REPORT_OUTPUT: compat-train-conformance-report.md
         run: ./scripts/compat-train-conformance-gate.sh
 
-      - name: Release gate â€” prove the per-repo evidence is live (not local-fallback)
+      - name: Release gate — prove the per-repo evidence is live (not local-fallback)
         id: gate
         if: ${{ hashFiles('compat-train-conformance-evidence.json') != '' }}
         continue-on-error: true
@@ -121,7 +121,7 @@ jobs:
 
       # 3: evaluate the canonical release-train MANIFEST (advisory so a still-
       # gapped preview still produces its bundle; the aggregator sets the verdict).
-      - name: Release validation â€” evaluate the release-train manifest
+      - name: Release validation — evaluate the release-train manifest
         id: validation
         continue-on-error: true
         env:
@@ -151,7 +151,7 @@ jobs:
 
       # 4: actively re-verify the cited runs (only with a real manifest_url; the
       # reconstructed example carries no live run URLs to re-check).
-      - name: Live probe â€” re-verify cited runs / wired surfaces
+      - name: Live probe — re-verify cited runs / wired surfaces
         id: probe
         if: ${{ github.event.inputs.manifest_url != '' }}
         continue-on-error: true

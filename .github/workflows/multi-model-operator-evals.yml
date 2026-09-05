@@ -76,8 +76,8 @@ jobs:
 
   # REQ-001/REQ-002. Scheduled and dispatch only: a credentialed run never gates a PR.
   # When the provider secrets are absent the lane reports "not configured" and stops.
-  # When they ARE present the lane must complete: any non-zero exit from the eval â€”
-  # including a provider outage or a malformed answer â€” fails this job. It never skips.
+  # When they ARE present the lane must complete: any non-zero exit from the eval —
+  # including a provider outage or a malformed answer — fails this job. It never skips.
   blind-eval-live:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -195,6 +195,6 @@ jobs:
           name: blind-eval-scorecard-${{ github.sha }}
           path: artifacts/blind-eval/scorecard.json
           # `warn`, not `error`: when the lane fails before it can write a scorecard the
-          # eval step has already failed the job â€” a second, less informative failure
+          # eval step has already failed the job — a second, less informative failure
           # here would only bury it.
           if-no-files-found: warn

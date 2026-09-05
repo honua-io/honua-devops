@@ -105,7 +105,7 @@ jobs:
         # actually reach: it re-fetches every cited GitHub Actions run conclusion
         # with the runner's GITHUB_TOKEN, and (when a base URL / chart is wired)
         # smokes the server/Helm surfaces. Surfaces needing live cloud/creds are
-        # reported BLOCKED with their missing dependency â€” never faked green.
+        # reported BLOCKED with their missing dependency — never faked green.
         # Runs only when a real manifest_url is supplied (the reconstructed
         # example manifest carries no live run URLs to re-verify).
         if: ${{ github.event.inputs.manifest_url != '' }}
@@ -131,7 +131,7 @@ jobs:
               echo "## Active live-probe re-verification"
               jq -r '"- probes: \(.summary.passed) passed, \(.summary.failed) failed, \(.summary.blocked) blocked"' live-probe-bundle.json
               echo ""
-              jq -r '.probes[] | "- [" + (.state|ascii_upcase) + "] (" + .surface + ") " + .id + " â€” " + (.detail // "") + (if .missing then " [needs: " + .missing + "]" else "" end)' live-probe-bundle.json
+              jq -r '.probes[] | "- [" + (.state|ascii_upcase) + "] (" + .surface + ") " + .id + " — " + (.detail // "") + (if .missing then " [needs: " + .missing + "]" else "" end)' live-probe-bundle.json
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
