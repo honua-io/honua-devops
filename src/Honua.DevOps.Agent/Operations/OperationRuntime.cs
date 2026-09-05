@@ -16,7 +16,12 @@ internal sealed record OperationRuntime(
     IReadOnlyDictionary<string, string>? ProvisionApprovalIssuerKeys = null,
     string? McpProxyPackage = null,
     string? McpProxyIntegrity = null,
-    string? CandidateReference = null)
+    string? CandidateReference = null,
+    // honua-devops#175. Defaults to the local symmetric mode, whose receipts are
+    // explicitly non-evidentiary: omitting configuration can only remove evidentiary
+    // weight from a receipt, never grant it.
+    string ProvisionApprovalSigningMode = ApprovalSigningModes.LocalHmacDev,
+    IReadOnlyDictionary<string, string>? ProvisionApprovalIssuerKeyArns = null)
 {
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
     private static readonly string[] DefaultProductionEnvironments = ["prod", "production", "prd"];
@@ -43,6 +48,8 @@ internal sealed record OperationRuntime(
     private const string DeployTargetIdVariable = "HONUA_DEVOPS_DEPLOY_TARGET_ID";
     private const string ProductionEnvironmentsVariable = "HONUA_DEVOPS_PRODUCTION_ENVIRONMENTS";
     private const string ProvisionApprovalIssuerKeysVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS";
+    private const string ProvisionApprovalSigningModeVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_SIGNING_MODE";
+    private const string ProvisionApprovalIssuerKeyArnsVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS";
     private const string McpProxyPackageVariable = "HONUA_DEVOPS_MCP_PROXY_PACKAGE";
     private const string McpProxyIntegrityVariable = "HONUA_DEVOPS_MCP_PROXY_INTEGRITY";
     private const string CandidateReferenceVariable = "HONUA_DEVOPS_CANDIDATE_REFERENCE";
@@ -119,6 +126,16 @@ internal sealed record OperationRuntime(
         string? mcpProxyPackage = NormalizeOptionalValue(Environment.GetEnvironmentVariable(McpProxyPackageVariable));
         string? mcpProxyIntegrity = NormalizeOptionalValue(Environment.GetEnvironmentVariable(McpProxyIntegrityVariable));
         string? candidateReference = NormalizeOptionalValue(Environment.GetEnvironmentVariable(CandidateReferenceVariable));
+        string approvalSigningMode = ParseApprovalSigningMode(
+            Environment.GetEnvironmentVariable(ProvisionApprovalSigningModeVariable));
+        IReadOnlyDictionary<string, string> approvalIssuerKeyArns = ParseApprovalIssuerKeyArns(
+            Environment.GetEnvironmentVariable(ProvisionApprovalIssuerKeyArnsVariable));
+
+        if (approvalSigningMode == ApprovalSigningModes.KmsMac && approvalIssuerKeyArns.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"`{ProvisionApprovalSigningModeVariable}={ApprovalSigningModes.KmsMac}` requires `{ProvisionApprovalIssuerKeyArnsVariable}` issuer=kms-key-arn entries.");
+        }
 
         return new OperationRuntime(
             mode,
@@ -136,7 +153,55 @@ internal sealed record OperationRuntime(
             approvalIssuerKeys,
             mcpProxyPackage,
             mcpProxyIntegrity,
-            candidateReference);
+            candidateReference,
+            approvalSigningMode,
+            approvalIssuerKeyArns);
+    }
+
+    private static string ParseApprovalSigningMode(string? value)
+    {
+        string mode = string.IsNullOrWhiteSpace(value)
+            ? ApprovalSigningModes.LocalHmacDev
+            : value.Trim();
+        if (!ApprovalSigningModes.IsKnown(mode))
+        {
+            throw new InvalidOperationException(
+                $"`{ProvisionApprovalSigningModeVariable}` must be one of: {string.Join(", ", ApprovalSigningModes.All)}.");
+        }
+        return mode;
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseApprovalIssuerKeyArns(string? value)
+    {
+        Dictionary<string, string> issuers = new(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return issuers;
+        }
+        foreach (string entry in value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int separator = entry.IndexOf('=');
+            if (separator < 1 || separator == entry.Length - 1)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid `{ProvisionApprovalIssuerKeyArnsVariable}` entry. Expected issuer=kms-key-arn entries separated by semicolons.");
+            }
+            string issuer = entry[..separator].Trim();
+            string arn = entry[(separator + 1)..].Trim();
+            // A KMS key ARN, not a key: this variable must never be able to carry key
+            // material, and an alias or bare key id would let a caller retarget the
+            // verification to a key the operator did not name.
+            if (!arn.StartsWith("arn:", StringComparison.Ordinal) || !arn.Contains(":kms:", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Issuer `{issuer}` in `{ProvisionApprovalIssuerKeyArnsVariable}` must use a full KMS key ARN.");
+            }
+            if (!issuers.TryAdd(issuer, arn))
+            {
+                throw new InvalidOperationException($"Duplicate approval issuer `{issuer}`.");
+            }
+        }
+        return issuers;
     }
 
     private static IReadOnlyDictionary<string, string> ParseApprovalIssuerKeys(string? value)
