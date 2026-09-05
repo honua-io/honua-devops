@@ -3,7 +3,7 @@ name: Demo E2E Verification
 # L3 verification: end-to-end demo-workflow checks against the DEPLOYED env.
 #
 # Two tiers:
-#   1. Always (PR/push/dispatch): syntax check + offline self-test (smoke) — no
+#   1. Always (PR/push/dispatch): syntax check + offline self-test (smoke) â€” no
 #      network, no secrets, gates the harness itself.
 #   2. Live read-path (scheduled / opt-in dispatch): runs the READ-path
 #      assertions against the customer-facing demo (HONUA_DEMO_BASE_URL).
@@ -43,12 +43,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Bash syntax check
         run: |
           bash -n scripts/run-demo-e2e.sh
           bash -n scripts/smoke-demo-e2e.sh
-      - name: Self-test (offline stub — pass + fail + guardrail paths)
+      - name: Self-test (offline stub â€” pass + fail + guardrail paths)
         run: ./scripts/smoke-demo-e2e.sh
 
   live-read-path:
@@ -64,10 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # READ path — customer-facing. Read-only; the harness never writes here.
+      # READ path â€” customer-facing. Read-only; the harness never writes here.
       HONUA_DEMO_BASE_URL: ${{ vars.HONUA_DEMO_BASE_URL || 'https://demo.honua.io' }}
       HONUA_DEMO_API_KEY: ${{ secrets.HONUA_DEMO_API_KEY || '' }}
-      # WRITE path — separate non-customer-facing staging alias / ephemeral env.
+      # WRITE path â€” separate non-customer-facing staging alias / ephemeral env.
       # Left blank unless an operator provisions it; blank => write hops PENDING.
       HONUA_DEMO_WRITE_BASE_URL: ${{ vars.HONUA_DEMO_WRITE_BASE_URL || '' }}
       HONUA_DEMO_ADMIN_KEY: ${{ secrets.HONUA_DEMO_ADMIN_KEY || '' }}
@@ -75,12 +75,12 @@ jobs:
       HONUA_DEMO_PRO_AI_LIVE: ${{ (github.event_name == 'workflow_dispatch' && inputs.pro_ai_live) && 'true' || 'false' }}
       HONUA_DEMO_ENV: ${{ vars.HONUA_DEMO_ENV || 'demo' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Run deployed-env demo verification harness
         run: ./scripts/run-demo-e2e.sh --env "$HONUA_DEMO_ENV"
       - name: Upload evidence bundle
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: demo-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/demo-e2e/

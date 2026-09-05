@@ -26,12 +26,15 @@ on:
         required: false
         default: advisory
 
+permissions:
+  contents: read
+
 jobs:
   compat-train-release-gate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Bash syntax check
         run: |
@@ -52,13 +55,16 @@ jobs:
         run: ./scripts/smoke-compat-train-live-probe.sh
 
   release-validation-dispatch:
+    permissions:
+      contents: read
+      actions: read # Verify recorded workflow-run conclusions.
     name: Validate a candidate manifest and attach the evidence bundle
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: compat-train-release-gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Run manifest-driven release-candidate validation
         env:
@@ -99,7 +105,7 @@ jobs:
         # actually reach: it re-fetches every cited GitHub Actions run conclusion
         # with the runner's GITHUB_TOKEN, and (when a base URL / chart is wired)
         # smokes the server/Helm surfaces. Surfaces needing live cloud/creds are
-        # reported BLOCKED with their missing dependency — never faked green.
+        # reported BLOCKED with their missing dependency â€” never faked green.
         # Runs only when a real manifest_url is supplied (the reconstructed
         # example manifest carries no live run URLs to re-verify).
         if: ${{ github.event.inputs.manifest_url != '' }}
@@ -125,13 +131,13 @@ jobs:
               echo "## Active live-probe re-verification"
               jq -r '"- probes: \(.summary.passed) passed, \(.summary.failed) failed, \(.summary.blocked) blocked"' live-probe-bundle.json
               echo ""
-              jq -r '.probes[] | "- [" + (.state|ascii_upcase) + "] (" + .surface + ") " + .id + " — " + (.detail // "") + (if .missing then " [needs: " + .missing + "]" else "" end)' live-probe-bundle.json
+              jq -r '.probes[] | "- [" + (.state|ascii_upcase) + "] (" + .surface + ") " + .id + " â€” " + (.detail // "") + (if .missing then " [needs: " + .missing + "]" else "" end)' live-probe-bundle.json
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
       - name: Upload release-validation evidence bundle + notes
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compat-train-release-validation-${{ github.run_id }}
           if-no-files-found: warn
