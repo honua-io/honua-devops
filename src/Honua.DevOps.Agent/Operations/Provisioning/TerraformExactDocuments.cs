@@ -224,6 +224,43 @@ internal sealed record TerraformExecReceipt(
     }
 
     internal bool Succeeded => string.Equals(Status, "succeeded", StringComparison.Ordinal) && ExitStatus == 0;
+
+    // A valid schema and an echoed digest do not establish that the receipt describes
+    // the approved execution. Compare the independently emitted facts before they can
+    // enter durable provisioning state or authorize an install handoff.
+    internal IReadOnlyList<string> FindPlanMismatches(ExactPlanMetadata plan)
+    {
+        List<string> mismatches = [];
+        void Match(string field, string? actual, string? expected)
+        {
+            if (!string.Equals(actual, expected, StringComparison.Ordinal))
+            {
+                mismatches.Add(field);
+            }
+        }
+
+        Match("plan_metadata_digest", PlanMetadataDigest, plan.PlanMetadataDigest);
+        Match("approved_digest", ApprovedDigest, plan.PlanMetadataDigest);
+        Match("saved_plan_sha256", SavedPlanSha256, plan.SavedPlanSha256);
+        Match("action", Action, plan.Action);
+        Match("backend_step.backend_config_digest", BackendConfigDigest, plan.BackendConfigDigest);
+        Match("backend_step.backend_kind", BackendKind, plan.BackendKind);
+        Match("backend_step.workspace", Workspace, plan.Workspace);
+        Match("backend_step.object_key", ObjectKey, plan.ObjectKey);
+        Match("workload_identity.account_id", AccountId, plan.AccountId);
+        Match("workload_identity.assumed_role_arn", AssumedRoleArn, plan.AssumedRoleArn);
+        Match("workload_identity.role_id", RoleId, plan.RoleId);
+        Match("workload_identity.partition", Partition, plan.Partition);
+        Match("workload_identity.credential_kind", CredentialKind, plan.CredentialKind);
+        Match("state_before.lineage", StateLineageBefore, plan.StateLineageBefore);
+        if (StateSerialBefore != plan.StateSerialBefore)
+        {
+            mismatches.Add("state_before.serial");
+        }
+        Match("cleanup.teardown_root", TeardownRoot, plan.TerraformRoot);
+        Match("cleanup.teardown_action", TeardownAction, "destroy");
+        return mismatches;
+    }
 }
 
 /// <summary>

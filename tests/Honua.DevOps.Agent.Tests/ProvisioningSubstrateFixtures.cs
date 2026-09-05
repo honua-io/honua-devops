@@ -371,6 +371,8 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
 
     internal string TerraformOutputJson { get; set; } = ProvisioningSubstrateFixtures.TerraformOutputJson;
 
+    internal string ExecReceiptJson { get; set; } = ProvisioningSubstrateFixtures.ExecReceiptJson;
+
     internal Func<Task>? BeforeApply { get; set; }
 
     internal int ApplyCalls { get; private set; }
@@ -447,7 +449,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
             return Refusal(ApplyRefusalReason);
         }
 
-        File.WriteAllText(call.Option("--receipt-out")!, ProvisioningSubstrateFixtures.ExecReceiptJson);
+        File.WriteAllText(call.Option("--receipt-out")!, ExecReceiptJson);
         return Success("Apply complete! Resources: 7 added, 0 changed, 0 destroyed.");
     }
 
