@@ -32,4 +32,8 @@ internal sealed record OperationResponse(
     [property: JsonIgnore] ConsoleBridgeProjection? ConsoleBridge = null,
     [property: JsonIgnore] MetadataReleaseChangeSet? MetadataReleaseChangeSet = null,
     [property: JsonIgnore] DeliverableProjection? DeliverableLifecycle = null,
-    [property: JsonIgnore] ActuationResult? Actuation = null);
+    [property: JsonIgnore] ActuationResult? Actuation = null)
+{
+    [JsonPropertyName("auditEventId")]
+    public string AuditEventId { get; init; } = Guid.NewGuid().ToString("n");
+}

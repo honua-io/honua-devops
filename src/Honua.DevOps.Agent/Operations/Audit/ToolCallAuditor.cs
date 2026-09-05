@@ -60,6 +60,7 @@ internal static class ToolCallAuditor
 
         if (operationResponse is not null)
         {
+            auditEventId = operationResponse.AuditEventId;
             status = operationResponse.Status;
             summary = Redaction.Scrub(operationResponse.Summary);
             evidence = operationResponse.Evidence;
@@ -105,6 +106,10 @@ internal static class ToolCallAuditor
                 JsonElement root = document.RootElement;
                 if (root.ValueKind == JsonValueKind.Object)
                 {
+                    if (TryGetProperty(root, "AuditEventId", out JsonElement idElement) && idElement.ValueKind == JsonValueKind.String)
+                        auditEventId = idElement.GetString() ?? auditEventId;
+                    if (TryGetProperty(root, "ProvisioningLineage", out JsonElement lineageElement) && lineageElement.ValueKind == JsonValueKind.Object)
+                        provisioningLineage = lineageElement.Deserialize<ProvisioningLineage>();
                     if (TryGetProperty(root, "Status", out JsonElement statusElement) && statusElement.ValueKind == JsonValueKind.String)
                     {
                         status = statusElement.GetString() ?? status;
