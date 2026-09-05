@@ -55,7 +55,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   rc-orchestrator-selftest:
@@ -63,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Bash syntax check (orchestrated scripts + aggregator)
         run: |
@@ -81,6 +80,9 @@ jobs:
         run: ./scripts/smoke-compat-train-rc-aggregate.sh
 
   rc-validate:
+    permissions:
+      contents: read
+      actions: write # Dispatch and monitor candidate workflows.
     name: Validate the candidate train and attach the RC evidence bundle
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: rc-orchestrator-selftest
@@ -90,7 +92,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # 1 + 2: PRODUCE per-repo conformance evidence, then GATE it for live-ness.
       - name: Conformance gate — run consumer conformance against the candidate
@@ -184,7 +186,7 @@ jobs:
 
       - name: Upload aggregated RC evidence bundle + per-layer artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compat-train-rc-validation-${{ github.run_id }}
           if-no-files-found: warn
