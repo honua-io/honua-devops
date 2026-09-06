@@ -143,15 +143,17 @@ internal sealed partial class HonuaOperationsToolkit
             throw new InvalidDataException("A retained verified provisioning handoff is required for server federation.");
         ProvisioningEvidenceStore store = GetEvidenceStore();
         store.ValidateAppliedLineage(state.Lineage);
-        store.Read(state.VerificationReceipt);
+        using JsonDocument verification = JsonDocument.Parse(store.Read(state.VerificationReceipt));
         using JsonDocument binding = JsonDocument.Parse(store.Read(state.ProvisionBinding));
+        ProvisioningLineage? boundLineage = binding.RootElement.GetProperty("lineage").Deserialize<ProvisioningLineage>();
+        if (JsonSerializer.Serialize(boundLineage) != JsonSerializer.Serialize(state.Lineage)
+            || verification.RootElement.GetProperty("receiptId").GetString() != state.Lineage.HandoffVerificationReceiptId
+            || verification.RootElement.GetProperty("receiptSha256").GetString() != state.Lineage.HandoffVerificationReceiptSha256
+            || verification.RootElement.GetProperty("evidence").GetProperty("provisioningOperationId").GetString() != provisioningOperationId)
+            throw new InvalidDataException("The exported receipts belong to a different provisioning lineage.");
         if (!Uri.TryCreate(binding.RootElement.GetProperty("endpoint").GetString(), UriKind.Absolute, out Uri? endpoint)
-            || endpoint != new Uri(server.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/"))
-        {
-            // URI comparison permits the equivalent trailing slash form only.
-            if (endpoint is null || endpoint.AbsoluteUri.TrimEnd('/') != server.AbsoluteUri.TrimEnd('/'))
-                throw new InvalidDataException("The verified handoff belongs to a different server endpoint.");
-        }
+            || endpoint.AbsoluteUri.TrimEnd('/') != server.AbsoluteUri.TrimEnd('/'))
+            throw new InvalidDataException("The verified handoff belongs to a different server endpoint.");
         return state.Lineage with { EvidenceRefs = [.. state.Lineage.EvidenceRefs!, state.VerificationReceipt, state.ProvisionBinding] };
     }
 }

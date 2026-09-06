@@ -16,7 +16,8 @@ namespace Honua.DevOps.Agent.Tests;
 /// but the DOCUMENTS they hand back are not. `fixtures/honua-iac/documents` holds
 /// real output from one offline run of the real `terraform-exact-plan.sh` /
 /// `terraform-exact-apply.sh` pair, and the schemas are honua-iac's own. That keeps
-/// these tests honest about the shapes honua-devops must consume: nothing here is a
+/// these tests honest about the shapes honua-devops must consume. Plan/receipt hashes
+/// are rebound to the fake runner's explicit plan bytes using Python hashlib (see docs/operation-lineage.md): nothing here is a
 /// shape this repo invented for its own convenience.
 /// </remarks>
 internal static class ProvisioningSubstrateFixtures
@@ -367,6 +368,10 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
 
     internal Action? BeforePlan { get; set; }
 
+    internal string PlanDocumentJson { get; set; } = ProvisioningSubstrateFixtures.ExactPlanMetadataJson;
+
+    internal string ExecDocumentJson { get; set; } = ProvisioningSubstrateFixtures.ExecReceiptJson;
+
     internal string PlanSummary { get; set; } = "Plan: 7 to add, 0 to change, 0 to destroy.";
 
     internal string ShowOutput { get; set; } = TerraformShowOutput;
@@ -437,7 +442,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         string planOut = call.Option("--plan-out")!;
         string metadataOut = call.Option("--metadata-out")!;
         File.WriteAllText(planOut, "fake saved terraform plan");
-        File.WriteAllText(metadataOut, ExactPlanMetadataJson);
+        File.WriteAllText(metadataOut, PlanDocumentJson);
         return Success(PlanSummary);
     }
 
@@ -454,7 +459,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
             return Refusal(ApplyRefusalReason);
         }
 
-        File.WriteAllText(call.Option("--receipt-out")!, ExecReceiptJson);
+        File.WriteAllText(call.Option("--receipt-out")!, ExecDocumentJson);
         return Success("Apply complete! Resources: 7 added, 0 changed, 0 destroyed.");
     }
 

@@ -104,7 +104,7 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_EXECUTION_MODE` (`plan` default, or `execute`)
 - `HONUA_DEVOPS_EXECUTION_TIER` (`plan` default for plan mode; `execute-lower-env` default for execute mode)
 - `HONUA_DEVOPS_APPROVAL_MODE` (`pr-first` default; also supports `direct-allowed`, `break-glass-only`)
-- `HONUA_DEVOPS_AUDIT_HOOK_TARGET` (`stdout-evidence` default; also supports `none`/`disabled` to drop records and `file://path/to/audit.jsonl` to append JSONL records to a file). Each tool call emits one JSONL record with the operation id, tool name, redacted arguments, status, mutation flag, execution mode/tier, approval mode, provider, and any backend steps the response carried.
+- `HONUA_DEVOPS_AUDIT_HOOK_TARGET` (`stdout-evidence` default; also supports `none`/`disabled` to drop records and `file://path/to/audit.jsonl` to append JSONL records to a file). Each tool call emits one non-authoritative JSONL diagnostic record with the `auditEventId`, tool name, redacted arguments, status, mutation flag, execution mode/tier, approval mode, provider, and any backend steps the response carried.
 - `HONUA_DEVOPS_SUPPORT_SESSION_ACCESS` (`disabled` default; also supports `read-only`, `operator-scoped`)
 - `HONUA_DEVOPS_SUPPORT_SESSION_TTL_MINUTES` (`60` default)
 - `HONUA_DEVOPS_SUPPORT_SESSION_CUSTOMER_VISIBLE` (`true` default)
@@ -442,3 +442,5 @@ Helper scripts:
 - `scripts/check-terraform-secrets.sh`
 - `scripts/dispatch-terraform-validation.sh`
 - `scripts/helm-provenance-check.sh`
+
+See [operation lineage](docs/operation-lineage.md) for stable provisioning identities, exact evidence references, server federation and its qualification limits.

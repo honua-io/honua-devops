@@ -1757,11 +1757,8 @@ internal sealed partial class HonuaOperationsToolkit
         Directory.CreateDirectory(root);
         ProtectDirectory(root);
         string destination = GetProvisioningStatePath(state.Lineage.ProvisioningOperationId);
-        string temporary = destination + $".{Guid.NewGuid():n}.tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-        ProtectSavedPlan(temporary);
-        File.Move(temporary, destination, overwrite: true);
-        ProtectSavedPlan(destination);
+        WriteEvidenceCopyAsync(destination, JsonSerializer.SerializeToUtf8Bytes(state), CancellationToken.None)
+            .GetAwaiter().GetResult();
     }
 
     private static bool TryLoadProvisioningState(string provisioningOperationId, out ProvisioningState? state)

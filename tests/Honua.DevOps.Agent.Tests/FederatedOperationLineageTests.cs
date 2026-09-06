@@ -11,6 +11,45 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed partial class TerraformProvisioningTests
 {
     [Fact]
+    public async Task Federation_ApplyRetryAfterRestartReusesOriginalReceiptAndNeverReexecutes()
+    {
+        using TerraformTestRoot root = new();
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        FakeSubstrateRunner runner = new();
+        HonuaOperationsToolkit planner = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan), gateway, provisioningProcessRunner: runner);
+        OperationResponse plan = await planner.ProvisionInfrastructureAsync("aws-ecs", "small", "plan", "{}", false, "");
+        string challenge = ProvisioningSubstrateFixtures.ExtractChallenge(plan, "confirmation=");
+        string approval = ProvisioningSubstrateFixtures.CreateApprovalReceipt(plan, "apply");
+        HonuaOperationsToolkit executor = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv), gateway, ProvisioningSubstrateFixtures.DirectAllowedPolicy(), provisioningProcessRunner: runner);
+        OperationResponse first = await executor.ProvisionInfrastructureAsync("aws-ecs", "small", "apply", "{}", true, challenge, approval);
+        Assert.Equal("infrastructure-provisioned", first.Status);
+        FakeSubstrateRunner restartedRunner = new();
+        HonuaOperationsToolkit restarted = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv), gateway, ProvisioningSubstrateFixtures.DirectAllowedPolicy(), provisioningProcessRunner: restartedRunner);
+        OperationResponse replay = await restarted.ProvisionInfrastructureAsync("aws-ecs", "small", "apply", "{}", true, challenge, approval);
+        Assert.Equal("infrastructure-provisioned", replay.Status);
+        Assert.Equal(first.ProvisioningLineage!.ProvisioningOperationId, replay.ProvisioningLineage!.ProvisioningOperationId);
+        Assert.Equal(first.ProvisioningLineage.ActuatorReceiptReference, replay.ProvisioningLineage.ActuatorReceiptReference);
+        Assert.Equal(first.ProvisioningLineage.ApplyAuditEventId, replay.ProvisioningLineage.ApplyAuditEventId);
+        Assert.NotEqual(first.AuditEventId, replay.AuditEventId);
+        Assert.Equal(1, runner.ApplyCalls);
+        Assert.Empty(restartedRunner.Calls);
+        Assert.Equal("idempotency-conflict", (await restarted.ProvisionInfrastructureAsync("aws-ecs", "small", "apply", "{}", true, challenge, "{}")).Status);
+    }
+
+    [Fact]
+    public async Task Federation_PlanMetadataForDifferentBytesIsRejectedBeforeApply()
+    {
+        using TerraformTestRoot root = new();
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        FakeSubstrateRunner runner = new() { PlanDocumentJson = ProvisioningSubstrateFixtures.ExactPlanMetadataJson.Replace("3a691c59f9c8be1eb1ce3e7642643a7aedfa7a0314c8d01750546ea83efca6fe", new string('0', 64), StringComparison.Ordinal) };
+        HonuaOperationsToolkit planner = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan), gateway, provisioningProcessRunner: runner);
+        OperationResponse result = await planner.ProvisionInfrastructureAsync("aws-ecs", "small", "plan", "{}", false, "");
+        Assert.Equal("exact-plan-metadata-invalid", result.Status);
+        Assert.Null(result.ProvisioningLineage);
+        Assert.Equal(0, runner.ApplyCalls);
+    }
+
+    [Fact]
     public async Task Federation_PlanThroughVerifiedHandoffAndServerReplayRetainsExactEvidenceAndCanonicalIds()
     {
         using TerraformTestRoot root = new();
