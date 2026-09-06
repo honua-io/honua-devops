@@ -139,10 +139,17 @@ public partial class ConsoleOperationBridgeTests
         Assert.Empty(handler.CapturedRequests);
     }
 
-    [Fact]
-    public async Task CreateGitOpsProposalAsync_ReportsContractUnavailableWhenNoOperationIdReturned()
+    [Theory]
+    [InlineData(HttpStatusCode.OK, true)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, false)]
+    public async Task CreateGitOpsProposalAsync_ReportsContractUnavailableWhenNoOperationIdReturned(HttpStatusCode status, bool writeAcknowledged)
     {
-        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        TestHttpMessageHandler handler = new(request =>
+        {
+            HttpResponseMessage response = TestHttpMessageHandler.JsonOk(new { status = "ok" });
+            if (request.RequestUri!.AbsolutePath.EndsWith("/deploy/operations", StringComparison.Ordinal)) response.StatusCode = status;
+            return response;
+        });
         ConsoleOperationBridge bridge = CreateBridge(handler, deployTargetId: "prod-api");
 
         OperationResponse response = await bridge.CreateGitOpsProposalAsync(
@@ -151,10 +158,15 @@ public partial class ConsoleOperationBridgeTests
         GitOpsProposalBridge proposal = AssertProposal(response);
         Assert.Equal("contract-unavailable", proposal.Status);
         Assert.Null(proposal.OperationId);
+        Assert.Null(proposal.ProposalId);
+        Assert.DoesNotContain(proposal.SuggestedActions, action => action.MutatesState);
         OperationBackendStep createStep = Assert.Single(
             response.BackendSteps!,
             step => step.Name == "deploy-operation-create");
-        Assert.False(createStep.MutatesState);
+        // HTTP 200 without an ID does not prove that the write did not happen.
+        // Keep the acknowledgment in audit while refusing all runtime/approval claims.
+        Assert.Equal(writeAcknowledged, createStep.MutatesState);
+        Assert.False(createStep.Success);
     }
 
     [Theory]

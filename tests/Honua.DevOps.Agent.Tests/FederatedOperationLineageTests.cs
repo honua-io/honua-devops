@@ -34,6 +34,8 @@ public sealed partial class TerraformProvisioningTests
         Assert.Equal(1, runner.ApplyCalls);
         Assert.Empty(restartedRunner.Calls);
         Assert.Equal("idempotency-conflict", (await restarted.ProvisionInfrastructureAsync("aws-ecs", "small", "apply", "{}", true, challenge, "{}")).Status);
+        Assert.Equal("idempotency-conflict", (await restarted.ProvisionInfrastructureAsync("aws-ecs", "small", "apply", "{\"environment\":\"prod\"}", true, challenge, approval)).Status);
+        Assert.Empty(restartedRunner.Calls);
     }
 
     [Fact]

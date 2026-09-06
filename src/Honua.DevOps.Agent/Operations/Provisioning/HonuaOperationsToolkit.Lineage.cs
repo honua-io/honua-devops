@@ -20,7 +20,15 @@ internal sealed partial class HonuaOperationsToolkit
                 string operation = $"urn:honua:provisioning:{parts[3]}";
                 if (TryLoadProvisioningState(operation, out ProvisioningState? completed))
                 {
+                    string requestedEnvironment;
+                    try { requestedEnvironment = (string)ParseAwsEcsSmallVariables(variablesJson)["environment"]!; }
+                    catch (InvalidOperationException)
+                    {
+                        return ProvisioningRefusal("idempotency-conflict", "The replay does not describe the original apply environment.", [], []);
+                    }
                     if (!confirmed || completed!.Action != NormalizeToken(action)
+                        || completed.Environment != parts[2] || completed.Environment != requestedEnvironment
+                        || NormalizeToken(size) != "small"
                         || completed.Lineage.ApprovalReceiptSha256 != ComputeSha256(Encoding.UTF8.GetBytes(approvalReceiptJson)))
                         return ProvisioningRefusal("idempotency-conflict", "This apply already completed with a different approval or action.", [], []);
                     try { GetEvidenceStore().Validate(completed.Lineage.EvidenceRefs ?? []); }
@@ -29,7 +37,7 @@ internal sealed partial class HonuaOperationsToolkit
                         return new("lineage-evidence-invalid", "The prior apply evidence is unavailable; reconcile without applying again.",
                             [], [], [], [], ProvisioningLineage: completed.Lineage);
                     }
-                    return new(action == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
+                    return new(NormalizeToken(action) == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
                         "Recovered the original apply receipt; no mutation was repeated.", [], [],
                         ["retained evidence digests verified"], ["Historical execution evidence; not a fresh health check."],
                         ProvisioningLineage: completed.Lineage);
