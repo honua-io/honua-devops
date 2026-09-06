@@ -83,7 +83,9 @@ bundle.
 
 The local regression fixture crosses bootstrap, signed approval, typed apply,
 handoff, verification, HTTP deploy creation/read/retry, wire serialization and
-JSONL. Its process runner and HTTP server are test doubles; it is **not** live AWS,
+JSONL. A separate test boots the actual MCP stdio host and checks the returned
+server IDs, independently hashed HTTP bytes, and matching JSONL event. Its
+provisioning process runner and HTTP server are test doubles; it is **not** live AWS,
 real-server persistence, OAuth, or exact-candidate certification. It asserts
 independently specified IDs and exact bytes, a published SHA-256 test vector,
 restart/replay identity, concurrent single claim, mismatched/missing/substituted

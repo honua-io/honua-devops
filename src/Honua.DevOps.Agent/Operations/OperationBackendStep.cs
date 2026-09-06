@@ -22,6 +22,6 @@ internal sealed record OperationBackendStep(
             Success: result.IsSuccess,
             Detail: result.Detail,
             PayloadPreview: result.PayloadPreview,
-            MutatesState: mutatesState,
+            MutatesState: mutatesState || result.MutationAcknowledged,
             ServerLineage: result.ServerLineage);
 }

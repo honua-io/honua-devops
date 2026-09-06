@@ -479,7 +479,7 @@ internal sealed partial class BackendGateway : IDisposable
                 submitImmediately,
                 parameters
             },
-            cancellationToken));
+            cancellationToken), isMutation: true);
     }
 
     // JSON-returning submit variant used by the GitOps executors: after a submit the
@@ -504,7 +504,7 @@ internal sealed partial class BackendGateway : IDisposable
         return await CaptureServerOperationAsync(PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/submit",
             new { reason },
-            cancellationToken), operationId);
+            cancellationToken), operationId, isMutation: true);
     }
 
     // JSON-returning rollback variant: the executor needs the server's resulting status
@@ -529,7 +529,7 @@ internal sealed partial class BackendGateway : IDisposable
         return await CaptureServerOperationAsync(PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
             new { reason },
-            cancellationToken), operationId);
+            cancellationToken), operationId, isMutation: true);
     }
 
     // ---- Additive metadata-release layer-evolution lifecycle (Demo B safe-rollback) ----

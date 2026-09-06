@@ -19,10 +19,17 @@ internal sealed partial class BackendGateway
         return bound;
     }
 
-    private async Task<BackendJsonResult> CaptureServerOperationAsync(Task<BackendJsonResult> pending, string? expectedOperationId = null)
+    private async Task<BackendJsonResult> CaptureServerOperationAsync(Task<BackendJsonResult> pending, string? expectedOperationId = null, bool isMutation = false)
     {
         BackendJsonResult result = await pending;
-        if (!result.CallResult.IsSuccess || result.Payload is null || result.EvidenceBytes is null) return result;
+        result = result with { CallResult = result.CallResult with { MutationAcknowledged = isMutation && result.CallResult.IsSuccess } };
+        if (!result.CallResult.IsSuccess) return result;
+        if (result.Payload is null || result.EvidenceBytes is null)
+            return result with { CallResult = result.CallResult with
+            {
+                IsSuccess = false,
+                Detail = "lineage-evidence-invalid: the server acknowledged the request without a readable operation receipt."
+            } };
         try
         {
             ProvisioningEvidenceStore store = new(Path.Combine(

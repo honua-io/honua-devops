@@ -17,6 +17,22 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class ProvisioningContractSchemaTests
 {
     [Fact]
+    public void ProvisionBinding_ValidatesExactEvidenceReferenceShape()
+    {
+        JsonNode binding = JsonNode.Parse(ValidBindingJson)!;
+        binding["lineage"]!["evidenceRefs"] = JsonSerializer.SerializeToNode(new[]
+        {
+            new { kind = "plan", reference = "urn:sha256:" + new string('a', 64), sha256 = new string('a', 64), byteLength = 3 }
+        });
+        Assert.Empty(ProvisioningContracts.ValidateProvisionBinding(binding.ToJsonString()));
+        binding["lineage"]!["evidenceRefs"]![0]!["byteLength"] = -1;
+        Assert.Contains(ProvisioningContracts.ValidateProvisionBinding(binding.ToJsonString()), error => error.Contains("byteLength", StringComparison.Ordinal));
+        binding["lineage"]!["evidenceRefs"]![0]!["byteLength"] = 3;
+        binding["lineage"]!["evidenceRefs"]![0]!.AsObject().Remove("sha256");
+        Assert.Contains(ProvisioningContracts.ValidateProvisionBinding(binding.ToJsonString()), error => error.Contains("sha256", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void EveryProvisioningContractIsEmbeddedParsableAndFullyEnforceable()
     {
         foreach (string resource in ProvisioningContracts.AllResources)

@@ -5,4 +5,5 @@ internal sealed record BackendCallResult(
     string Endpoint,
     string Detail,
     string PayloadPreview,
-    ServerOperationLineage? ServerLineage = null);
+    ServerOperationLineage? ServerLineage = null,
+    bool MutationAcknowledged = false);

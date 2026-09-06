@@ -205,12 +205,12 @@ internal sealed class RollbackExecutor(
         if (!rolledBack.CallResult.IsSuccess)
         {
             // Includes the server-side OperatorApprovalGate 403 if it still applies. Nothing mutated.
-            findings.Add($"Rollback refused by deploy-control ({rolledBack.CallResult.Detail}); operation `{operationId}` was not rolled back.");
+            findings.Add($"Rollback did not return validated evidence ({rolledBack.CallResult.Detail}); reconcile any acknowledged write on `{operationId}` before retrying.");
             return new GitOpsExecutionResult(
-                Status: GitOpsExecutionStatus.ApprovalRequired,
+                Status: rolledBack.CallResult.MutationAcknowledged ? GitOpsExecutionStatus.ContractUnavailable : GitOpsExecutionStatus.ApprovalRequired,
                 OperationId: operationId,
                 ServerStatus: rolledBack.Payload is null ? serverStatus : DeployOperationReader.ReadStatus(rolledBack.Payload.RootElement),
-                Mutated: false,
+                Mutated: rolledBack.CallResult.MutationAcknowledged,
                 Decision: decision,
                 BackendSteps: steps,
                 Findings: findings,
