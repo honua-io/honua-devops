@@ -202,7 +202,7 @@ internal static class CapabilityToolset
                 "build_ai_devops_brief",
                 "Build an advisory AI DevOps brief with affected resources, raw evidence references, suggested actions (with requiresApproval/mutatesState flags), confidence, owner, status, and workflow links. Advisory only with auto-apply disabled; mutating suggestions require an explicit governed submit/rollback."),
             CreateTool(
-                (string stack, string size, string action, string variablesJson, bool confirmed, string confirmation, string approvalReceiptJson, string idempotencyKey)
+                (string stack, string size, string action, string variablesJson, bool confirmed, string confirmation, string approvalReceiptJson, string idempotencyKey = "")
                     => toolkit.ProvisionInfrastructureAsync(stack, size, action, variablesJson, confirmed, confirmation, approvalReceiptJson, idempotencyKey: idempotencyKey),
                 "provision_infrastructure",
                 "Provision a Honua cloud cell from the allowlisted honua-iac Terraform roots. 2026.1 supports stack=aws-ecs and size=small. action=plan returns a stable provisioningOperationId, saved-plan digest, and tokenized challenge. Supply a unique idempotencyKey for each intended plan and reuse it for retry/restart; an empty key explicitly starts a new plan. apply/destroy requires that exact saved plan plus approvalReceiptJson containing a signed honua.devops.provision-approval/v1 receipt from a configured trusted issuer, bound to the exact operation, plan, action, stack, and environment. variablesJson accepts only non-secret allowlisted Terraform values."),

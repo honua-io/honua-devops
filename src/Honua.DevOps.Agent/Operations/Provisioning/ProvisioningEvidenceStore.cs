@@ -70,7 +70,7 @@ internal sealed class ProvisioningEvidenceStore(string directory)
         }
     }
 
-    internal void ValidateAppliedLineage(ProvisioningLineage lineage)
+    internal void ValidateAppliedLineage(ProvisioningLineage lineage, bool requireHandoff = true)
     {
         IReadOnlyList<ProvisioningEvidenceReference> references = lineage.EvidenceRefs ?? [];
         Validate(references);
@@ -79,15 +79,13 @@ internal sealed class ProvisioningEvidenceStore(string directory)
         string Digest(string kind) => Reference(kind).Sha256;
         if (Digest("plan") != lineage.PlanSha256 || Digest("approval") != lineage.ApprovalReceiptSha256
             || $"urn:sha256:{Digest("apply")}" != lineage.ActuatorReceiptReference
-            || Digest("handoff") != lineage.HandoffReceiptSha256
-            || lineage.RootProvisioningOperationId != lineage.ProvisioningOperationId
+            || (lineage.RootProvisioningOperationId is not null && lineage.RootProvisioningOperationId != lineage.ProvisioningOperationId)
             || string.IsNullOrWhiteSpace(lineage.ApprovalReceiptId)
             || string.IsNullOrWhiteSpace(lineage.ApplyAuditEventId))
             throw new InvalidDataException("Evidence references do not join to the recorded provisioning identities.");
         using JsonDocument approval = JsonDocument.Parse(Read(Reference("approval")));
         using JsonDocument metadata = JsonDocument.Parse(Read(Reference("plan-metadata")));
         using JsonDocument apply = JsonDocument.Parse(Read(Reference("apply")));
-        using JsonDocument handoff = JsonDocument.Parse(Read(Reference("handoff")));
         void Match(JsonElement document, string field, string? expected)
         {
             if (expected is null || !document.TryGetProperty(field, out JsonElement value)
@@ -102,7 +100,14 @@ internal sealed class ProvisioningEvidenceStore(string directory)
         Match(metadata.RootElement.GetProperty("plan"), "sha256", lineage.PlanSha256);
         Match(apply.RootElement, "plan_metadata_digest", lineage.PlanMetadataDigest);
         Match(apply.RootElement, "saved_plan_sha256", lineage.PlanSha256);
-        Match(handoff.RootElement, "rootProvisioningOperationId", lineage.ProvisioningOperationId);
+        if (requireHandoff || lineage.HandoffReceiptSha256 is not null || references.Any(r => r.Kind == "handoff"))
+        {
+            if (Digest("handoff") != lineage.HandoffReceiptSha256
+                || lineage.RootProvisioningOperationId != lineage.ProvisioningOperationId)
+                throw new InvalidDataException("Handoff evidence does not join to its recorded digest.");
+            using JsonDocument handoff = JsonDocument.Parse(Read(Reference("handoff")));
+            Match(handoff.RootElement, "rootProvisioningOperationId", lineage.ProvisioningOperationId);
+        }
         if (lineage.HandoffVerificationReceiptId is not null
             && (Digest("verification-evidence") != lineage.HandoffVerificationReceiptSha256
                 || lineage.HandoffVerificationReceiptId != $"urn:sha256:{lineage.HandoffVerificationReceiptSha256}"))

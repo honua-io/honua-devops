@@ -31,8 +31,9 @@ internal sealed partial class HonuaOperationsToolkit
                         || NormalizeToken(size) != "small"
                         || completed.Lineage.ApprovalReceiptSha256 != ComputeSha256(Encoding.UTF8.GetBytes(approvalReceiptJson)))
                         return ProvisioningRefusal("idempotency-conflict", "This apply already completed with a different approval or action.", [], []);
-                    try { GetEvidenceStore().Validate(completed.Lineage.EvidenceRefs ?? []); }
-                    catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
+                    try { GetEvidenceStore().ValidateAppliedLineage(completed.Lineage, requireHandoff: false); }
+                    catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException
+                        or JsonException or InvalidOperationException or KeyNotFoundException)
                     {
                         return new("lineage-evidence-invalid", "The prior apply evidence is unavailable; reconcile without applying again.",
                             [], [], [], [], ProvisioningLineage: completed.Lineage);
@@ -105,18 +106,27 @@ internal sealed partial class HonuaOperationsToolkit
         }
     }
 
-    private static async Task RestoreVerificationAsync(ProvisioningState state, string directory, CancellationToken cancellationToken)
+    private static async Task<bool> RestoreVerificationAsync(ProvisioningState state, string directory, bool overwrite, CancellationToken cancellationToken)
     {
         ProvisioningEvidenceStore store = GetEvidenceStore();
         // Read both before exporting either: a corrupt binding must not refresh a
         // verification receipt that would appear to certify it.
         byte[] receipt = store.Read(state.VerificationReceipt!);
         byte[] binding = store.Read(state.ProvisionBinding!);
-        await WriteEvidenceCopyAsync(Path.Combine(directory, "honua-install-verification.receipt.json"), receipt, cancellationToken);
-        await WriteEvidenceCopyAsync(Path.Combine(directory, "honua-devops-aws-ecs-provision-binding.json"), binding, cancellationToken);
+        string receiptPath = Path.Combine(directory, "honua-install-verification.receipt.json");
+        string bindingPath = Path.Combine(directory, "honua-devops-aws-ecs-provision-binding.json");
+        // Check both exports before changing either, including a copied handoff's directory.
+        if (!overwrite && ((File.Exists(receiptPath) && !File.ReadAllBytes(receiptPath).AsSpan().SequenceEqual(receipt))
+            || (File.Exists(bindingPath) && !File.ReadAllBytes(bindingPath).AsSpan().SequenceEqual(binding))))
+            return false;
+        if (overwrite || !File.Exists(receiptPath))
+            await WriteEvidenceCopyAsync(receiptPath, receipt, cancellationToken, overwrite);
+        if (overwrite || !File.Exists(bindingPath))
+            await WriteEvidenceCopyAsync(bindingPath, binding, cancellationToken, overwrite);
+        return true;
     }
 
-    private static async Task WriteEvidenceCopyAsync(string destination, byte[] bytes, CancellationToken cancellationToken)
+    private static async Task WriteEvidenceCopyAsync(string destination, byte[] bytes, CancellationToken cancellationToken, bool overwrite = true)
     {
         string temporary = destination + $".{Guid.NewGuid():n}.tmp";
         try
@@ -131,7 +141,7 @@ internal sealed partial class HonuaOperationsToolkit
                 await stream.WriteAsync(bytes, cancellationToken);
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporary, destination, overwrite: true);
+            File.Move(temporary, destination, overwrite);
         }
         finally { File.Delete(temporary); }
     }

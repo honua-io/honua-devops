@@ -867,7 +867,8 @@ internal sealed partial class HonuaOperationsToolkit
             GetEvidenceStore().ValidateAppliedLineage(state.Lineage);
             if (state.VerificationReceipt is not null && state.ProvisionBinding is not null)
             {
-                await RestoreVerificationAsync(state, Path.GetDirectoryName(fullPath)!, cancellationToken);
+                if (!await RestoreVerificationAsync(state, Path.GetDirectoryName(fullPath)!, overwrite, cancellationToken))
+                    return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
                 return VerifiedLineageResponse(state.Lineage, []);
             }
         }
@@ -1005,7 +1006,8 @@ internal sealed partial class HonuaOperationsToolkit
         // Persist the authoritative references before writing export copies. A restart
         // after either export fails recovers the same receipt, without rerunning probes.
         SaveProvisioningState(completedState);
-        await RestoreVerificationAsync(completedState, directory, cancellationToken);
+        if (!await RestoreVerificationAsync(completedState, directory, overwrite, cancellationToken))
+            return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
 
         List<OperationBackendStep> steps = [.. verification.Steps,
             new("write-handoff-verification-receipt", receiptPath, true, "content-addressed receipt written", verificationId, true),
