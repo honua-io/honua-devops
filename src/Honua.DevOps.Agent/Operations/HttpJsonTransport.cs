@@ -68,9 +68,10 @@ internal sealed class HttpJsonTransport(HttpClient httpClient)
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
-            string body = response.Content is null
-                ? string.Empty
-                : await response.Content.ReadAsStringAsync(cancellationToken);
+            byte[] evidenceBytes = response.Content is null
+                ? []
+                : await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            string body = Encoding.UTF8.GetString(evidenceBytes);
             bool isSuccess = response.IsSuccessStatusCode;
             string detail = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             JsonDocument? payloadDocument = TryParseJsonDocument(body);
@@ -81,7 +82,7 @@ internal sealed class HttpJsonTransport(HttpClient httpClient)
                     endpoint.ToString(),
                     detail,
                     SummarizeBody(body)),
-                payloadDocument);
+                payloadDocument, evidenceBytes);
         }
         catch (OperationCanceledException)
         {

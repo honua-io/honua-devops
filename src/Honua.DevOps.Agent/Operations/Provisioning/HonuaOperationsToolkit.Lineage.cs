@@ -10,6 +10,34 @@ internal sealed partial class HonuaOperationsToolkit
         string confirmation, string approvalReceiptJson = "", CancellationToken cancellationToken = default,
         string idempotencyKey = "")
     {
+        if (NormalizeToken(action) == "apply" || (NormalizeToken(action) == "destroy" && confirmed))
+        {
+            string[] parts = confirmation.Split(':');
+            if (parts.Length == 4 && parts[0] == NormalizeToken(action)
+                && parts[1] == NormalizeToken(stack) && parts[3].Length == 32
+                && parts[3].All(char.IsAsciiHexDigit))
+            {
+                string operation = $"urn:honua:provisioning:{parts[3]}";
+                if (TryLoadProvisioningState(operation, out ProvisioningState? completed))
+                {
+                    if (!confirmed || completed!.Action != NormalizeToken(action)
+                        || completed.Lineage.ApprovalReceiptSha256 != ComputeSha256(Encoding.UTF8.GetBytes(approvalReceiptJson)))
+                        return ProvisioningRefusal("idempotency-conflict", "This apply already completed with a different approval or action.", [], []);
+                    try { GetEvidenceStore().Validate(completed.Lineage.EvidenceRefs ?? []); }
+                    catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
+                    {
+                        return new("lineage-evidence-invalid", "The prior apply evidence is unavailable; reconcile without applying again.",
+                            [], [], [], [], ProvisioningLineage: completed.Lineage);
+                    }
+                    return new(action == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
+                        "Recovered the original apply receipt; no mutation was repeated.", [], [],
+                        ["retained evidence digests verified"], ["Historical execution evidence; not a fresh health check."],
+                        ProvisioningLineage: completed.Lineage);
+                }
+                return await ProvisionInfrastructureCoreAsync(stack, size, action, variablesJson, confirmed,
+                    confirmation, approvalReceiptJson, cancellationToken);
+            }
+        }
         // An unkeyed plan explicitly starts new work. A keyed plan reserves its identity
         // durably BEFORE starting the substrate and can never silently replan on retry.
         if (string.IsNullOrWhiteSpace(idempotencyKey) || NormalizeToken(action) == "apply"
@@ -85,11 +113,12 @@ internal sealed partial class HonuaOperationsToolkit
         string temporary = destination + $".{Guid.NewGuid():n}.tmp";
         try
         {
-            using (FileStream stream = new(temporary, new FileStreamOptions
+            FileStreamOptions options = new()
             {
-                Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None,
-                UnixCreateMode = OperatingSystem.IsWindows() ? null : UnixFileMode.UserRead | UnixFileMode.UserWrite
-            }))
+                Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None
+            };
+            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            using (FileStream stream = new(temporary, options))
             {
                 await stream.WriteAsync(bytes, cancellationToken);
                 stream.Flush(flushToDisk: true);
@@ -106,4 +135,23 @@ internal sealed partial class HonuaOperationsToolkit
             ["retained evidence digests verified"],
             ["This is historical verification evidence, not a fresh health check."],
             ProvisioningLineage: lineage, BackendSteps: steps);
+
+    internal static ProvisioningLineage LoadVerifiedLineage(string provisioningOperationId, Uri server)
+    {
+        if (!TryLoadProvisioningState(provisioningOperationId, out ProvisioningState? state)
+            || state!.VerificationReceipt is null || state.ProvisionBinding is null)
+            throw new InvalidDataException("A retained verified provisioning handoff is required for server federation.");
+        ProvisioningEvidenceStore store = GetEvidenceStore();
+        store.ValidateAppliedLineage(state.Lineage);
+        store.Read(state.VerificationReceipt);
+        using JsonDocument binding = JsonDocument.Parse(store.Read(state.ProvisionBinding));
+        if (!Uri.TryCreate(binding.RootElement.GetProperty("endpoint").GetString(), UriKind.Absolute, out Uri? endpoint)
+            || endpoint != new Uri(server.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/"))
+        {
+            // URI comparison permits the equivalent trailing slash form only.
+            if (endpoint is null || endpoint.AbsoluteUri.TrimEnd('/') != server.AbsoluteUri.TrimEnd('/'))
+                throw new InvalidDataException("The verified handoff belongs to a different server endpoint.");
+        }
+        return state.Lineage with { EvidenceRefs = [.. state.Lineage.EvidenceRefs!, state.VerificationReceipt, state.ProvisionBinding] };
+    }
 }

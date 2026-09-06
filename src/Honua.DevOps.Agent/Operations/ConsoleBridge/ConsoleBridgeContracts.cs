@@ -255,7 +255,7 @@ internal sealed record WorkflowStageStatus(
 //   * Decision    — the recorded approve/reject decision audit (actor + reason), null until a
 //                   decision is recorded.
 internal sealed record GitOpsProposalBridge(
-    string ProposalId,
+    string? ProposalId,
     string? OperationId,
     string IdempotencyKey,
     string Status,

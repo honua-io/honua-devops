@@ -338,6 +338,8 @@ internal sealed partial class HonuaOperationsToolkit
             // deletions it is being asked to confirm. Without it the response tells the
             // caller to "review the complete plan" while handing it only three numbers.
             ExactPlanMetadata metadata = planMetadata!;
+            if (metadata.SavedPlanSha256 != ComputeSha256(planFile))
+                return ProvisioningRefusal("exact-plan-metadata-invalid", "The plan metadata names different saved-plan bytes.", [], []);
 
             ProvisioningProcessResult showResult = await runner.RunAsync(
                 "terraform",
@@ -682,7 +684,7 @@ internal sealed partial class HonuaOperationsToolkit
                     || prior.GetProperty("proxyArtifact").GetProperty("integrity").GetString() != proxyIntegrity)
                     return ProvisioningRefusal("handoff-lineage-conflict", "This provisioning operation already has a different immutable handoff.", [], []);
             }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException or ArgumentNullException or JsonException)
+            catch (Exception exception) when (exception is InvalidDataException or IOException or InvalidOperationException or ArgumentNullException or JsonException)
             {
                 return ProvisioningRefusal("handoff-evidence-invalid", "The original handoff evidence is unavailable or corrupt.", [], []);
             }
@@ -717,6 +719,8 @@ internal sealed partial class HonuaOperationsToolkit
         await File.WriteAllTextAsync(
             envPath,
             $"HONUA_BASE_URL={parsedBaseUrl.AbsoluteUri.TrimEnd('/')}" + Environment.NewLine
+                + $"HONUA_DEVOPS_HONUA_API_BASE_URL={parsedBaseUrl.AbsoluteUri.TrimEnd('/')}" + Environment.NewLine
+                + $"HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID={rootProvisioningOperationId}" + Environment.NewLine
                 + $"HONUA_MCP_REMOTE_URL={mcpUri.AbsoluteUri}" + Environment.NewLine
                 + $"# Resolve HONUA_ADMIN_KEY at launch from: {normalizedSecretRef}" + Environment.NewLine
                 + "# HONUA_ADMIN_KEY is intentionally absent; never paste it into this file." + Environment.NewLine
@@ -819,7 +823,7 @@ internal sealed partial class HonuaOperationsToolkit
                 ReadRequired("rootProvisioningOperationId"),
                 requiredTools.Distinct(StringComparer.Ordinal).ToArray());
         }
-        catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or JsonException or InvalidOperationException or KeyNotFoundException)
         {
             return ProvisioningRefusal("handoff-config-invalid", Redaction.Scrub(exception.Message), [], []);
         }
@@ -867,7 +871,7 @@ internal sealed partial class HonuaOperationsToolkit
                 return VerifiedLineageResponse(state.Lineage, []);
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             return ProvisioningRefusal("lineage-evidence-invalid", "Retained lineage evidence is missing, substituted, or duplicated; no readiness claim is made.", [], []);
         }
@@ -1771,7 +1775,7 @@ internal sealed partial class HonuaOperationsToolkit
             return state is not null
                 && string.Equals(state.Lineage.ProvisioningOperationId, provisioningOperationId, StringComparison.Ordinal);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException)
         {
             return false;
         }

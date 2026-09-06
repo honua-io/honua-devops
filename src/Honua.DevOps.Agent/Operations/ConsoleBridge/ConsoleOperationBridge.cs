@@ -204,7 +204,7 @@ internal sealed class ConsoleOperationBridge(
         suggestedActions.Add(ReviewEvidenceSuggestion(operationId));
 
         GitOpsProposalBridge proposal = new(
-            ProposalId: idempotencyKey,
+            ProposalId: created.CallResult.ServerLineage?.ProposalId,
             OperationId: operationId,
             IdempotencyKey: idempotencyKey,
             Status: status,
@@ -508,7 +508,7 @@ internal sealed class ConsoleOperationBridge(
             ? MapProposalLifecycle(serverStatus, approvalRequired)
             : ProposalLifecycle.Unknown;
         GitOpsProposalBridge proposal = new(
-            ProposalId: normalizedOperationId,
+            ProposalId: found ? result.CallResult.ServerLineage?.ProposalId : null,
             OperationId: found ? normalizedOperationId : null,
             IdempotencyKey: "server-managed",
             Status: status,
@@ -605,7 +605,7 @@ internal sealed class ConsoleOperationBridge(
         suggestedActions.Add(ReviewEvidenceSuggestion(found ? normalizedOperationId : null));
 
         GitOpsProposalBridge proposal = new(
-            ProposalId: normalizedOperationId,
+            ProposalId: found ? result.CallResult.ServerLineage?.ProposalId : null,
             OperationId: found ? normalizedOperationId : null,
             IdempotencyKey: "server-managed",
             Status: bridgeStatus,
@@ -911,7 +911,7 @@ internal sealed class ConsoleOperationBridge(
         string timestamp,
         string blockingReason)
         => new(
-            ProposalId: idempotencyKey,
+            ProposalId: null,
             OperationId: null,
             IdempotencyKey: idempotencyKey,
             Status: BridgeStatus.TargetUnconfigured,

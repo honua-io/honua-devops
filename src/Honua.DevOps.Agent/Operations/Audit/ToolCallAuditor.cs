@@ -57,6 +57,7 @@ internal static class ToolCallAuditor
         OperationEvidence? evidence = null;
         ProvisioningLineage? provisioningLineage = null;
         OperationResponse? operationResponse = toolResult as OperationResponse;
+        IReadOnlyList<ServerOperationLineage>? serverOperations = null;
 
         if (operationResponse is not null)
         {
@@ -65,6 +66,7 @@ internal static class ToolCallAuditor
             summary = Redaction.Scrub(operationResponse.Summary);
             evidence = operationResponse.Evidence;
             provisioningLineage = operationResponse.ProvisioningLineage;
+            serverOperations = operationResponse.ServerOperations;
             if (operationResponse.BackendSteps is { } steps)
             {
                 List<OperationBackendStep> scrubbedSteps = new(steps.Count);
@@ -106,6 +108,8 @@ internal static class ToolCallAuditor
                 JsonElement root = document.RootElement;
                 if (root.ValueKind == JsonValueKind.Object)
                 {
+                    if (TryGetProperty(root, "serverOperations", out JsonElement serverElements) && serverElements.ValueKind == JsonValueKind.Array)
+                        serverOperations = serverElements.Deserialize<ServerOperationLineage[]>();
                     if (TryGetProperty(root, "AuditEventId", out JsonElement idElement) && idElement.ValueKind == JsonValueKind.String)
                         auditEventId = idElement.GetString() ?? auditEventId;
                     if (TryGetProperty(root, "ProvisioningLineage", out JsonElement lineageElement) && lineageElement.ValueKind == JsonValueKind.Object)
@@ -190,7 +194,8 @@ internal static class ToolCallAuditor
             Provider: context.Provider,
             BackendSteps: backendSteps,
             Evidence: evidence,
-            ProvisioningLineage: provisioningLineage);
+            ProvisioningLineage: provisioningLineage,
+            ServerOperations: serverOperations);
 
         // Audit acknowledgement is part of the tool result commit.  Never turn
         // append/flush failure into a warning: after mutation that would expose

@@ -41,7 +41,7 @@ internal static class CapabilityToolset
                 (string toolFilter, bool mutatedOnly, string statusContains, int limit)
                     => toolkit.FindRecentOperationsAsync(toolFilter, mutatedOnly, statusContains, limit),
                 "find_recent_operations",
-                "Search the audit journal for recent operations across sessions. Returns operationId, timestamp, tool, status, mutated flag, and summary. Use to look up a prior operationId for rollback, recall what ran yesterday, or audit mutating calls. Filters: toolFilter (exact tool name, empty for any), mutatedOnly (true skips reads), statusContains (substring), limit (1-200, default 20)."),
+                "Search the audit journal for recent operations across sessions. Returns diagnostic auditEventId, timestamp, tool, status, mutated flag, and summary. JSONL is a non-authoritative replica; auditEventId cannot be used for rollback. Use the typed server operation references for runtime actions. Filters: toolFilter (exact tool name, empty for any), mutatedOnly (true skips reads), statusContains (substring), limit (1-200, default 20)."),
             CreateTool(
                 (string service, string environment, string timeframe, string symptoms, string logSample)
                     => toolkit.AnalyzeLogsAsync(service, environment, timeframe, symptoms, logSample),

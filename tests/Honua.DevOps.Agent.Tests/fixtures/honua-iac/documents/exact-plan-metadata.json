@@ -44,9 +44,9 @@
   "kind":"honua.iac.exact-plan",
   "plan":{
     "path":"honua.tfplan",
-    "sha256":"417a006e0884c8b9c9e1289c347c76ea29c29a7345179382b4b78fee3da2703f"
+    "sha256":"3a691c59f9c8be1eb1ce3e7642643a7aedfa7a0314c8d01750546ea83efca6fe"
   },
-  "plan_metadata_digest":"e636601151bc3e3113bfc984250bbb5fd0850f1bf8e5dfb18c95c29c748b3ce8",
+  "plan_metadata_digest":"058307fcb139d9c5c6eb4ed483bc244778972f12e5bf13e351f5e38d9113f4f2",
   "posture":{
     "dirty_source_allowed":false,
     "local_state_allowed":false,

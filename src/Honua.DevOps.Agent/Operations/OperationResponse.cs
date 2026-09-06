@@ -34,6 +34,10 @@ internal sealed record OperationResponse(
     [property: JsonIgnore] DeliverableProjection? DeliverableLifecycle = null,
     [property: JsonIgnore] ActuationResult? Actuation = null)
 {
+    [JsonPropertyName("serverOperations")]
+    public IReadOnlyList<ServerOperationLineage> ServerOperations { get; init; } =
+        BackendSteps?.Where(step => step.ServerLineage is not null).Select(step => step.ServerLineage!).ToArray() ?? [];
+
     [JsonPropertyName("auditEventId")]
     public string AuditEventId { get; init; } = Guid.NewGuid().ToString("n");
 }
