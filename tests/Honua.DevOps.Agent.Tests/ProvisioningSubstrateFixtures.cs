@@ -373,6 +373,8 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
 
     internal string ExecReceiptJson { get; set; } = ProvisioningSubstrateFixtures.ExecReceiptJson;
 
+    internal string ExactPlanMetadataJson { get; set; } = ProvisioningSubstrateFixtures.ExactPlanMetadataJson;
+
     internal Func<Task>? BeforeApply { get; set; }
 
     internal int ApplyCalls { get; private set; }
@@ -432,7 +434,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         string planOut = call.Option("--plan-out")!;
         string metadataOut = call.Option("--metadata-out")!;
         File.WriteAllText(planOut, "fake saved terraform plan");
-        File.WriteAllText(metadataOut, ProvisioningSubstrateFixtures.ExactPlanMetadataJson);
+        File.WriteAllText(metadataOut, ExactPlanMetadataJson);
         return Success(PlanSummary);
     }
 

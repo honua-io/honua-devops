@@ -8,6 +8,63 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class ProvisioningReceiptBindingTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Destroy_ConsumesItsApprovedPlanOnceAndRetainsPostActionReview(bool substituteAction)
+    {
+        using TerraformTestRoot root = new();
+        JsonNode metadata = JsonNode.Parse(ProvisioningSubstrateFixtures.ExactPlanMetadataJson)!;
+        metadata["action"] = "destroy";
+        JsonNode receipt = JsonNode.Parse(ProvisioningSubstrateFixtures.ExecReceiptJson)!;
+        receipt["action"] = substituteAction ? "apply" : "destroy";
+        receipt["output_contract"]!["digest"] = null;
+        FakeSubstrateRunner runner = new()
+        {
+            ExactPlanMetadataJson = metadata.ToJsonString(),
+            ExecReceiptJson = receipt.ToJsonString(),
+            PlanSummary = "Plan: 0 to add, 0 to change, 7 to destroy."
+        };
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        OperationRuntime runtime = ProvisioningSubstrateFixtures.CreateRuntime(
+            root.Path, ExecutionMode.Execute, ExecutionTier.BreakGlass);
+        HonuaOperationsToolkit toolkit = new(runtime, gateway,
+            ProvisioningSubstrateFixtures.DirectAllowedPolicy(), provisioningProcessRunner: runner);
+        OperationResponse plan = await toolkit.ProvisionInfrastructureAsync("aws-ecs", "small", "destroy", "{}", false, "");
+        Assert.Equal("terraform-destroy-plan-ready", plan.Status);
+        string challenge = ProvisioningSubstrateFixtures.ExtractChallenge(plan, "confirmation=");
+        string approval = ProvisioningSubstrateFixtures.CreateApprovalReceipt(plan, "destroy");
+        OperationResponse response = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "destroy", "{}", true, challenge, approval);
+
+        Assert.Equal(substituteAction ? "exec-receipt-mismatch" : "infrastructure-destroyed", response.Status);
+        Assert.True(Assert.Single(response.BackendSteps!, step => step.Name == "terraform-exact-destroy").MutatesState);
+        if (substituteAction)
+        {
+            Assert.Null(response.ProvisioningLineage);
+            Assert.Contains("action", response.Summary, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Equal(plan.ProvisioningLineage!.ProvisioningOperationId, response.ProvisioningLineage!.ProvisioningOperationId);
+            Assert.Equal(plan.ProvisioningLineage.PlanSha256, response.ProvisioningLineage.PlanSha256);
+            Assert.Contains(response.Actions, action => action.Contains("post-action review", StringComparison.Ordinal));
+        }
+
+        HonuaOperationsToolkit restarted = new(runtime, gateway,
+            ProvisioningSubstrateFixtures.DirectAllowedPolicy(), provisioningProcessRunner: runner);
+        OperationResponse retry = await restarted.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "destroy", "{}", true, challenge, approval);
+        Assert.Equal("confirmation-required", retry.Status);
+        Assert.Equal(1, runner.ApplyCalls);
+        Assert.Single(runner.Calls, call => call.Operation == "terraform-exact-plan.sh");
+        ProcessCall applied = Assert.Single(runner.Calls, call => call.Operation == "terraform-exact-apply.sh");
+        Assert.Equal("destroy", applied.Option("--action"));
+        Assert.Equal(Assert.Single(runner.Calls, call => call.Operation == "terraform-exact-plan.sh").Option("--plan-out"),
+            applied.Option("--plan"));
+        Assert.DoesNotContain(runner.Calls, call => call.Operation == "output");
+    }
+
+    [Theory]
     [InlineData("valid")]
     [InlineData("expired")]
     [InlineData("future")]
