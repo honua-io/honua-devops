@@ -19,6 +19,8 @@ public sealed partial class TerraformProvisioningTests
     [InlineData("approvalReceiptId")]
     [InlineData("planMetadataDigest")]
     [InlineData("rootProvisioningOperationId")]
+    [InlineData("plan-metadata-document")]
+    [InlineData("apply-document")]
     public async Task Review_ApplyReplayRejectsIncompleteOrSubstitutedLineage(string change)
     {
         using TerraformTestRoot root = new();
@@ -37,6 +39,18 @@ public sealed partial class TerraformProvisioningTests
         {
             JsonArray references = recorded["evidenceRefs"]!.AsArray();
             references.Remove(references.Single(r => r!["kind"]!.GetValue<string>() == change));
+        }
+        else if (change.EndsWith("-document", StringComparison.Ordinal))
+        {
+            string kind = change[..^"-document".Length];
+            ProvisioningEvidenceStore store = RetainedEvidence();
+            JsonNode document = JsonNode.Parse(store.Read(lineage.EvidenceRefs!.Single(r => r.Kind == kind)))!;
+            document["plan_metadata_digest"] = "substituted";
+            ProvisioningEvidenceReference replacement = store.Put(kind, Encoding.UTF8.GetBytes(document.ToJsonString()));
+            JsonArray references = recorded["evidenceRefs"]!.AsArray();
+            references.Remove(references.Single(r => r!["kind"]!.GetValue<string>() == kind));
+            references.Add(JsonSerializer.SerializeToNode(replacement));
+            if (kind == "apply") recorded["actuatorReceiptReference"] = replacement.Reference;
         }
         else recorded[change] = "substituted";
         await File.WriteAllTextAsync(path, state.ToJsonString());

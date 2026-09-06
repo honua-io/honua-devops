@@ -115,13 +115,15 @@ internal sealed partial class HonuaOperationsToolkit
         byte[] binding = store.Read(state.ProvisionBinding!);
         string receiptPath = Path.Combine(directory, "honua-install-verification.receipt.json");
         string bindingPath = Path.Combine(directory, "honua-devops-aws-ecs-provision-binding.json");
+        bool receiptExists = File.Exists(receiptPath);
+        bool bindingExists = File.Exists(bindingPath);
         // Check both exports before changing either, including a copied handoff's directory.
-        if (!overwrite && ((File.Exists(receiptPath) && !File.ReadAllBytes(receiptPath).AsSpan().SequenceEqual(receipt))
-            || (File.Exists(bindingPath) && !File.ReadAllBytes(bindingPath).AsSpan().SequenceEqual(binding))))
+        if (!overwrite && ((receiptExists && !File.ReadAllBytes(receiptPath).AsSpan().SequenceEqual(receipt))
+            || (bindingExists && !File.ReadAllBytes(bindingPath).AsSpan().SequenceEqual(binding))))
             return false;
-        if (overwrite || !File.Exists(receiptPath))
+        if (overwrite || !receiptExists)
             await WriteEvidenceCopyAsync(receiptPath, receipt, cancellationToken, overwrite);
-        if (overwrite || !File.Exists(bindingPath))
+        if (overwrite || !bindingExists)
             await WriteEvidenceCopyAsync(bindingPath, binding, cancellationToken, overwrite);
         return true;
     }
