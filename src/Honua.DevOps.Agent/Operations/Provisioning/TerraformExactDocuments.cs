@@ -45,7 +45,10 @@ internal sealed record ExactPlanMetadata(
     string? ActorId,
     string? TargetId,
     string? CandidateDigest,
-    string? WorkloadIdentityContractDigest)
+    string? WorkloadIdentityContractDigest,
+    string? BackendBucketArn,
+    string? BackendLockingKind,
+    string? BackendLockingDetail)
 {
     internal static bool TryRead(string json, string schemaJson, out ExactPlanMetadata? metadata, out string error)
     {
@@ -114,7 +117,10 @@ internal sealed record ExactPlanMetadata(
             ActorId: ReadString(root, "actor_id"),
             TargetId: ReadString(root, "target_id"),
             CandidateDigest: ReadString(root, "candidate_digest"),
-            WorkloadIdentityContractDigest: ReadString(root, "workload_identity_contract_digest"));
+            WorkloadIdentityContractDigest: ReadString(root, "workload_identity_contract_digest"),
+            BackendBucketArn: ReadString(backend, "bucket_arn"),
+            BackendLockingKind: ReadString(backend.GetProperty("locking"), "kind"),
+            BackendLockingDetail: ReadString(backend.GetProperty("locking"), "detail"));
         return true;
     }
 
@@ -175,7 +181,10 @@ internal sealed record TerraformExecReceipt(
     string? TargetId,
     string? CandidateDigest,
     string? Issuer,
-    string? WorkloadIdentityContractDigest)
+    string? WorkloadIdentityContractDigest,
+    string? BackendBucketArn,
+    string? BackendLockingKind,
+    string? BackendLockingDetail)
 {
     internal static bool TryRead(string json, string schemaJson, out TerraformExecReceipt? receipt, out string error)
     {
@@ -237,7 +246,10 @@ internal sealed record TerraformExecReceipt(
             TargetId: ExactPlanMetadata.ReadString(root, "target_id"),
             CandidateDigest: ExactPlanMetadata.ReadString(root, "candidate_digest"),
             Issuer: ExactPlanMetadata.ReadString(workload, "issuer"),
-            WorkloadIdentityContractDigest: ExactPlanMetadata.ReadString(workload, "contract_digest"));
+            WorkloadIdentityContractDigest: ExactPlanMetadata.ReadString(workload, "contract_digest"),
+            BackendBucketArn: ExactPlanMetadata.ReadString(backendStep, "bucket_arn"),
+            BackendLockingKind: ExactPlanMetadata.ReadString(backendStep.GetProperty("locking"), "kind"),
+            BackendLockingDetail: ExactPlanMetadata.ReadString(backendStep.GetProperty("locking"), "detail"));
         return true;
     }
 
@@ -268,6 +280,9 @@ internal sealed record TerraformExecReceipt(
         Match("backend_step.backend_kind", BackendKind, plan.BackendKind);
         Match("backend_step.workspace", Workspace, plan.Workspace);
         Match("backend_step.object_key", ObjectKey, plan.ObjectKey);
+        Match("backend_step.bucket_arn", BackendBucketArn, plan.BackendBucketArn);
+        Match("backend_step.locking.kind", BackendLockingKind, plan.BackendLockingKind);
+        Match("backend_step.locking.detail", BackendLockingDetail, plan.BackendLockingDetail);
         Match("workload_identity.account_id", AccountId, plan.AccountId);
         Match("workload_identity.assumed_role_arn", AssumedRoleArn, plan.AssumedRoleArn);
         Match("workload_identity.role_id", RoleId, plan.RoleId);
@@ -282,6 +297,7 @@ internal sealed record TerraformExecReceipt(
         }
         Match("cleanup.teardown_root", TeardownRoot, plan.TerraformRoot);
         Match("cleanup.teardown_action", TeardownAction, "destroy");
+        Match("output_contract.output_name", OutputContractName, "operator_contract_digest");
         return mismatches;
     }
 }

@@ -153,6 +153,9 @@ public sealed class ProvisioningReceiptBindingTests
     [InlineData("backend_step.backend_kind", "azurerm")]
     [InlineData("backend_step.workspace", "another-cell")]
     [InlineData("backend_step.object_key", "honua/aws/other/terraform.tfstate")]
+    [InlineData("backend_step.bucket_arn", "arn:aws:s3:::other-state")]
+    [InlineData("backend_step.locking.kind", "none")]
+    [InlineData("backend_step.locking.detail", "other.tfstate.tflock")]
     [InlineData("workload_identity.account_id", "210987654321")]
     [InlineData("workload_identity.assumed_role_arn", "arn:aws:sts::123456789012:assumed-role/other/session")]
     [InlineData("workload_identity.role_id", "AROAOTHERID")]
@@ -164,11 +167,13 @@ public sealed class ProvisioningReceiptBindingTests
     [InlineData("state_before.serial", "11")]
     [InlineData("cleanup.teardown_root", "infrastructure/terraform/examples/other")]
     [InlineData("output_contract.digest", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("output_contract.output_name", "other_contract_digest")]
     public async Task Apply_RejectsSubstitutedExecutionFactsAndCannotAuthorizeHandoff(string path, string? value)
     {
         JsonNode receipt = JsonNode.Parse(ProvisioningSubstrateFixtures.ExecReceiptJson)!;
         string[] segments = path.Split('.');
-        JsonNode parent = segments.Length == 1 ? receipt : receipt[segments[0]]!;
+        JsonNode parent = receipt;
+        foreach (string segment in segments[..^1]) parent = parent[segment]!;
         parent[segments[^1]] = path == "state_before.serial" ? JsonValue.Create(int.Parse(value!)) : JsonValue.Create(value);
         Assert.True(TerraformExecReceipt.TryRead(receipt.ToJsonString(),
             ProvisioningSubstrateFixtures.ExecReceiptSchemaJson, out _, out string schemaError), schemaError);

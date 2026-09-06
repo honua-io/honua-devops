@@ -991,7 +991,7 @@ internal sealed partial class HonuaOperationsToolkit
             Actions:
             [
                 "Correct the specific cause named by the refusal reason; do not retry unchanged.",
-                "A refusal releases the plan claim, so the same approved plan can be retried once the cause is fixed."
+                "After an apply or destroy attempt, DevOps has spent its local plan claim. Create and approve a fresh plan once the cause is fixed."
             ],
             ValidationChecks: ["the substrate refused before any process mutated state"],
             Risks: ["Nothing was mutated by this call."],
