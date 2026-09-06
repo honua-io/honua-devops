@@ -41,7 +41,11 @@ internal sealed record ExactPlanMetadata(
     string? StateLineageBefore,
     long? StateSerialBefore,
     string SavedPlanSha256,
-    bool ReleaseQualified)
+    bool ReleaseQualified,
+    string? ActorId,
+    string? TargetId,
+    string? CandidateDigest,
+    string? WorkloadIdentityContractDigest)
 {
     internal static bool TryRead(string json, string schemaJson, out ExactPlanMetadata? metadata, out string error)
     {
@@ -106,7 +110,11 @@ internal sealed record ExactPlanMetadata(
             StateLineageBefore: ReadString(stateBefore, "lineage"),
             StateSerialBefore: ReadInt64(stateBefore, "serial"),
             SavedPlanSha256: plan.GetProperty("sha256").GetString()!,
-            ReleaseQualified: posture.GetProperty("release_qualified").GetBoolean());
+            ReleaseQualified: posture.GetProperty("release_qualified").GetBoolean(),
+            ActorId: ReadString(root, "actor_id"),
+            TargetId: ReadString(root, "target_id"),
+            CandidateDigest: ReadString(root, "candidate_digest"),
+            WorkloadIdentityContractDigest: ReadString(root, "workload_identity_contract_digest"));
         return true;
     }
 
@@ -162,7 +170,12 @@ internal sealed record TerraformExecReceipt(
     string OutputContractName,
     string? OutputContractDigest,
     string TeardownRoot,
-    string TeardownAction)
+    string TeardownAction,
+    string? ActorId,
+    string? TargetId,
+    string? CandidateDigest,
+    string? Issuer,
+    string? WorkloadIdentityContractDigest)
 {
     internal static bool TryRead(string json, string schemaJson, out TerraformExecReceipt? receipt, out string error)
     {
@@ -219,7 +232,12 @@ internal sealed record TerraformExecReceipt(
             OutputContractName: outputContract.GetProperty("output_name").GetString()!,
             OutputContractDigest: ExactPlanMetadata.ReadString(outputContract, "digest"),
             TeardownRoot: cleanup.GetProperty("teardown_root").GetString()!,
-            TeardownAction: cleanup.GetProperty("teardown_action").GetString()!);
+            TeardownAction: cleanup.GetProperty("teardown_action").GetString()!,
+            ActorId: ExactPlanMetadata.ReadString(root, "actor_id"),
+            TargetId: ExactPlanMetadata.ReadString(root, "target_id"),
+            CandidateDigest: ExactPlanMetadata.ReadString(root, "candidate_digest"),
+            Issuer: ExactPlanMetadata.ReadString(workload, "issuer"),
+            WorkloadIdentityContractDigest: ExactPlanMetadata.ReadString(workload, "contract_digest"));
         return true;
     }
 
@@ -243,6 +261,9 @@ internal sealed record TerraformExecReceipt(
         Match("approved_digest", ApprovedDigest, plan.PlanMetadataDigest);
         Match("saved_plan_sha256", SavedPlanSha256, plan.SavedPlanSha256);
         Match("action", Action, plan.Action);
+        Match("actor_id", ActorId, plan.ActorId);
+        Match("target_id", TargetId, plan.TargetId);
+        Match("candidate_digest", CandidateDigest, plan.CandidateDigest);
         Match("backend_step.backend_config_digest", BackendConfigDigest, plan.BackendConfigDigest);
         Match("backend_step.backend_kind", BackendKind, plan.BackendKind);
         Match("backend_step.workspace", Workspace, plan.Workspace);
@@ -252,6 +273,8 @@ internal sealed record TerraformExecReceipt(
         Match("workload_identity.role_id", RoleId, plan.RoleId);
         Match("workload_identity.partition", Partition, plan.Partition);
         Match("workload_identity.credential_kind", CredentialKind, plan.CredentialKind);
+        Match("workload_identity.issuer", Issuer, plan.Issuer);
+        Match("workload_identity.contract_digest", WorkloadIdentityContractDigest, plan.WorkloadIdentityContractDigest);
         Match("state_before.lineage", StateLineageBefore, plan.StateLineageBefore);
         if (StateSerialBefore != plan.StateSerialBefore)
         {
