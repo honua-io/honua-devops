@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import sys
 import urllib.error
 import urllib.parse
@@ -115,6 +116,10 @@ class Harness:
                 'body_kind': 'empty' if empty else 'error-only', 'records': 0, 'features': []}
 
     def run(self):
+        def interrupted(signum, frame):
+            raise CheckFailed('Write run interrupted')
+        signal.signal(signal.SIGTERM, interrupted)
+        signal.signal(signal.SIGINT, interrupted)
         stage = 'demoA.write_preflight'
         try:
             meta = self.ok('?f=json')
@@ -157,10 +162,10 @@ class Harness:
             require(isinstance(updates, list) and len(updates) == 2
                     and all(r.get('success') is False and isinstance(r.get('error'), dict) for r in updates),
                     'Rollback did not reject both edits')
-            require(any(r['error'].get('code') == 1003 for r in updates), 'Missing operation-rolled-back error 1003')
+            require(any(r['error'].get('code') == 1008 for r in updates), 'Missing operation-rolled-back error 1008')
             require(self.ok('?f=json') == before, 'Rollback changed layer schema/metadata')
             require(self.query() == rows, 'Rollback failed to restore fixture data')
-            self.record(stage, {'rollback_on_failure': True, 'rollback_error_code': 1003,
+            self.record(stage, {'rollback_on_failure': True, 'rollback_error_code': 1008,
                                 'failed_edits': 2, 'schema_equal': True, 'data_equal': True, 'records': 1})
         except CheckFailed as exc:
             self.record(stage, error=str(exc))
