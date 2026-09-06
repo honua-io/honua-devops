@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Staging-only FeatureServer serving certification; invoked by run-demo-e2e.sh."""
+import http.client
 import json
 import os
 from pathlib import Path
@@ -64,14 +65,15 @@ class Harness:
             headers['Content-Type'] = 'application/json'
         req = urllib.request.Request(self.url + path, data=data, headers=headers)
         try:
-            response = self.opener.open(req, timeout=self.timeout)
-        except urllib.error.HTTPError as exc:
-            response = exc
-        except (OSError, urllib.error.URLError):
+            try:
+                response = self.opener.open(req, timeout=self.timeout)
+            except urllib.error.HTTPError as exc:
+                response = exc
+            with response:
+                body = response.read()
+                status = response.status
+        except (OSError, urllib.error.URLError, http.client.HTTPException):
             raise CheckFailed('HTTP transport failure') from None
-        with response:
-            body = response.read()
-            status = response.status
         try:
             parsed = json.loads(body) if body else None
         except (ValueError, UnicodeDecodeError):
@@ -202,9 +204,14 @@ class Harness:
 
 
 if __name__ == '__main__':
+    exit_code = 0
     try:
-        hops = Harness().run()
+        harness = Harness()
     except (CheckFailed, ValueError, KeyError):
+        exit_code = 1
         hops = [{'id': 'demoA.write_preflight', 'workflow': 'Demo A', 'status': 'FAIL',
                  'driver': 'http', 'detail': 'Invalid write configuration', 'asserted_values': {}}]
+    else:
+        hops = harness.run()
     Path(sys.argv[1]).write_text(json.dumps(hops, indent=2) + '\n')
+    sys.exit(exit_code)

@@ -195,6 +195,7 @@ CLI_AVAILABLE="false"
 # ---------------------------------------------------------------------------
 declare -a R_ID R_FLOW R_STATUS R_DETAIL R_DRIVER
 FAILURES=0
+CONFIGURATION_ERROR=false
 
 record() {
   # record <id> <workflow> <PASS|FAIL|PENDING> <driver> <detail...>
@@ -300,6 +301,7 @@ demo_a() {
   else
     local why="pro_and_ai_live=false"
     [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" != "true" ]] && why="$WRITE_TARGET_REASON"
+    [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -z "$ADMIN_KEY" ]] && why="HONUA_DEMO_ADMIN_KEY not configured"
     record "demoA.ai_generate" "Demo A" PENDING http "Bedrock generate (status=Generated, real graph) gated ($why)"
   fi
 
@@ -309,6 +311,7 @@ demo_a() {
   else
     local why="pro_and_ai_live=false"
     [[ "$WRITE_TARGET_OK" != "true" ]] && why="$WRITE_TARGET_REASON"
+    [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -z "$ADMIN_KEY" ]] && why="HONUA_DEMO_ADMIN_KEY not configured"
     record "demoA.publish" "Demo A" PENDING http "publish gated ($why)"
   fi
 
@@ -344,6 +347,7 @@ demo_a() {
   else
     local why="pro_and_ai_live=false"
     [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" != "true" ]] && why="$WRITE_TARGET_REASON"
+    [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -z "$ADMIN_KEY" ]] && why="HONUA_DEMO_ADMIN_KEY not configured"
     record "demoA.export" "Demo A" PENDING http "export PDF/PNG byte-validation (%PDF / PNG magic) gated ($why)"
   fi
 }
@@ -507,7 +511,7 @@ demo_b() {
   BASE_URL="$BASE_URL" WRITE_BASE_URL="$WRITE_BASE_URL" ADMIN_KEY="$ADMIN_KEY" \
     DEMO_SERVICE_ID="$DEMO_SERVICE_ID" DEMO_LAYER_ID="$DEMO_LAYER_ID" \
     RESOURCE_PREFIX="$RESOURCE_PREFIX" TIMEOUT_SECONDS="$TIMEOUT_SECONDS" \
-    python3 "$SCRIPT_DIR/demo-e2e-write.py" "$OUTPUT_DIR/write-hops.json"
+    python3 "$SCRIPT_DIR/demo-e2e-write.py" "$OUTPUT_DIR/write-hops.json" || CONFIGURATION_ERROR=true
   while IFS=$'\t' read -r id flow status detail; do
     record "$id" "$flow" "$status" http "$detail"
   done < <(python3 - "$OUTPUT_DIR/write-hops.json" <<'PY_HOPS'
@@ -657,6 +661,12 @@ echo
 echo "Evidence written to: $OUTPUT_DIR"
 echo "  - demo-e2e-evidence.json"
 echo "  - demo-e2e-report.md"
+
+# Configuration errors take precedence over assertion failures after writing evidence.
+if [[ "$CONFIGURATION_ERROR" == true ]]; then
+  echo "[ERROR] Invalid write configuration." >&2
+  exit 1
+fi
 
 # Exit non-zero on any non-pending failure; PENDING never fails the run.
 if [[ "$FAIL_N" -gt 0 ]]; then

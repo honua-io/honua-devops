@@ -57,11 +57,23 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
     def json(self, data, code=200):
         return self._send(code, 'application/json', json.dumps(data).encode())
+    def truncated(self, code=200):
+        self.send_response(code)
+        self.send_header('Content-Length', '100')
+        self.end_headers()
+        self.wfile.write(b'{')
+        self.close_connection = True
     def do_GET(self):
         p = self.path
         if p == '/state':
             return self.json({'rows': rows, 'writes': writes})
         if self.server.write_target:
+            if mode() == 'bad-status':
+                self.wfile.write(b'NOT HTTP\r\n\r\n')
+                self.close_connection = True
+                return
+            if mode() == 'cleanup-truncated' and 'IN+' in p:
+                return self.truncated()
             if self.headers.get('X-API-Key') != 'smoke-admin':
                 return self.json({'error': {'code': 401}})
             if '/query?' in p:
@@ -108,6 +120,8 @@ class H(http.server.BaseHTTPRequestHandler):
         key = self.headers.get('X-API-Key')
         if key != 'smoke-admin' and mode() != 'denial-accepted':
             code = 401 if key is None else 403
+            if mode() == 'denial-truncated':
+                return self.truncated(code)
             if mode() == 'denial-leak' or (mode() == 'readonly-leak' and key is not None):
                 return self.json({'error': {'code': code}, 'features': [{'secret': 'leak'}]})
             if mode() == 'denial-wrong-status':
@@ -123,6 +137,8 @@ class H(http.server.BaseHTTPRequestHandler):
                 row['attributes']['objectid'] = oid
                 rows[oid] = row
                 result.append({'objectId': oid, 'success': True})
+            if mode() == 'import-truncated':
+                return self.truncated()
             if mode() == 'import-error':
                 return self.json({'error': {'code': 500}})
             return self.json({'addResults': result})
@@ -261,7 +277,7 @@ else:
     for name in ('auth.no_key', 'auth.read_only', 'demoA.cleanup'):
         assert hops[name]['asserted_values']['features'] == []
 PY_ASSERT
-  if [[ "$mode" != cleanup-fail ]]; then
+  if [[ "$failed_hop" != demoA.cleanup ]]; then
     curl -fsS "$BASE/state" | python3 -c 'import json,sys; assert json.load(sys.stdin)["rows"] == {}'
   fi
   pass "$mode: exit $rc, receipt asserted, cleanup checked"
@@ -269,6 +285,11 @@ PY_ASSERT
 run_write_case pass 0
 run_write_case pass 0 # repeated prefix must leave no rows
 run_write_case denial-empty 0
+HONUA_DEMO_WRITE_MARKER_FIELD='invalid-field' run_write_case invalid-marker 1 demoA.write_preflight
+HONUA_DEMO_TIMEOUT_SECONDS=invalid run_write_case invalid-timeout 1 demoA.write_preflight
+run_write_case bad-status 2 demoA.write_preflight
+run_write_case denial-truncated 2 auth.no_key
+run_write_case import-truncated 2 demoA.import
 run_write_case bad-readback 2 demoA.import
 run_write_case import-error 2 demoA.import
 run_write_case rollback-fail 2 demoB.rollback
@@ -282,10 +303,20 @@ run_write_case denial-accepted 2 auth.no_key
 echo pass >"$WORK/mode"
 before="$(curl -fsS "$BASE/state")"
 HONUA_DEMO_WRITE_BASE_URL="$WRITE_BASE" "$HARNESS" --env smoke-no-admin \
-  --base-url "$BASE" --output-dir "$WORK/no-admin" >"$WORK/no-admin.log" 2>&1
+  --base-url "$BASE" --pro-ai-live --output-dir "$WORK/no-admin" >"$WORK/no-admin.log" 2>&1
 [[ "$(curl -fsS "$BASE/state")" == "$before" ]] || fail "missing admin key sent a write"
 grep -q 'demoA.import.*PENDING' "$WORK/no-admin.log" || fail "missing admin did not gate import"
-pass "missing admin key: writes PENDING, zero mutations"
+python3 - "$WORK/no-admin/demo-e2e-evidence.json" <<'PY_ADMIN'
+import json, sys
+receipt = json.load(open(sys.argv[1]))
+assert receipt['pro_and_ai_live'] is True
+hops = {h['id']: h for h in receipt['hops']}
+for name in ('demoA.ai_generate', 'demoA.publish', 'demoA.export'):
+    assert hops[name]['status'] == 'PENDING', hops[name]
+    assert 'HONUA_DEMO_ADMIN_KEY not configured' in hops[name]['detail'], hops[name]
+    assert 'pro_and_ai_live=false' not in hops[name]['detail'], hops[name]
+PY_ADMIN
+pass "missing admin key: requested Pro hops explain gate, zero mutations"
 
 # Another repo can invoke the script from its cwd and reuse the evidence path.
 (cd "$WORK" && HONUA_DEMO_WRITE_BASE_URL="$WRITE_BASE" HONUA_DEMO_ADMIN_KEY=smoke-admin \
@@ -300,5 +331,7 @@ PY_OPTIONAL
 pass "external cwd, spaced paths, same summary path, optional read-only key"
 
 run_write_case cleanup-fail 2 demoA.cleanup
+
+run_write_case cleanup-truncated 2 demoA.cleanup
 
 echo "[SMOKE-OK] all demo-e2e harness self-tests passed"
