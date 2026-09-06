@@ -3,7 +3,7 @@ using Honua.DevOps.Agent.Operations;
 
 namespace Honua.DevOps.Agent.Tests;
 
-public sealed class TerraformProvisioningTests
+public sealed partial class TerraformProvisioningTests
 {
     [Fact]
     public async Task Plan_RoutesThroughTheExactPlanWrapperAndNeverStartsApply()

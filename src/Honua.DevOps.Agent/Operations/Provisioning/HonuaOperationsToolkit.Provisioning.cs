@@ -60,7 +60,7 @@ internal sealed partial class HonuaOperationsToolkit
     };
 
     [Description("Plan, apply, or break-glass destroy an allowlisted honua-iac stack through the governed exact-plan substrate, with plan-before-mutation and approval gates.")]
-    public async Task<OperationResponse> ProvisionInfrastructureAsync(
+    private async Task<OperationResponse> ProvisionInfrastructureCoreAsync(
         string stack,
         string size,
         string action,
@@ -68,7 +68,8 @@ internal sealed partial class HonuaOperationsToolkit
         bool confirmed,
         string confirmation,
         string approvalReceiptJson = "",
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? reservedPlanToken = null)
     {
         string normalizedStack = NormalizeToken(stack);
         string normalizedSize = NormalizeToken(size);
@@ -243,7 +244,7 @@ internal sealed partial class HonuaOperationsToolkit
         }
 
         CleanupExpiredSavedPlans();
-        string planDirectory = CreatePlanDirectory(out string planToken);
+        string planDirectory = CreatePlanDirectory(out string planToken, reservedPlanToken);
         string provisioningOperationId = $"urn:honua:provisioning:{planToken}";
         string variableFile = Path.Combine(planDirectory, "small.auto.tfvars.json");
         string planFile = Path.Combine(planDirectory, "honua.tfplan");
@@ -859,7 +860,7 @@ internal sealed partial class HonuaOperationsToolkit
             return ProvisioningRefusal("handoff-evidence-mismatch", "The supplied handoff is not the exact DevOps-recorded handoff bytes.", [], []);
         try
         {
-            GetEvidenceStore().Validate(state.Lineage.EvidenceRefs ?? []);
+            GetEvidenceStore().ValidateAppliedLineage(state.Lineage);
             if (state.VerificationReceipt is not null && state.ProvisionBinding is not null)
             {
                 await RestoreVerificationAsync(state, Path.GetDirectoryName(fullPath)!, cancellationToken);
@@ -1717,9 +1718,9 @@ internal sealed partial class HonuaOperationsToolkit
         return (contract, null);
     }
 
-    private static string CreatePlanDirectory(out string token)
+    private static string CreatePlanDirectory(out string token, string? reservedToken = null)
     {
-        token = Guid.NewGuid().ToString("n");
+        token = reservedToken ?? Guid.NewGuid().ToString("n");
         string root = GetSavedPlanRoot();
         Directory.CreateDirectory(root);
         ProtectDirectory(root);

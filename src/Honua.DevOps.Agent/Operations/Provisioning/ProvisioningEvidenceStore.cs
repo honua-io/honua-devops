@@ -67,4 +67,22 @@ internal sealed class ProvisioningEvidenceStore(string directory)
             Read(reference);
         }
     }
+
+    internal void ValidateAppliedLineage(ProvisioningLineage lineage)
+    {
+        IReadOnlyList<ProvisioningEvidenceReference> references = lineage.EvidenceRefs ?? [];
+        Validate(references);
+        string Digest(string kind) => references.Single(r => r.Kind == kind).Sha256;
+        if (Digest("plan") != lineage.PlanSha256 || Digest("approval") != lineage.ApprovalReceiptSha256
+            || $"urn:sha256:{Digest("apply")}" != lineage.ActuatorReceiptReference
+            || Digest("handoff") != lineage.HandoffReceiptSha256
+            || lineage.RootProvisioningOperationId != lineage.ProvisioningOperationId
+            || string.IsNullOrWhiteSpace(lineage.ApprovalReceiptId)
+            || string.IsNullOrWhiteSpace(lineage.ApplyAuditEventId))
+            throw new InvalidDataException("Evidence references do not join to the recorded provisioning identities.");
+        if (lineage.HandoffVerificationReceiptId is not null
+            && (Digest("verification-evidence") != lineage.HandoffVerificationReceiptSha256
+                || lineage.HandoffVerificationReceiptId != $"urn:sha256:{lineage.HandoffVerificationReceiptSha256}"))
+            throw new InvalidDataException("Verification evidence does not join to its receipt identity.");
+    }
 }

@@ -365,6 +365,8 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
     /// <summary>When set, the plan wrapper fails for a non-governed reason.</summary>
     internal string? PlanFailure { get; set; }
 
+    internal Action? BeforePlan { get; set; }
+
     internal string PlanSummary { get; set; } = "Plan: 7 to add, 0 to change, 0 to destroy.";
 
     internal string ShowOutput { get; set; } = TerraformShowOutput;
@@ -426,6 +428,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
             return Refusal(PlanRefusalReason);
         }
 
+        BeforePlan?.Invoke();
         if (PlanFailure is not null)
         {
             return new ProvisioningProcessResult(1, string.Empty, PlanFailure, false);
@@ -490,6 +493,7 @@ Plan: 7 to add, 0 to change, 0 to destroy.
 
 internal sealed class FakeInstallHandoffVerifier(bool succeed) : IInstallHandoffVerifier
 {
+    internal int Calls { get; private set; }
     internal InstallHandoffVerificationRequest? Request { get; private set; }
 
     public Task<InstallHandoffVerificationResult> VerifyAsync(
@@ -497,6 +501,7 @@ internal sealed class FakeInstallHandoffVerifier(bool succeed) : IInstallHandoff
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        Calls++;
         Request = request;
         OperationBackendStep step = new(
             "fake-full-handoff-verification", "mcp://fixture", succeed,
