@@ -7,8 +7,8 @@ name: Demo E2E Verification
 #      network, no secrets, gates the harness itself.
 #   2. Live read-path (scheduled / opt-in dispatch): runs the READ-path
 #      assertions against the customer-facing demo (HONUA_DEMO_BASE_URL).
-#      Write/AI/Demo-B hops report PENDING until pro_and_ai_live + a staging
-#      write target are configured (see docs/demo-e2e-verification.md).
+#      Serving writes require a staging target + admin key on explicit dispatch;
+#      Pro/AI/export additionally require pro_and_ai_live (see docs/demo-e2e-verification.md).
 
 on:
   pull_request:
@@ -22,7 +22,7 @@ on:
         type: boolean
         default: false
       pro_ai_live:
-        description: "Run Pro/Bedrock/export + Demo B write assertions (needs staging write target)"
+        description: "Run Pro/Bedrock/export assertions (needs staging write target)"
         required: true
         type: boolean
         default: false
@@ -68,10 +68,14 @@ jobs:
       HONUA_DEMO_BASE_URL: ${{ vars.HONUA_DEMO_BASE_URL || 'https://demo.honua.io' }}
       HONUA_DEMO_API_KEY: ${{ secrets.HONUA_DEMO_API_KEY || '' }}
       # WRITE path — separate non-customer-facing staging alias / ephemeral env.
-      # Left blank unless an operator provisions it; blank => write hops PENDING.
-      HONUA_DEMO_WRITE_BASE_URL: ${{ vars.HONUA_DEMO_WRITE_BASE_URL || '' }}
-      HONUA_DEMO_ADMIN_KEY: ${{ secrets.HONUA_DEMO_ADMIN_KEY || '' }}
-      # Pro/Bedrock/export + Demo B gate. Default false until those deploys land.
+      # Explicit dispatch only; scheduled runs always keep write hops PENDING.
+      HONUA_DEMO_WRITE_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && vars.HONUA_DEMO_WRITE_BASE_URL || '' }}
+      HONUA_DEMO_ADMIN_KEY: ${{ github.event_name == 'workflow_dispatch' && secrets.HONUA_DEMO_ADMIN_KEY || '' }}
+      HONUA_DEMO_READ_ONLY_KEY: ${{ github.event_name == 'workflow_dispatch' && secrets.HONUA_DEMO_READ_ONLY_KEY || '' }}
+      HONUA_DEMO_WRITE_SERVICE_ID: ${{ vars.HONUA_DEMO_WRITE_SERVICE_ID || vars.HONUA_DEMO_SERVICE_ID || 'maui-parcels' }}
+      HONUA_DEMO_WRITE_LAYER_ID: ${{ vars.HONUA_DEMO_WRITE_LAYER_ID || vars.HONUA_DEMO_LAYER_ID || '1' }}
+      HONUA_DEMO_WRITE_MARKER_FIELD: ${{ vars.HONUA_DEMO_WRITE_MARKER_FIELD || 'name' }}
+      # Pro/Bedrock/export gate. Default false until those deploys land.
       HONUA_DEMO_PRO_AI_LIVE: ${{ (github.event_name == 'workflow_dispatch' && inputs.pro_ai_live) && 'true' || 'false' }}
       HONUA_DEMO_ENV: ${{ vars.HONUA_DEMO_ENV || 'demo' }}
     steps:

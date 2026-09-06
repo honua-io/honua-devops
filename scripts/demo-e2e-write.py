@@ -29,7 +29,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 class Harness:
     def __init__(self):
         self.base = os.environ['WRITE_BASE_URL']
+        require(self.base != os.environ['BASE_URL'] and self.base, 'Write URL must differ from read URL')
         self.key = os.environ['ADMIN_KEY']
+        require(self.key, 'Admin key required')
         self.readonly = os.environ.get('HONUA_DEMO_READ_ONLY_KEY', '')
         service = os.environ.get('HONUA_DEMO_WRITE_SERVICE_ID', os.environ['DEMO_SERVICE_ID'])
         layer = os.environ.get('HONUA_DEMO_WRITE_LAYER_ID', os.environ['DEMO_LAYER_ID'])
@@ -47,7 +49,7 @@ class Harness:
                         'geometry': {'x': -156.5, 'y': 20.8, 'spatialReference': {'wkid': 4326}}}
 
     def record(self, name, values=None, error=None, pending=None):
-        self.hops.append({'id': name, 'workflow': 'Demo B' if name.startswith('demoB') else 'Demo A',
+        self.hops.append({'id': name, 'workflow': 'Authorization' if name.startswith('auth.') else 'Demo B' if name.startswith('demoB') else 'Demo A',
                           'status': 'PENDING' if pending else 'FAIL' if error else 'PASS',
                           'driver': 'http', 'detail': pending or error or json.dumps(values, sort_keys=True),
                           'asserted_values': values or {}})
@@ -98,7 +100,7 @@ class Harness:
                 and all(r.get('success') is True for r in results), f'{kind} did not confirm {count} successful edit(s)')
         return results
 
-    def denial(self, name, key, expected):
+    def denial(self, key, expected):
         # Arm cleanup BEFORE even an unauthorized request: a broken target may accept it.
         self.armed = True
         status, body, data = self.request('/applyEdits', {'adds': [self.fixture], 'rollbackOnFailure': True}, key)
@@ -132,10 +134,10 @@ class Harness:
             require(self.query() == [], 'Fresh fixture namespace is not empty')
             self.record(stage, {'records': 0, 'marker_field': self.field})
             stage = 'auth.no_key'
-            self.record(stage, self.denial(stage, None, 401))
+            self.record(stage, self.denial(None, 401))
             if self.readonly:
                 stage = 'auth.read_only'
-                self.record(stage, self.denial(stage, self.readonly, 403))
+                self.record(stage, self.denial(self.readonly, 403))
             else:
                 self.record('auth.read_only', pending='HONUA_DEMO_READ_ONLY_KEY not configured')
             stage = 'demoA.import'
@@ -169,6 +171,8 @@ class Harness:
                                 'failed_edits': 2, 'schema_equal': True, 'data_equal': True, 'records': 1})
         except CheckFailed as exc:
             self.record(stage, error=str(exc))
+        except (OSError, TypeError, ValueError, KeyError, AttributeError):
+            self.record(stage, error='Invalid response or transport failure')
         finally:
             if self.armed:
                 self.cleanup()
@@ -193,6 +197,8 @@ class Harness:
             self.record('demoA.cleanup', {'deleted_records': len(rows), 'records': 0, 'features': []})
         except CheckFailed as exc:
             self.record('demoA.cleanup', error=str(exc))
+        except (OSError, TypeError, ValueError, KeyError, AttributeError):
+            self.record('demoA.cleanup', error='Invalid cleanup response or transport failure')
 
 
 if __name__ == '__main__':

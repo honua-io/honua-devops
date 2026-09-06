@@ -99,11 +99,16 @@ class H(http.server.BaseHTTPRequestHandler):
         writes += 1
         if not self.server.write_target:
             return self.json({'error': 'READ TARGET MUTATION'}, 500)
+        if mode() == 'redirect':
+            self.send_response(307)
+            self.send_header('Location', f'http://127.0.0.1:{servers[0].server_port}/applyEdits')
+            self.end_headers()
+            return
         payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         key = self.headers.get('X-API-Key')
         if key != 'smoke-admin' and mode() != 'denial-accepted':
             code = 401 if key is None else 403
-            if mode() == 'denial-leak':
+            if mode() == 'denial-leak' or (mode() == 'readonly-leak' and key is not None):
                 return self.json({'error': {'code': code}, 'features': [{'secret': 'leak'}]})
             if mode() == 'denial-wrong-status':
                 return self._send(404, 'application/json', b'')
@@ -126,6 +131,8 @@ class H(http.server.BaseHTTPRequestHandler):
             assert len(payload['updates']) == 2
             first, second = payload['updates']
             assert 'objectid' not in second['attributes']
+            if mode() == 'rollback-success':
+                return self.json({'updateResults': [{'success': True}, {'success': True}]})
             if mode() == 'rollback-fail':
                 rows[first['attributes']['objectid']]['attributes'].update(first['attributes'])
             return self.json({'updateResults': [
@@ -227,7 +234,7 @@ pass "case4 missing base URL: exit 1 config error"
 run_write_case() {
   local mode="$1" expected="$2" failed_hop="${3:-}"
   echo "$mode" >"$WORK/mode"
-  local out="$WORK/write-$mode"
+  local out="$WORK/write $mode"
   local rc=0
   HONUA_DEMO_WRITE_BASE_URL="$WRITE_BASE" HONUA_DEMO_ADMIN_KEY=smoke-admin \
     HONUA_DEMO_READ_ONLY_KEY=smoke-reader HONUA_DEMO_API_KEY=smoke-read-target \
@@ -267,7 +274,31 @@ run_write_case import-error 2 demoA.import
 run_write_case rollback-fail 2 demoB.rollback
 run_write_case denial-wrong-status 2 auth.no_key
 run_write_case denial-leak 2 auth.no_key
+run_write_case readonly-leak 2 auth.read_only
+run_write_case redirect 2 auth.no_key
+run_write_case rollback-success 2 demoB.rollback
 run_write_case denial-accepted 2 auth.no_key
+# Missing admin key cannot start writes, even when a distinct target exists.
+echo pass >"$WORK/mode"
+before="$(curl -fsS "$BASE/state")"
+HONUA_DEMO_WRITE_BASE_URL="$WRITE_BASE" "$HARNESS" --env smoke-no-admin \
+  --base-url "$BASE" --output-dir "$WORK/no-admin" >"$WORK/no-admin.log" 2>&1
+[[ "$(curl -fsS "$BASE/state")" == "$before" ]] || fail "missing admin key sent a write"
+grep -q 'demoA.import.*PENDING' "$WORK/no-admin.log" || fail "missing admin did not gate import"
+pass "missing admin key: writes PENDING, zero mutations"
+
+# Another repo can invoke the script from its cwd and reuse the evidence path.
+(cd "$WORK" && HONUA_DEMO_WRITE_BASE_URL="$WRITE_BASE" HONUA_DEMO_ADMIN_KEY=smoke-admin \
+  "$HARNESS" --env smoke-external --base-url "$BASE" --output-dir 'external output' \
+  --json-summary 'external output/demo-e2e-evidence.json' >"$WORK/external.log" 2>&1)
+python3 - "$WORK/external output/demo-e2e-evidence.json" <<'PY_OPTIONAL'
+import json, sys
+hops = {h['id']: h for h in json.load(open(sys.argv[1]))['hops']}
+assert hops['auth.read_only']['status'] == 'PENDING'
+assert hops['demoA.cleanup']['status'] == 'PASS'
+PY_OPTIONAL
+pass "external cwd, spaced paths, same summary path, optional read-only key"
+
 run_write_case cleanup-fail 2 demoA.cleanup
 
 echo "[SMOKE-OK] all demo-e2e harness self-tests passed"

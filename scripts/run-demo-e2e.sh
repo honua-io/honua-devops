@@ -11,7 +11,7 @@
 #     vars / flags at runtime. No secrets in source.
 #   * Read vs write split. READ-path checks run against the live customer-facing
 #     base URL (HONUA_DEMO_BASE_URL). WRITE / destructive checks (Demo A
-#     import/publish, Demo B failure-injection + rollback) target a SEPARATE
+#     import/publish, Demo B atomic edit rollback) target a SEPARATE
 #     non-customer-facing write target (HONUA_DEMO_WRITE_BASE_URL — a staging
 #     Lambda alias / ephemeral env) under a scoped, self-cleaning resource prefix.
 #     Writes NEVER touch the customer-facing alias.
@@ -21,7 +21,7 @@
 #
 # Cross-refs: honua-devops#97 (demo program), honua-devops#98 (publish-all matrix).
 # Reuses repo conventions from scripts/run-backup-restore-gameday.sh,
-# scripts/smoke-contract.sh, and scripts/fault-injection/*.
+# scripts/smoke-contract.sh.
 #
 set -euo pipefail
 
@@ -68,6 +68,9 @@ Connection (WRITE path — separate non-customer-facing target):
   --admin-key <key>             Admin/write key        (or HONUA_DEMO_ADMIN_KEY)
   --resource-prefix <p>         Scoped, self-cleaning prefix for write artifacts
                                 (or HONUA_DEMO_RESOURCE_PREFIX)
+  Serving writes run with a distinct write URL + admin key, independent of Pro.
+  Optional staging env: HONUA_DEMO_READ_ONLY_KEY, HONUA_DEMO_WRITE_SERVICE_ID,
+  HONUA_DEMO_WRITE_LAYER_ID, HONUA_DEMO_WRITE_MARKER_FIELD (default name).
 
 Gating:
   --pro-ai-live                 Run Pro/Bedrock/export assertions.
@@ -128,11 +131,36 @@ if [[ -z "$BASE_URL" ]]; then
   usage
   exit 1
 fi
-BASE_URL="${BASE_URL%/}"
-WRITE_BASE_URL="${WRITE_BASE_URL%/}"
+# Validate before logging URLs so credentials can never enter the receipt.
+normalize_url() {
+  python3 - "$1" <<'PY_URL'
+import sys, urllib.parse
+try:
+    u = urllib.parse.urlsplit(sys.argv[1])
+    assert u.scheme in ('http', 'https') and u.hostname
+    assert not u.username and not u.password and not u.query and not u.fragment
+    assert not any(c.isspace() for c in sys.argv[1])
+    host = u.hostname.lower()
+    if ':' in host:
+        host = '[' + host + ']'
+    port = u.port
+    if port and port != (443 if u.scheme == 'https' else 80):
+        host += ':' + str(port)
+    print(urllib.parse.urlunsplit((u.scheme, host, u.path.rstrip('/'), '', '')))
+except (ValueError, AssertionError):
+    sys.exit(1)
+PY_URL
+}
+if ! BASE_URL="$(normalize_url "$BASE_URL")"; then
+  echo "[ERROR] Invalid read URL; use HTTP(S) without credentials, query, or fragment." >&2
+  exit 1
+fi
+if [[ -n "$WRITE_BASE_URL" ]] && ! WRITE_BASE_URL="$(normalize_url "$WRITE_BASE_URL")"; then
+  echo "[ERROR] Invalid write URL; use HTTP(S) without credentials, query, or fragment." >&2
+  exit 1
+fi
 
-# Guardrail: a write target MUST be a distinct host from the customer-facing read
-# base URL. Refuse to run write/destructive hops against the customer alias.
+# Guardrail: refuse equal normalized base URLs. Callers own alias isolation.
 WRITE_TARGET_OK="false"
 WRITE_TARGET_REASON="write base URL not configured"
 if [[ -n "$WRITE_BASE_URL" ]]; then
@@ -463,10 +491,8 @@ is_image_any()         { local m; m="$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n
 is_xml_metadata()      { grep -qi 'edmx\|<?xml' "$1" 2>/dev/null; }
 
 # ===========================================================================
-# WORKFLOW: Demo B (ops) — STAGING write target ONLY.
-# proposal -> approve -> submit -> Succeeded; then inject failing change ->
-# RolledBack AND schema+data actually reverted (capture before/after, diff).
-# Reuses scripts/fault-injection/* lifecycle. Idempotent + self-cleaning.
+# WORKFLOW: staging serving import, denial, atomic edit rollback, and cleanup.
+# Each run owns a unique fixture marker. Cleanup completes before evidence.
 # ===========================================================================
 demo_b() {
   if [[ "$WRITE_TARGET_OK" != "true" || -z "$ADMIN_KEY" ]]; then
@@ -478,7 +504,7 @@ demo_b() {
     record "auth.read_only" "Authorization" PENDING http "$why"
     return
   fi
-  WRITE_BASE_URL="$WRITE_BASE_URL" ADMIN_KEY="$ADMIN_KEY" \
+  BASE_URL="$BASE_URL" WRITE_BASE_URL="$WRITE_BASE_URL" ADMIN_KEY="$ADMIN_KEY" \
     DEMO_SERVICE_ID="$DEMO_SERVICE_ID" DEMO_LAYER_ID="$DEMO_LAYER_ID" \
     RESOURCE_PREFIX="$RESOURCE_PREFIX" TIMEOUT_SECONDS="$TIMEOUT_SECONDS" \
     python3 "$SCRIPT_DIR/demo-e2e-write.py" "$OUTPUT_DIR/write-hops.json"
@@ -493,29 +519,16 @@ PY_HOPS
 }
 
 # ===========================================================================
-# Cleanup / teardown — idempotent, self-cleaning. Restores any injected fault
-# and removes scoped staging artifacts. Runs on EXIT.
+# Existing gated publish teardown. Serving cleanup is asserted in the helper.
 # ===========================================================================
-declare -a CLEANUP_LAYERS=() CLEANUP_SERVICES=() CLEANUP_OPS=()
-FAULT_INJECTED="false"
+declare -a CLEANUP_SERVICES=()
 cleanup() {
-  # Restore the fault first so we never leave a degraded staging target.
-  if [[ "$FAULT_INJECTED" == "true" ]]; then
-    local fi_restore="$REPO_ROOT/scripts/fault-injection/FAULT-010-restore.sh"
-    if [[ -x "$fi_restore" ]]; then
-      FAULT_ENV="$ENVIRONMENT" FAULT_REGION="${HONUA_DEMO_FAULT_REGION:-us-west-2}" \
-        FAULT_RESOURCE_PREFIX="$RESOURCE_PREFIX" FAULT_DRY_RUN="${HONUA_DEMO_FAULT_DRY_RUN:-true}" \
-        "$fi_restore" >"$OUTPUT_DIR/logs/opsB-fault-restore.log" 2>&1 || true
-    fi
-  fi
   # Delete scoped staging artifacts (never the customer alias).
   if [[ "$WRITE_TARGET_OK" == "true" ]]; then
     local args=(--silent --output /dev/null --max-time "$TIMEOUT_SECONDS" -X DELETE)
     [[ -n "$ADMIN_KEY" ]] && args+=(--header "X-API-Key: $ADMIN_KEY")
     local id
     for id in "${CLEANUP_SERVICES[@]:-}"; do [[ -n "$id" ]] && curl "${args[@]}" "$WRITE_BASE_URL/api/v1/publish/$id" 2>/dev/null || true; done
-    for id in "${CLEANUP_LAYERS[@]:-}"; do [[ -n "$id" ]] && curl "${args[@]}" "$WRITE_BASE_URL/api/v1/import/layers/$id" 2>/dev/null || true; done
-    for id in "${CLEANUP_OPS[@]:-}"; do [[ -n "$id" ]] && curl "${args[@]}" "$WRITE_BASE_URL/api/v1/devops/operations/$id" 2>/dev/null || true; done
   fi
 }
 trap cleanup EXIT
