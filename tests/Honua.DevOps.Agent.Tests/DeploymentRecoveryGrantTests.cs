@@ -190,6 +190,25 @@ public class DeploymentRecoveryGrantTests
     }
 
     [Fact]
+    public void TryAuthorizeRecovery_Refuses_BroadenedCompensation()
+    {
+        // The grant authorizes RestorePriorRevision only. A request for a different
+        // compensation is a widening attempt and must be refused, even though every other
+        // bound field (actor/target/candidate) matches.
+        ActuationSpine spine = new(ExecuteRuntime(), DirectAllowedPolicy());
+        ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
+
+        bool authorized = spine.TryAuthorizeRecovery(
+            grant, "operator@honua.io", "prod-api", "release/2026.03",
+            ActuationSpine.PermittedCompensation.QuarantineCandidateOnly,
+            out ActuationSpine.MutationGrant? mutationGrant, out string refusal, FixedTimeProvider());
+
+        Assert.False(authorized);
+        Assert.Null(mutationGrant);
+        Assert.Contains("authorizes", refusal, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TryAuthorizeRecovery_Refuses_CandidateRevisionHasMovedSinceApproval()
     {
         // Compare-and-set: a newer approved intent already changed the candidate on the

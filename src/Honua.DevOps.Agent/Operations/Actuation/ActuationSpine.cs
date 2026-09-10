@@ -406,12 +406,20 @@ internal sealed class ActuationSpine
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
-    // The single bounded compensation a DeploymentRecoveryGrant may authorize. Kept as its own
-    // enum (rather than reusing BackendMutation) so a future distinct compensation must be
-    // separately declared and approved -- it can never widen a grant already issued.
+    // The bounded compensation(s) a DeploymentRecoveryGrant may authorize. Kept as its own enum
+    // (rather than reusing BackendMutation) so a distinct compensation must be separately
+    // declared and approved -- a grant issued for one can never be presented to authorize the
+    // other; DeploymentRecoveryGrant.TryAuthorize refuses any requested compensation that does
+    // not exactly match what was granted.
     internal enum PermittedCompensation
     {
-        RestorePriorRevision
+        // Restore the target to PriorRevision through the deploy-control rollback route.
+        RestorePriorRevision,
+
+        // Record CandidateRevision as rejected without restoring traffic -- for a target where
+        // the prior revision is no longer a safe restore point. Not yet wired to an actuator;
+        // declared now so a grant scoped to it is structurally distinct from RestorePriorRevision.
+        QuarantineCandidateOnly
     }
 
     // Immutable, sealed the same way OperationGrant/MutationGrant are: a private constructor
