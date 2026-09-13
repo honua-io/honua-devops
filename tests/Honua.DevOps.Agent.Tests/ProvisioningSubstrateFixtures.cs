@@ -378,9 +378,20 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
 
     internal string TerraformOutputJson { get; set; } = ProvisioningSubstrateFixtures.TerraformOutputJson;
 
-    internal string ExecReceiptJson { get; set; } = ProvisioningSubstrateFixtures.ExecReceiptJson;
+    // Keep the original fixture property names as aliases because the receipt-binding
+    // tests mutate them directly; the lineage substitutions use the clearer document
+    // names. Both paths must configure the same fake wrapper output.
+    internal string ExecReceiptJson
+    {
+        get => ExecDocumentJson;
+        set => ExecDocumentJson = value;
+    }
 
-    internal string ExactPlanMetadataJson { get; set; } = ProvisioningSubstrateFixtures.ExactPlanMetadataJson;
+    internal string ExactPlanMetadataJson
+    {
+        get => PlanDocumentJson;
+        set => PlanDocumentJson = value;
+    }
 
     internal Func<Task>? BeforeApply { get; set; }
 

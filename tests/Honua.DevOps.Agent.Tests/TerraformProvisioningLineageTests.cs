@@ -75,7 +75,9 @@ public sealed partial class TerraformProvisioningTests
         ProvisioningEvidenceReference plan = Assert.Single(lineage.EvidenceRefs!, r => r.Kind == "plan");
         Assert.Equal(planBytes, store.Read(plan));
         Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(planBytes)), lineage.PlanSha256);
-        Assert.False(File.Exists(Assert.Single(runner.Calls, c => c.Operation == "terraform-exact-plan.sh").Option("--plan-out")));
+        // Trunk #189 deliberately retains the claimed plan through the audit
+        // acknowledgement window so a restarted host can reconcile it safely.
+        Assert.True(File.Exists(Assert.Single(runner.Calls, c => c.Operation == "terraform-exact-plan.sh").Option("--plan-out")));
         ProvisioningEvidenceReference execution = Assert.Single(lineage.EvidenceRefs!, r => r.Kind == "apply");
         Assert.Equal(Encoding.UTF8.GetBytes(ProvisioningSubstrateFixtures.ExecReceiptJson), store.Read(execution));
         Assert.Equal(execution.Reference, lineage.ActuatorReceiptReference);
