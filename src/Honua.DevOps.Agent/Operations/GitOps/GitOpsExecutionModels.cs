@@ -59,6 +59,12 @@ internal static class GitOpsExecutionStatus
     internal const string Indeterminate = "indeterminate";
 }
 
+internal static class BackendCallClassification
+{
+    internal static bool IsForbidden(BackendCallResult result)
+        => !result.IsSuccess && result.Detail.StartsWith("403 ", StringComparison.Ordinal);
+}
+
 // Poll budget for SubmitAndPollAsync after a deploy/promotion is submitted. The reconciler
 // advances the operation server-side, so a real deploy routinely takes far longer than a
 // single poll cycle: the executor polls with capped exponential backoff up to a total
@@ -379,10 +385,23 @@ internal static class DeployOperationReader
     // priorRevision/previousRevision) so a recovery grant's compare-and-set (honua-devops#191)
     // reads the same server contract every other rollback-adjacent path already reads.
     internal static string? ReadCandidateRevision(JsonElement root)
-        => ReadString(root, "candidateRevision", "candidate_revision", "currentRevision", "current_revision", "revision");
+        => TryGetObject(root, "target", out JsonElement target)
+            ? ReadString(target, "desiredRevision")
+            : ReadString(root, "candidateRevision", "candidate_revision", "currentRevision", "current_revision", "revision");
 
     internal static string? ReadPriorRevision(JsonElement root)
-        => ReadString(root, "priorRevision", "prior_revision", "knownGoodRevision", "known_good_revision", "previousRevision", "previous_revision");
+        => TryGetObject(root, "protection", out JsonElement protection)
+            ? ReadString(protection, "previousRevision")
+            : ReadString(root, "priorRevision", "prior_revision", "knownGoodRevision", "known_good_revision", "previousRevision", "previous_revision");
+
+    internal static string? ReadTargetId(JsonElement root)
+        => TryGetObject(root, "target", out JsonElement target) ? ReadString(target, "targetId") : null;
+
+    internal static string? ReadProtectionPhase(JsonElement root)
+        => TryGetObject(root, "protection", out JsonElement protection) ? ReadString(protection, "phase") : null;
+
+    internal static string? ReadProtectionPolicyDigest(JsonElement root)
+        => TryGetObject(root, "protection", out JsonElement protection) ? ReadString(protection, "policyDigest") : null;
 
     internal static string? ReadRollbackClass(JsonElement root)
     {

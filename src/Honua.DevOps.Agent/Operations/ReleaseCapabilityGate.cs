@@ -1,3 +1,8 @@
+using System.Text.Json;
+
+using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.GitOps;
+
 namespace Honua.DevOps.Agent.Operations;
 
 /// <summary>
@@ -106,6 +111,49 @@ internal static class ReleaseCapabilityGate
         return runtime.ProtectedRecoveryEnabled ? null : BuildProtectedRecoveryDisabledResponse();
     }
 
+    // An environment flag is only a local safety ceiling. Require the server's durable
+    // observation scope before the retained executor can request compensation.
+    internal static string? GetProtectedRecoveryScopeRefusal(
+        ActuationSpine.DeploymentRecoveryGrant grant, JsonElement operation)
+    {
+        if (!string.Equals(DeployOperationReader.ReadStatus(operation), "Reconciling", StringComparison.OrdinalIgnoreCase)
+            || DeployOperationReader.ReadBlockingReasons(operation).Count != 0
+            || DeployOperationReader.ReadProtectionPhase(operation) is not ("observing" or "protected")
+            || !string.Equals(DeployOperationReader.ReadPriorRevision(operation), grant.PriorRevision, StringComparison.Ordinal)
+            || !string.Equals(DeployOperationReader.ReadProtectionPolicyDigest(operation), grant.SafetyPolicyDigest, StringComparison.Ordinal)
+            || !operation.TryGetProperty("protection", out JsonElement protection)
+            || !protection.TryGetProperty("candidateRevision", out JsonElement candidate)
+            || candidate.ValueKind != JsonValueKind.String
+            || !string.Equals(candidate.GetString(), grant.CandidateRevision, StringComparison.Ordinal)
+            || !protection.TryGetProperty("observationDeadline", out JsonElement deadline)
+            || deadline.ValueKind != JsonValueKind.String
+            || !deadline.TryGetDateTimeOffset(out DateTimeOffset expiresAt)
+            || expiresAt <= DateTimeOffset.UtcNow)
+        {
+            return "The server has no matching active protection scope for this prior revision and safety policy.";
+        }
+
+        return null;
+    }
+
+    // Terminal/recovering observations may no longer have an active protection phase, but
+    // they must still carry the immutable scope that this grant was approved for.
+    internal static string? GetProtectedRecoveryObservationScopeRefusal(
+        ActuationSpine.DeploymentRecoveryGrant grant, JsonElement operation)
+    {
+        if (!string.Equals(DeployOperationReader.ReadPriorRevision(operation), grant.PriorRevision, StringComparison.Ordinal)
+            || !string.Equals(DeployOperationReader.ReadProtectionPolicyDigest(operation), grant.SafetyPolicyDigest, StringComparison.Ordinal)
+            || !operation.TryGetProperty("protection", out JsonElement protection)
+            || !protection.TryGetProperty("candidateRevision", out JsonElement candidate)
+            || candidate.ValueKind != JsonValueKind.String
+            || !string.Equals(candidate.GetString(), grant.CandidateRevision, StringComparison.Ordinal))
+        {
+            return "The server recovery observation does not match this grant's immutable protection scope.";
+        }
+
+        return null;
+    }
+
     /// <summary>Refusal for the bounded protected-recovery surface when it is disabled.</summary>
     internal static OperationResponse BuildProtectedRecoveryDisabledResponse()
         => new(
@@ -120,7 +168,7 @@ internal static class ReleaseCapabilityGate
             Actions:
             [
                 "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
-                $"To enable bounded recovery for a qualified target, set `{ProtectedRecoveryEnableVariable}=true`."
+                "Keep protected recovery disabled until the approval/trigger path, atomic target-intent check and durable desired-state convergence are qualified (see docs/protected-deployment-recovery.md)."
             ],
             ValidationChecks:
             [

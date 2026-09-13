@@ -1,4 +1,5 @@
 using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
@@ -16,10 +17,10 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 //   deployment approved -> ActuationSpine.AuthorizeRecoveryGrant seals actor/tenant/target/
 //     prior+candidate revisions/policy digest/expiry/compensation into a DeploymentRecoveryGrant
 //     -> [later, when the trigger fires] RecoveryExecutor.ExecuteRecoveryAsync re-verifies the
-//        grant against the CURRENTLY OBSERVED operation (compare-and-set: refuse if the
-//        candidate has moved) -> ActuationSpine.TryAuthorizeRecovery binds the same at-most-once
-//        ledger every other mutation uses -> the existing deploy-control rollback endpoint
-//        restores PriorRevision and the failed CandidateRevision is recorded as quarantined.
+//        grant against the CURRENTLY OBSERVED operation -> ActuationSpine.TryAuthorizeRecovery
+//        binds the same in-process ledger every other mutation uses -> the existing
+//        deploy-control rollback endpoint reports recovery progress. This read-side check is
+//        NOT an atomic target compare-and-set or a durable Git restoration/quarantine write.
 //
 // The server's own OperatorApprovalGate is still honored on the wire: a grant proves the
 // DECLARED scope was approved, it does not bypass the server's own data-affecting check.
@@ -106,6 +107,42 @@ internal sealed class RecoveryExecutor(
         string? serverStatus = DeployOperationReader.ReadStatus(current.Payload.RootElement);
         findings.Add($"Observed candidate revision: {observedCandidateRevision ?? "unknown"}.");
 
+        // Validate the caller even on an observation-only retry. A terminal operation is
+        // server truth, not authority to widen the sealed recovery scope.
+        if (!grant.TryAuthorize(requestedActor, requestedTarget, observedCandidateRevision ?? string.Empty,
+                ActuationSpine.PermittedCompensation.RestorePriorRevision, DateTimeOffset.UtcNow, out string scopeRefusal)
+            || !string.Equals(DeployOperationReader.ReadOperationId(current.Payload.RootElement), grant.OperationId, StringComparison.Ordinal)
+            || !string.Equals(DeployOperationReader.ReadTargetId(current.Payload.RootElement), grant.Target, StringComparison.Ordinal))
+        {
+            return Result(GitOpsExecutionStatus.ApprovalRequired, serverStatus, false,
+                ["recovery-scope-mismatch"], scopeRefusal);
+        }
+
+        string? observationScopeRefusal = ReleaseCapabilityGate.GetProtectedRecoveryObservationScopeRefusal(
+            grant, current.Payload.RootElement);
+        if (observationScopeRefusal is not null)
+        {
+            return Result(GitOpsExecutionStatus.ApprovalRequired, serverStatus, false,
+                ["recovery-protection-unavailable"], observationScopeRefusal);
+        }
+
+        // A new process must observe recovery already claimed by the server. Reusing the
+        // in-memory spine does not prove restart safety; no POST is needed in these states.
+        ServerOperationStatus recognized = ServerOperationStatusParser.Recognize(serverStatus);
+        if (recognized is ServerOperationStatus.RolledBack or ServerOperationStatus.RollbackRequested
+            or ServerOperationStatus.Failed or ServerOperationStatus.ManualInterventionRequired
+            || DeployOperationReader.ReadProtectionPhase(current.Payload.RootElement) == "recovering")
+        {
+            return Observe(current, false);
+        }
+
+        string? protectionRefusal = ReleaseCapabilityGate.GetProtectedRecoveryScopeRefusal(grant, current.Payload.RootElement);
+        if (protectionRefusal is not null)
+        {
+            return Result(GitOpsExecutionStatus.ApprovalRequired, serverStatus, false,
+                ["recovery-protection-unavailable"], protectionRefusal);
+        }
+
         if (!_spine.TryAuthorizeRecovery(
                 grant,
                 requestedActor,
@@ -136,39 +173,60 @@ internal sealed class RecoveryExecutor(
 
         if (!recovered.CallResult.IsSuccess)
         {
-            // Includes the server-side OperatorApprovalGate 403 if it still applies to this
-            // classification. A pre-authorized grant proves the DECLARED scope was approved; it
-            // does not bypass the server's own data-affecting check. Nothing mutated.
-            findings.Add($"Recovery refused by deploy-control ({recovered.CallResult.Detail}); operation `{grant.OperationId}` was not compensated.");
+            bool acknowledged = recovered.CallResult.MutationAcknowledged;
+            bool approvalRefused = BackendCallClassification.IsForbidden(recovered.CallResult) && !acknowledged;
+            findings.Add(approvalRefused
+                ? $"Recovery was refused by deploy-control ({recovered.CallResult.Detail}); approval is still required for operation `{grant.OperationId}`."
+                : $"Recovery acknowledgement unavailable ({recovered.CallResult.Detail}); observe operation `{grant.OperationId}` to resolve the outcome.");
             return new GitOpsExecutionResult(
-                Status: GitOpsExecutionStatus.ApprovalRequired,
+                Status: approvalRefused ? GitOpsExecutionStatus.ApprovalRequired : GitOpsExecutionStatus.Indeterminate,
                 OperationId: grant.OperationId,
                 ServerStatus: recovered.Payload is null ? serverStatus : DeployOperationReader.ReadStatus(recovered.Payload.RootElement),
-                Mutated: false,
+                Mutated: acknowledged,
                 Decision: grant.Decision,
                 BackendSteps: steps,
                 Findings: findings,
-                BlockingReasons: recovered.Payload is null
-                    ? ["recovery-refused"]
-                    : DeployOperationReader.ReadBlockingReasons(recovered.Payload.RootElement));
+                BlockingReasons: [approvalRefused ? "recovery-refused" : "recovery-acknowledgement-unavailable", .. recovered.Payload is null
+                    ? Array.Empty<string>()
+                    : DeployOperationReader.ReadBlockingReasons(recovered.Payload.RootElement)]);
         }
 
-        string? finalStatus = recovered.Payload is null ? null : DeployOperationReader.ReadStatus(recovered.Payload.RootElement);
-        findings.Add($"Restored desired revision: {grant.PriorRevision}.");
-        findings.Add(
-            $"Quarantined rejected revision: {grant.CandidateRevision} " +
-            $"(operation {grant.OperationId}, approval scope digest bound at grant issuance).");
-        findings.Add($"Recovery issued for `{grant.OperationId}`; resulting status: {finalStatus ?? "unknown"}.");
-        return new GitOpsExecutionResult(
-            Status: DeployOperationReader.IsRolledBack(finalStatus)
-                ? GitOpsExecutionStatus.RolledBack
-                : GitOpsExecutionStatus.Succeeded,
-            OperationId: grant.OperationId,
-            ServerStatus: finalStatus,
-            Mutated: true,
-            Decision: grant.Decision,
-            BackendSteps: steps,
-            Findings: findings,
-            BlockingReasons: []);
+        return Observe(recovered, true);
+
+        GitOpsExecutionResult Observe(BackendJsonResult response, bool mutated)
+        {
+            string? status = response.Payload is null ? null : DeployOperationReader.ReadStatus(response.Payload.RootElement);
+            if (response.Payload is null
+                || !string.Equals(DeployOperationReader.ReadOperationId(response.Payload.RootElement), grant.OperationId, StringComparison.Ordinal)
+                || !string.Equals(DeployOperationReader.ReadTargetId(response.Payload.RootElement), grant.Target, StringComparison.Ordinal)
+                || !string.Equals(DeployOperationReader.ReadCandidateRevision(response.Payload.RootElement), grant.CandidateRevision, StringComparison.Ordinal))
+            {
+                return Result(GitOpsExecutionStatus.Indeterminate, status, mutated,
+                    ["recovery-response-unverified"], "Recovery response identity is missing or does not match the approved operation.");
+            }
+
+            IReadOnlyList<string> blockers = DeployOperationReader.ReadBlockingReasons(response.Payload.RootElement);
+            string outcome = ServerOperationStatusParser.Recognize(status) switch
+            {
+                ServerOperationStatus.RolledBack when blockers.Count == 0 => GitOpsExecutionStatus.RolledBack,
+                ServerOperationStatus.RollbackRequested or ServerOperationStatus.Reconciling when blockers.Count == 0
+                    => GitOpsExecutionStatus.InProgress,
+                ServerOperationStatus.Failed or ServerOperationStatus.ManualInterventionRequired => GitOpsExecutionStatus.Failed,
+                _ => GitOpsExecutionStatus.Indeterminate
+            };
+
+            // A rollback receipt says nothing about the Git desired-state branch. Do not
+            // invent a commit, quarantine, or a guarantee about the next reconciliation.
+            findings.Add("Desired-state restoration and candidate quarantine are unverified; no Git convergence receipt is available.");
+            return Result(outcome, status, mutated, blockers,
+                $"Server recovery status for `{grant.OperationId}`: {status ?? "unknown"}.");
+        }
+
+        GitOpsExecutionResult Result(string status, string? observedStatus, bool mutated,
+            IReadOnlyList<string> blockers, string finding)
+        {
+            findings.Add(finding);
+            return new(status, grant.OperationId, observedStatus, mutated, grant.Decision, steps, findings, blockers);
+        }
     }
 }

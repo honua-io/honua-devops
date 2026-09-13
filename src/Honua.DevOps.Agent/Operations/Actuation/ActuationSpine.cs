@@ -354,12 +354,15 @@ internal sealed class ActuationSpine
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(tenant)
+        if (string.IsNullOrWhiteSpace(request.Actor)
+            || !Enum.IsDefined(compensation)
+            || string.Equals(priorRevision, candidateRevision, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(tenant)
             || string.IsNullOrWhiteSpace(priorRevision)
             || string.IsNullOrWhiteSpace(candidateRevision)
             || string.IsNullOrWhiteSpace(safetyPolicyDigest))
         {
-            refusalReason = "A recovery grant requires a tenant, prior revision, candidate revision, and safety policy digest.";
+            refusalReason = "A recovery grant requires an actor, tenant, distinct prior/candidate revisions, safety policy digest, and a defined compensation.";
             return false;
         }
 
@@ -395,9 +398,9 @@ internal sealed class ActuationSpine
 
     // Stage 2 for recovery: re-verify a recovery request against the sealed grant (actor,
     // target, requested compensation, expiry, and a compare-and-set against the CURRENTLY
-    // OBSERVED candidate revision so recovery never overwrites a newer approved intent), then
-    // fall through to the same at-most-once ledger every other mutation uses so a restart/retry
-    // observes the original claim instead of issuing a second compensation.
+    // OBSERVED operation candidate revision), then fall through to the in-process ledger.
+    // This is not an atomic target-intent compare-and-set: that must be enforced by the
+    // server at mutation time. A restarted executor must observe the durable server state.
     internal bool TryAuthorizeRecovery(
         DeploymentRecoveryGrant grant,
         string requestedActor,
@@ -414,6 +417,12 @@ internal sealed class ActuationSpine
         DateTimeOffset now = (timeProvider ?? TimeProvider.System).GetUtcNow();
         if (!grant.TryAuthorize(requestedActor, requestedTarget, observedCandidateRevision, requestedCompensation, now, out refusalReason))
         {
+            return false;
+        }
+
+        if (requestedCompensation != PermittedCompensation.RestorePriorRevision)
+        {
+            refusalReason = "The declared compensation has no registered recovery actuator; it cannot authorize a rollback.";
             return false;
         }
 
@@ -530,7 +539,7 @@ internal sealed class ActuationSpine
             DateTimeOffset now,
             out string refusalReason)
         {
-            if (now > ExpiresAtUtc)
+            if (now >= ExpiresAtUtc)
             {
                 refusalReason = $"Recovery grant for operation `{OperationId}` expired at {ExpiresAtUtc:O} (now {now:O}).";
                 return false;
@@ -554,9 +563,8 @@ internal sealed class ActuationSpine
                 return false;
             }
 
-            // Compare-and-set: recovery may only compensate the exact candidate it was approved
-            // against. If the operation now shows a different (newer) candidate revision, some
-            // other approved intent has already superseded this grant.
+            // Scope comparison only. A historical operation can still match while the
+            // target has newer approved intent; the server must fence the actual mutation.
             if (!string.Equals(observedCandidateRevision, CandidateRevision, StringComparison.Ordinal))
             {
                 refusalReason =

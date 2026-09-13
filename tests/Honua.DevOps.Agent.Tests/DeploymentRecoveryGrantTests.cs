@@ -116,6 +116,45 @@ public class DeploymentRecoveryGrantTests
     // ---- Re-verifying a recovery request against the sealed grant ----
 
     [Fact]
+    public void TryAuthorizeRecovery_RefusesAtExactExpiryBoundary()
+    {
+        ActuationSpine spine = new(ExecuteRuntime(), DirectAllowedPolicy());
+        ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
+        MutableTimeProvider clock = FixedTimeProvider();
+        clock.Advance(grant.ExpiresAtUtc - clock.GetUtcNow());
+
+        Assert.False(spine.TryAuthorizeRecovery(grant, grant.Actor, grant.Target, grant.CandidateRevision,
+            grant.Compensation, out _, out string refusal, clock));
+        Assert.Contains("expired", refusal, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryAuthorizeRecovery_QuarantineOnlyGrantCannotMintRollbackAuthority()
+    {
+        ActuationSpine spine = new(ExecuteRuntime(), DirectAllowedPolicy());
+        Assert.True(spine.AuthorizeRecoveryGrant(RecoveryRequest(),
+            "tenant-a", "release/2026.02", "release/2026.03", "sha256:policy-digest", FixedNow().AddMinutes(30),
+            ActuationSpine.PermittedCompensation.QuarantineCandidateOnly, "op-recover-1", out var grant, out _, FixedTimeProvider()));
+
+        Assert.False(spine.TryAuthorizeRecovery(grant!, grant!.Actor, grant.Target, grant.CandidateRevision,
+            ActuationSpine.PermittedCompensation.QuarantineCandidateOnly, out var mutation, out string refusal, FixedTimeProvider()));
+        Assert.Null(mutation);
+        Assert.Contains("no registered recovery actuator", refusal, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("", "release/2026.03", 0)]
+    [InlineData("operator@honua.io", "release/2026.02", 0)]
+    [InlineData("operator@honua.io", "release/2026.03", 99)]
+    public void AuthorizeRecoveryGrant_RefusesInvalidActorRevisionOrCompensation(string actor, string candidate, int compensation)
+    {
+        ActuationSpine spine = new(ExecuteRuntime(), DirectAllowedPolicy());
+        Assert.False(spine.AuthorizeRecoveryGrant(RecoveryRequest() with { Actor = actor },
+            "tenant-a", "release/2026.02", candidate, "sha256:policy-digest", FixedNow().AddMinutes(30),
+            (ActuationSpine.PermittedCompensation)compensation, "op-recover-1", out _, out _, FixedTimeProvider()));
+    }
+
+    [Fact]
     public void TryAuthorizeRecovery_Grants_WhenEveryBoundFieldMatches()
     {
         ActuationSpine spine = new(ExecuteRuntime(), DirectAllowedPolicy());
