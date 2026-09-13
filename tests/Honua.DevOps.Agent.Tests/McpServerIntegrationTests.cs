@@ -16,6 +16,8 @@ namespace Honua.DevOps.Agent.Tests;
 /// </summary>
 public sealed class McpServerFixture : IAsyncLifetime
 {
+    internal const string LineageReceipt = """{"operationId":"server-lineage-150","proposalId":"proposal-150","auditId":"decision-audit-150","providerOperationId":"execution-150","status":"AwaitingApproval","evidenceRefs":["honua://audit/decision-audit-150"]}""";
+
     private HttpListener? _backend;
     private CancellationTokenSource? _backendCts;
     private Task? _backendLoop;
@@ -53,6 +55,7 @@ public sealed class McpServerFixture : IAsyncLifetime
                 ["HONUA_DEVOPS_HONUA_API_BASE_URL"] = baseUrl,
                 ["HONUA_DEVOPS_OTEL_BASE_URL"] = baseUrl,
                 ["HONUA_DEVOPS_HONUA_API_KEY"] = null,
+                ["HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID"] = null,
                 ["HONUA_DEVOPS_EXECUTION_MODE"] = "plan",
                 ["HONUA_DEVOPS_EXECUTION_TIER"] = "plan",
                 ["HONUA_DEVOPS_APPROVAL_MODE"] = "pr-first",
@@ -142,7 +145,11 @@ public sealed class McpServerFixture : IAsyncLifetime
             CapturedBackendRequests.Enqueue($"{context.Request.HttpMethod} {path}");
 
             string payload;
-            if (path.Contains("healthz/ready", StringComparison.Ordinal))
+            if (path == "/api/v1/admin/deploy/operations/server-lineage-150")
+            {
+                payload = LineageReceipt;
+            }
+            else if (path.Contains("healthz/ready", StringComparison.Ordinal))
             {
                 payload = """{"status":"ready"}""";
             }
@@ -306,6 +313,31 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         Assert.Equal("plan", auditRecord.RootElement.GetProperty("ExecutionMode").GetString());
         Assert.Equal("pr-first", auditRecord.RootElement.GetProperty("ApprovalMode").GetString());
         Assert.Equal("mcp", auditRecord.RootElement.GetProperty("Provider").GetString());
+    }
+
+    [Fact]
+    public async Task CallTool_ServerLineageSurvivesRealStdioAndDiagnosticReplica()
+    {
+        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(2));
+        CallToolResult result = await fixture.Client.CallToolAsync("get_gitops_proposal",
+            arguments: new Dictionary<string, object?> { ["operationId"] = "server-lineage-150" }, cancellationToken: cts.Token);
+        Assert.NotEqual(true, result.IsError);
+        JsonElement payload = ExtractJsonPayload(result);
+        Assert.Equal("proposed", GetString(payload, "Status"));
+        JsonElement lineage = Assert.Single(payload.GetProperty("serverOperations").EnumerateArray());
+        Assert.Equal("server-lineage-150", lineage.GetProperty("operationId").GetString());
+        Assert.Equal("proposal-150", lineage.GetProperty("proposalId").GetString());
+        Assert.Equal("decision-audit-150", lineage.GetProperty("auditId").GetString());
+        Assert.Equal("execution-150", lineage.GetProperty("providerOperationId").GetString());
+        Assert.False(lineage.TryGetProperty("operationInstanceId", out _));
+        Assert.False(lineage.TryGetProperty("rootProvisioningOperationId", out _));
+        string expectedHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(McpServerFixture.LineageReceipt)));
+        Assert.Equal(expectedHash, lineage.GetProperty("receipt").GetProperty("sha256").GetString());
+        string auditEventId = payload.GetProperty("auditEventId").GetString()!;
+        string auditLine = Assert.Single(ReadSharedFile(fixture.AuditFilePath).Split('\n', StringSplitOptions.RemoveEmptyEntries), line => line.Contains(auditEventId, StringComparison.Ordinal));
+        using JsonDocument audit = JsonDocument.Parse(auditLine);
+        Assert.Equal("proposal-150", audit.RootElement.GetProperty("serverOperations")[0].GetProperty("proposalId").GetString());
+        Assert.Equal(auditEventId, audit.RootElement.GetProperty("auditEventId").GetString());
     }
 
     [Fact]

@@ -23,6 +23,24 @@ namespace Honua.DevOps.Agent.Tests;
 //      when the operation is parked for approval.
 public class GitOpsExecutorTests
 {
+    [Theory]
+    [InlineData("{\"operationId\":\"one\",\"operationId\":\"two\",\"status\":\"Planned\"}")]
+    [InlineData("{\"status\":\"Planned\"}")]
+    public async Task ExecuteSyncAsync_UnverifiableCreateRecordsAcknowledgedWriteAndNeverSubmits(string receipt)
+    {
+        TestHttpMessageHandler handler = new(request => request.RequestUri!.AbsolutePath.EndsWith("/deploy/operations", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(receipt, System.Text.Encoding.UTF8, "application/json") }
+            : TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"), gateway, DirectAllowedPolicy());
+        GitOpsExecutionResult result = await ExecuteSyncAsync(executor);
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.True(result.Mutated);
+        Assert.Null(result.OperationId);
+        Assert.Contains(result.BackendSteps, step => step.Name == "deploy-operation-create" && step.MutatesState && !step.Success);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.Contains("/submit", StringComparison.Ordinal));
+    }
+
     private static readonly IReadOnlyDictionary<string, string> SyncParameters = new Dictionary<string, string>
     {
         ["service"] = "roads-api",

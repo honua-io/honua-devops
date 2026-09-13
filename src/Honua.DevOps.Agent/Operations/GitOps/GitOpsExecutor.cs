@@ -225,14 +225,14 @@ internal sealed class GitOpsExecutor(
             ? []
             : DeployOperationReader.ReadBlockingReasons(created.Payload.RootElement);
 
-        if (string.IsNullOrWhiteSpace(operationId))
+        if (!created.CallResult.IsSuccess || string.IsNullOrWhiteSpace(operationId))
         {
-            findings.Add("honua-server deploy-control did not return a durable operation id; nothing was submitted, no operation invented.");
+            findings.Add($"Deploy creation did not return validated operation evidence ({created.CallResult.Detail}); nothing was submitted. Reconcile any acknowledged write using the same idempotency key.");
             return new GitOpsExecutionResult(
                 Status: GitOpsExecutionStatus.ContractUnavailable,
                 OperationId: null,
                 ServerStatus: serverStatus,
-                Mutated: operationRecorded,
+                Mutated: operationRecorded || created.CallResult.MutationAcknowledged,
                 Decision: decision,
                 BackendSteps: steps,
                 Findings: findings,
@@ -709,12 +709,12 @@ internal sealed class GitOpsExecutor(
         {
             // A non-success here includes the OperatorApprovalGate 403 (when a gate applies)
             // and any backend/registration failure. Treat as a refusal: nothing reconciled.
-            findings.Add($"Submit was refused by deploy-control ({submitted.CallResult.Detail}); operation `{operationId}` was not advanced.");
+            findings.Add($"Submit did not return validated evidence ({submitted.CallResult.Detail}); reconcile any acknowledged write on `{operationId}` before retrying.");
             return new GitOpsExecutionResult(
-                Status: GitOpsExecutionStatus.ApprovalRequired,
+                Status: submitted.CallResult.MutationAcknowledged ? GitOpsExecutionStatus.ContractUnavailable : GitOpsExecutionStatus.ApprovalRequired,
                 OperationId: operationId,
                 ServerStatus: submitted.Payload is null ? null : DeployOperationReader.ReadStatus(submitted.Payload.RootElement),
-                Mutated: false,
+                Mutated: submitted.CallResult.MutationAcknowledged,
                 Decision: decision,
                 BackendSteps: steps,
                 Findings: findings,

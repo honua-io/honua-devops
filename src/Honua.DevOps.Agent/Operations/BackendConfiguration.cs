@@ -39,7 +39,8 @@ internal sealed record BackendConfiguration(
     string? SupportAutoBundleApiKey = null,
     Uri? ConsoleBaseUri = null,
     string HonuaMcpPath = "mcp",
-    string HonuaOpsFindingsPath = "api/v1/admin/observability/findings")
+    string HonuaOpsFindingsPath = "api/v1/admin/observability/findings",
+    string? RootProvisioningOperationId = null)
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
     private const string OTelBaseUrlVariable = "HONUA_DEVOPS_OTEL_BASE_URL";
@@ -272,7 +273,8 @@ internal sealed record BackendConfiguration(
             SupportAutoBundleApiKey: supportAutoBundleApiKey,
             ConsoleBaseUri: consoleBaseUri,
             HonuaMcpPath: honuaMcpPath,
-            HonuaOpsFindingsPath: honuaOpsFindingsPath);
+            HonuaOpsFindingsPath: honuaOpsFindingsPath,
+            RootProvisioningOperationId: Environment.GetEnvironmentVariable("HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID"));
     }
 
     private static bool ParseBoolean(string? value, bool fallback, string variableName)

@@ -9,7 +9,7 @@ using Honua.DevOps.Agent.Operations.Observability;
 
 namespace Honua.DevOps.Agent.Operations;
 
-internal sealed class BackendGateway : IDisposable
+internal sealed partial class BackendGateway : IDisposable
 {
     private const string HonuaApiKeyHeader = "X-API-Key";
     private const string HonuaMetadataApiVersion = "honua.io/v1alpha1";
@@ -433,20 +433,19 @@ internal sealed class BackendGateway : IDisposable
             cancellationToken);
     }
 
-    internal Task<BackendCallResult> GetDeployOperationAsync(string operationId, CancellationToken cancellationToken)
+    internal async Task<BackendCallResult> GetDeployOperationAsync(string operationId, CancellationToken cancellationToken)
     {
-        return GetFromHonuaAsync(
-            $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}",
-            cancellationToken);
+        using BackendJsonResult result = await GetDeployOperationJsonAsync(operationId, cancellationToken);
+        return result.CallResult;
     }
 
     // JSON-returning variants used by the Console bridge: it must read the durable server
     // operationId and workflow status fields, not just a truncated payload preview.
     internal Task<BackendJsonResult> GetDeployOperationJsonAsync(string operationId, CancellationToken cancellationToken)
     {
-        return GetJsonFromHonuaAsync(
+        return CaptureServerOperationAsync(GetJsonFromHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}",
-            cancellationToken);
+            cancellationToken), operationId);
     }
 
     internal Task<BackendJsonResult> CreateDeployOperationJsonAsync(
@@ -465,7 +464,8 @@ internal sealed class BackendGateway : IDisposable
         ArgumentNullException.ThrowIfNull(grant);
         grant.EnsureAuthorizes(BackendMutation.DeployOperationCreate);
 
-        return PostJsonToHonuaAsync(
+        parameters = BindProvisioningRoot(parameters);
+        return CaptureServerOperationAsync(PostJsonToHonuaAsync(
             configuration.HonuaDeployOperationsPath,
             new
             {
@@ -479,13 +479,13 @@ internal sealed class BackendGateway : IDisposable
                 submitImmediately,
                 parameters
             },
-            cancellationToken);
+            cancellationToken), isMutation: true);
     }
 
     // JSON-returning submit variant used by the GitOps executors: after a submit the
     // orchestrator must read the post-submit workflow status (and any blockingReasons)
     // from the durable server operation, not just a truncated payload preview.
-    internal Task<BackendJsonResult> SubmitDeployOperationJsonAsync(
+    internal async Task<BackendJsonResult> SubmitDeployOperationJsonAsync(
         string operationId,
         string reason,
         ActuationSpine.MutationGrant grant,
@@ -495,16 +495,22 @@ internal sealed class BackendGateway : IDisposable
         grant.EnsureAuthorizes(BackendMutation.DeployOperationSubmit);
         RequireGrantMatchesOperation(grant, operationId);
 
-        return PostJsonToHonuaAsync(
+        if (!string.IsNullOrWhiteSpace(configuration.RootProvisioningOperationId))
+        {
+            BackendJsonResult current = await GetDeployOperationJsonAsync(operationId, cancellationToken);
+            if (!current.CallResult.IsSuccess) return current;
+            current.Dispose();
+        }
+        return await CaptureServerOperationAsync(PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/submit",
             new { reason },
-            cancellationToken);
+            cancellationToken), operationId, isMutation: true);
     }
 
     // JSON-returning rollback variant: the executor needs the server's resulting status
     // and, when the OperatorApprovalGate denies a data-affecting rollback, the structured
     // 403 body so it can surface the approval requirement instead of inventing one.
-    internal Task<BackendJsonResult> RollbackDeployOperationJsonAsync(
+    internal async Task<BackendJsonResult> RollbackDeployOperationJsonAsync(
         string operationId,
         string reason,
         ActuationSpine.MutationGrant grant,
@@ -514,10 +520,16 @@ internal sealed class BackendGateway : IDisposable
         grant.EnsureAuthorizes(BackendMutation.DeployOperationRollback);
         RequireGrantMatchesOperation(grant, operationId);
 
-        return PostJsonToHonuaAsync(
+        if (!string.IsNullOrWhiteSpace(configuration.RootProvisioningOperationId))
+        {
+            BackendJsonResult current = await GetDeployOperationJsonAsync(operationId, cancellationToken);
+            if (!current.CallResult.IsSuccess) return current;
+            current.Dispose();
+        }
+        return await CaptureServerOperationAsync(PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
             new { reason },
-            cancellationToken);
+            cancellationToken), operationId, isMutation: true);
     }
 
     // ---- Additive metadata-release layer-evolution lifecycle (Demo B safe-rollback) ----

@@ -16,7 +16,8 @@ namespace Honua.DevOps.Agent.Tests;
 /// but the DOCUMENTS they hand back are not. `fixtures/honua-iac/documents` holds
 /// real output from one offline run of the real `terraform-exact-plan.sh` /
 /// `terraform-exact-apply.sh` pair, and the schemas are honua-iac's own. That keeps
-/// these tests honest about the shapes honua-devops must consume: nothing here is a
+/// these tests honest about the shapes honua-devops must consume. Plan/receipt hashes
+/// are rebound to the fake runner's explicit plan bytes using Python hashlib (see docs/operation-lineage.md): nothing here is a
 /// shape this repo invented for its own convenience.
 /// </remarks>
 internal static class ProvisioningSubstrateFixtures
@@ -365,15 +366,32 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
     /// <summary>When set, the plan wrapper fails for a non-governed reason.</summary>
     internal string? PlanFailure { get; set; }
 
+    internal Action? BeforePlan { get; set; }
+
+    internal string PlanDocumentJson { get; set; } = ProvisioningSubstrateFixtures.ExactPlanMetadataJson;
+
+    internal string ExecDocumentJson { get; set; } = ProvisioningSubstrateFixtures.ExecReceiptJson;
+
     internal string PlanSummary { get; set; } = "Plan: 7 to add, 0 to change, 0 to destroy.";
 
     internal string ShowOutput { get; set; } = TerraformShowOutput;
 
     internal string TerraformOutputJson { get; set; } = ProvisioningSubstrateFixtures.TerraformOutputJson;
 
-    internal string ExecReceiptJson { get; set; } = ProvisioningSubstrateFixtures.ExecReceiptJson;
+    // Keep the original fixture property names as aliases because the receipt-binding
+    // tests mutate them directly; the lineage substitutions use the clearer document
+    // names. Both paths must configure the same fake wrapper output.
+    internal string ExecReceiptJson
+    {
+        get => ExecDocumentJson;
+        set => ExecDocumentJson = value;
+    }
 
-    internal string ExactPlanMetadataJson { get; set; } = ProvisioningSubstrateFixtures.ExactPlanMetadataJson;
+    internal string ExactPlanMetadataJson
+    {
+        get => PlanDocumentJson;
+        set => PlanDocumentJson = value;
+    }
 
     internal Func<Task>? BeforeApply { get; set; }
 
@@ -426,6 +444,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
             return Refusal(PlanRefusalReason);
         }
 
+        BeforePlan?.Invoke();
         if (PlanFailure is not null)
         {
             return new ProvisioningProcessResult(1, string.Empty, PlanFailure, false);
@@ -434,7 +453,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         string planOut = call.Option("--plan-out")!;
         string metadataOut = call.Option("--metadata-out")!;
         File.WriteAllText(planOut, "fake saved terraform plan");
-        File.WriteAllText(metadataOut, ExactPlanMetadataJson);
+        File.WriteAllText(metadataOut, PlanDocumentJson);
         return Success(PlanSummary);
     }
 
@@ -451,7 +470,7 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
             return Refusal(ApplyRefusalReason);
         }
 
-        File.WriteAllText(call.Option("--receipt-out")!, ExecReceiptJson);
+        File.WriteAllText(call.Option("--receipt-out")!, ExecDocumentJson);
         return Success("Apply complete! Resources: 7 added, 0 changed, 0 destroyed.");
     }
 
@@ -490,6 +509,7 @@ Plan: 7 to add, 0 to change, 0 to destroy.
 
 internal sealed class FakeInstallHandoffVerifier(bool succeed) : IInstallHandoffVerifier
 {
+    internal int Calls { get; private set; }
     internal InstallHandoffVerificationRequest? Request { get; private set; }
 
     public Task<InstallHandoffVerificationResult> VerifyAsync(
@@ -497,6 +517,7 @@ internal sealed class FakeInstallHandoffVerifier(bool succeed) : IInstallHandoff
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        Calls++;
         Request = request;
         OperationBackendStep step = new(
             "fake-full-handoff-verification", "mcp://fixture", succeed,

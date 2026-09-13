@@ -6,7 +6,8 @@ internal sealed record OperationBackendStep(
     bool Success,
     string Detail,
     string PayloadPreview,
-    bool MutatesState)
+    bool MutatesState,
+    ServerOperationLineage? ServerLineage = null)
 {
     /// <summary>
     /// Projects a <see cref="BackendCallResult"/> into a named
@@ -21,5 +22,6 @@ internal sealed record OperationBackendStep(
             Success: result.IsSuccess,
             Detail: result.Detail,
             PayloadPreview: result.PayloadPreview,
-            MutatesState: mutatesState);
+            MutatesState: mutatesState || result.MutationAcknowledged,
+            ServerLineage: result.ServerLineage);
 }

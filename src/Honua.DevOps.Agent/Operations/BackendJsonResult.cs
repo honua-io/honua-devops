@@ -4,7 +4,8 @@ namespace Honua.DevOps.Agent.Operations;
 
 internal sealed record BackendJsonResult(
     BackendCallResult CallResult,
-    JsonDocument? Payload) : IDisposable
+    JsonDocument? Payload,
+    [property: System.Text.Json.Serialization.JsonIgnore] byte[]? EvidenceBytes = null) : IDisposable
 {
     public void Dispose()
     {

@@ -29,4 +29,5 @@ internal sealed record ProvisioningLineage(
     [property: JsonPropertyName("serverDecisionReference")] string? ServerDecisionReference = null,
     [property: JsonPropertyName("serverExecutionId")] string? ServerExecutionId = null,
     [property: JsonPropertyName("releaseReceiptReference")] string? ReleaseReceiptReference = null,
-    [property: JsonPropertyName("releaseReceiptSha256")] string? ReleaseReceiptSha256 = null);
+    [property: JsonPropertyName("releaseReceiptSha256")] string? ReleaseReceiptSha256 = null,
+    [property: JsonPropertyName("evidenceRefs")] IReadOnlyList<ProvisioningEvidenceReference>? EvidenceRefs = null);

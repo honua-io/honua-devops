@@ -54,7 +54,7 @@ public sealed class ProvisioningReceiptBindingTests
             ProvisioningSubstrateFixtures.DirectAllowedPolicy(), provisioningProcessRunner: runner);
         OperationResponse retry = await restarted.ProvisionInfrastructureAsync(
             "aws-ecs", "small", "destroy", "{}", true, challenge, approval);
-        Assert.Equal("confirmation-required", retry.Status);
+        Assert.Equal(substituteAction ? "confirmation-required" : "infrastructure-destroyed", retry.Status);
         Assert.Equal(1, runner.ApplyCalls);
         Assert.Single(runner.Calls, call => call.Operation == "terraform-exact-plan.sh");
         ProcessCall applied = Assert.Single(runner.Calls, call => call.Operation == "terraform-exact-apply.sh");

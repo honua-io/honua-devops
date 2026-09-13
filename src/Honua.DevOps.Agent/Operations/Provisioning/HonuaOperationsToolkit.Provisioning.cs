@@ -60,7 +60,7 @@ internal sealed partial class HonuaOperationsToolkit
     };
 
     [Description("Plan, apply, or break-glass destroy an allowlisted honua-iac stack through the governed exact-plan substrate, with plan-before-mutation and approval gates.")]
-    public async Task<OperationResponse> ProvisionInfrastructureAsync(
+    private async Task<OperationResponse> ProvisionInfrastructureCoreAsync(
         string stack,
         string size,
         string action,
@@ -68,7 +68,8 @@ internal sealed partial class HonuaOperationsToolkit
         bool confirmed,
         string confirmation,
         string approvalReceiptJson = "",
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? reservedPlanToken = null)
     {
         string normalizedStack = NormalizeToken(stack);
         string normalizedSize = NormalizeToken(size);
@@ -224,6 +225,7 @@ internal sealed partial class HonuaOperationsToolkit
                     provisioningStack,
                     savedPlan!,
                     approvalReceipt!,
+                    approvalReceiptJson,
                     normalizedAction,
                     cancellationToken);
             }
@@ -242,7 +244,7 @@ internal sealed partial class HonuaOperationsToolkit
         }
 
         CleanupExpiredSavedPlans();
-        string planDirectory = CreatePlanDirectory(out string planToken);
+        string planDirectory = CreatePlanDirectory(out string planToken, reservedPlanToken);
         string provisioningOperationId = $"urn:honua:provisioning:{planToken}";
         string variableFile = Path.Combine(planDirectory, "small.auto.tfvars.json");
         string planFile = Path.Combine(planDirectory, "honua.tfplan");
@@ -336,6 +338,8 @@ internal sealed partial class HonuaOperationsToolkit
             // deletions it is being asked to confirm. Without it the response tells the
             // caller to "review the complete plan" while handing it only three numbers.
             ExactPlanMetadata metadata = planMetadata!;
+            if (metadata.SavedPlanSha256 != ComputeSha256(planFile))
+                return ProvisioningRefusal("exact-plan-metadata-invalid", "The plan metadata names different saved-plan bytes.", [], []);
 
             ProvisioningProcessResult showResult = await runner.RunAsync(
                 "terraform",
@@ -425,7 +429,12 @@ internal sealed partial class HonuaOperationsToolkit
                 ProvisioningLineage: new ProvisioningLineage(
                     provisioningOperationId,
                     PlanSha256: ComputeSha256(planFile),
-                    PlanMetadataDigest: metadata.PlanMetadataDigest));
+                    PlanMetadataDigest: metadata.PlanMetadataDigest,
+                    EvidenceRefs:
+                    [
+                        GetEvidenceStore().Put("plan", await File.ReadAllBytesAsync(planFile, cancellationToken)),
+                        GetEvidenceStore().Put("plan-metadata", await File.ReadAllBytesAsync(planMetadataFile, cancellationToken))
+                    ]));
         }
         finally
         {
@@ -468,7 +477,7 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Pass the exact provisioningOperationId; do not invent or substitute a server operation id."],
                 []);
         }
-
+        using FileStream lineageLock = await AcquireLineageLockAsync(rootProvisioningOperationId, cancellationToken);
         if (!_spine.TryAuthorizeLocalMutation(
                 action: "install-handoff",
                 target: outputDirectory,
@@ -482,7 +491,6 @@ internal sealed partial class HonuaOperationsToolkit
                 [],
                 ["Repair the configured audit sink before retrying the handoff."]);
         }
-
         if (!TryLoadProvisioningState(rootProvisioningOperationId, out ProvisioningState? provisioningState)
             || provisioningState!.Stack != canonicalStack
             || provisioningState.Action != "apply")
@@ -568,7 +576,7 @@ internal sealed partial class HonuaOperationsToolkit
 
         string configPath = Path.Combine(handoffDirectory, "honua-mcp-proxy.handoff.json");
         string envPath = Path.Combine(handoffDirectory, "honua.env.example");
-        if (!overwrite && (File.Exists(configPath) || File.Exists(envPath)))
+        if (!overwrite && provisioningState.Lineage.HandoffReceiptSha256 is null && (File.Exists(configPath) || File.Exists(envPath)))
         {
             return ProvisioningRefusal(
                 "handoff-exists",
@@ -659,6 +667,35 @@ internal sealed partial class HonuaOperationsToolkit
             }
         };
         string configBytes = JsonSerializer.Serialize(contract, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+        if (provisioningState.Lineage.HandoffReceiptSha256 is not null)
+        {
+            // A repeated handoff reuses its original evidence, including the pre-handoff
+            // lineage embedded in it. Never recursively hash a handoff containing itself.
+            try
+            {
+                configBytes = Encoding.UTF8.GetString(GetEvidenceStore().Read(
+                    provisioningState.Lineage.EvidenceRefs!.Single(r => r.Kind == "handoff")));
+                using JsonDocument retained = JsonDocument.Parse(configBytes);
+                JsonElement prior = retained.RootElement;
+                if (prior.GetProperty("env").GetProperty("HONUA_BASE_URL").GetString() != parsedBaseUrl!.AbsoluteUri.TrimEnd('/')
+                    || prior.GetProperty("secretRefs").GetProperty("HONUA_ADMIN_KEY").GetString() != normalizedSecretRef
+                    || prior.GetProperty("candidateReference").GetString() != candidateReference
+                    || prior.GetProperty("proxyArtifact").GetProperty("package").GetString() != proxyPackage
+                    || prior.GetProperty("proxyArtifact").GetProperty("integrity").GetString() != proxyIntegrity)
+                    return ProvisioningRefusal("handoff-lineage-conflict", "This provisioning operation already has a different immutable handoff.", [], []);
+            }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or InvalidOperationException or ArgumentNullException or JsonException)
+            {
+                return ProvisioningRefusal("handoff-evidence-invalid", "The original handoff evidence is unavailable or corrupt.", [], []);
+            }
+        }
+        ProvisioningEvidenceReference handoffReference = GetEvidenceStore().Put("handoff", Encoding.UTF8.GetBytes(configBytes));
+        ProvisioningLineage handoffLineage = provisioningState.Lineage with
+        {
+            HandoffReceiptSha256 = handoffReference.Sha256,
+            RootProvisioningOperationId = rootProvisioningOperationId,
+            EvidenceRefs = [.. (provisioningState.Lineage.EvidenceRefs ?? []).Where(r => r.Kind != "handoff"), handoffReference]
+        };
 
         // Validated before it is written. The handoff is the document a client will
         // resolve a live admin credential against, so it must satisfy its published
@@ -674,6 +711,7 @@ internal sealed partial class HonuaOperationsToolkit
                 ["No handoff files were written."]);
         }
 
+        SaveProvisioningState(provisioningState with { Lineage = handoffLineage });
         await File.WriteAllTextAsync(
             configPath,
             configBytes,
@@ -681,6 +719,8 @@ internal sealed partial class HonuaOperationsToolkit
         await File.WriteAllTextAsync(
             envPath,
             $"HONUA_BASE_URL={parsedBaseUrl.AbsoluteUri.TrimEnd('/')}" + Environment.NewLine
+                + $"HONUA_DEVOPS_HONUA_API_BASE_URL={parsedBaseUrl.AbsoluteUri.TrimEnd('/')}" + Environment.NewLine
+                + $"HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID={rootProvisioningOperationId}" + Environment.NewLine
                 + $"HONUA_MCP_REMOTE_URL={mcpUri.AbsoluteUri}" + Environment.NewLine
                 + $"# Resolve HONUA_ADMIN_KEY at launch from: {normalizedSecretRef}" + Environment.NewLine
                 + "# HONUA_ADMIN_KEY is intentionally absent; never paste it into this file." + Environment.NewLine
@@ -734,11 +774,7 @@ internal sealed partial class HonuaOperationsToolkit
                 "A broad secret-store identity could expose unrelated credentials even though this file is secretless."
             ],
             BackendSteps: steps,
-            ProvisioningLineage: provisioningState.Lineage with
-            {
-                HandoffReceiptSha256 = ComputeSha256(Encoding.UTF8.GetBytes(configBytes)),
-                RootProvisioningOperationId = rootProvisioningOperationId
-            });
+            ProvisioningLineage: handoffLineage);
     }
 
     [Description("Run the exact emitted proxy handoff, resolve its secret reference only into the child process, and produce a content-addressed verified provision binding.")]
@@ -787,7 +823,7 @@ internal sealed partial class HonuaOperationsToolkit
                 ReadRequired("rootProvisioningOperationId"),
                 requiredTools.Distinct(StringComparer.Ordinal).ToArray());
         }
-        catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or JsonException or InvalidOperationException or KeyNotFoundException)
         {
             return ProvisioningRefusal("handoff-config-invalid", Redaction.Scrub(exception.Message), [], []);
         }
@@ -802,6 +838,7 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Regenerate the handoff from the current manifest pins."],
                 []);
         }
+        using FileStream lineageLock = await AcquireLineageLockAsync(request.ProvisioningOperationId, cancellationToken);
         if (!TryLoadProvisioningState(request.ProvisioningOperationId, out ProvisioningState? state))
         {
             return ProvisioningRefusal(
@@ -822,6 +859,22 @@ internal sealed partial class HonuaOperationsToolkit
                 $"Durable audit evidence is unavailable: {auditRefusal}. The verifier process was not started.",
                 [],
                 ["Repair the configured audit sink before retrying verification."]);
+        }
+        if (state!.Lineage.HandoffReceiptSha256 != ComputeSha256(Encoding.UTF8.GetBytes(configBytes)))
+            return ProvisioningRefusal("handoff-evidence-mismatch", "The supplied handoff is not the exact DevOps-recorded handoff bytes.", [], []);
+        try
+        {
+            GetEvidenceStore().ValidateAppliedLineage(state.Lineage);
+            if (state.VerificationReceipt is not null && state.ProvisionBinding is not null)
+            {
+                if (!await RestoreVerificationAsync(state, Path.GetDirectoryName(fullPath)!, overwrite, cancellationToken))
+                    return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
+                return VerifiedLineageResponse(state.Lineage, []);
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return ProvisioningRefusal("lineage-evidence-invalid", "Retained lineage evidence is missing, substituted, or duplicated; no readiness claim is made.", [], []);
         }
 
         IInstallHandoffVerifier verifier = installHandoffVerifier ?? SystemInstallHandoffVerifier.Instance;
@@ -875,7 +928,9 @@ internal sealed partial class HonuaOperationsToolkit
             HandoffReceiptSha256 = handoffSha,
             HandoffVerificationReceiptId = verificationId,
             HandoffVerificationReceiptSha256 = verificationSha,
-            RootProvisioningOperationId = request.ProvisioningOperationId
+            RootProvisioningOperationId = request.ProvisioningOperationId,
+            EvidenceRefs = [.. (state.Lineage.EvidenceRefs ?? []),
+                GetEvidenceStore().Put("verification-evidence", Encoding.UTF8.GetBytes(verificationCore))]
         };
         if (state.Execution is null)
         {
@@ -942,11 +997,17 @@ internal sealed partial class HonuaOperationsToolkit
                 ["No verification evidence was written."]);
         }
 
-        await File.WriteAllTextAsync(receiptPath, receiptBytes, cancellationToken);
-        await File.WriteAllTextAsync(bindingPath, bindingBytes, cancellationToken);
-        ProtectSavedPlan(receiptPath);
-        ProtectSavedPlan(bindingPath);
-        SaveProvisioningState(state with { Lineage = completedLineage });
+        ProvisioningState completedState = state with
+        {
+            Lineage = completedLineage,
+            VerificationReceipt = GetEvidenceStore().Put("verification-receipt", Encoding.UTF8.GetBytes(receiptBytes)),
+            ProvisionBinding = GetEvidenceStore().Put("provision-binding", Encoding.UTF8.GetBytes(bindingBytes))
+        };
+        // Persist the authoritative references before writing export copies. A restart
+        // after either export fails recovers the same receipt, without rerunning probes.
+        SaveProvisioningState(completedState);
+        if (!await RestoreVerificationAsync(completedState, directory, overwrite, cancellationToken))
+            return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
 
         List<OperationBackendStep> steps = [.. verification.Steps,
             new("write-handoff-verification-receipt", receiptPath, true, "content-addressed receipt written", verificationId, true),
@@ -1324,12 +1385,18 @@ internal sealed partial class HonuaOperationsToolkit
         ProvisioningStack provisioningStack,
         SavedTerraformPlan savedPlan,
         ProvisionApprovalReceipt approvalReceipt,
+        string approvalReceiptJson,
         string action,
         CancellationToken cancellationToken)
     {
         IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
         List<OperationBackendStep> steps = [];
         string receiptPath = Path.Combine(savedPlan.Directory, "exec-receipt.json");
+        // Retain exact approved inputs before the substrate can consume/delete its plan.
+        ProvisioningEvidenceStore evidenceStore = GetEvidenceStore();
+        ProvisioningEvidenceReference planReference = evidenceStore.Put("plan", await File.ReadAllBytesAsync(savedPlan.PlanFile, cancellationToken));
+        ProvisioningEvidenceReference metadataReference = evidenceStore.Put("plan-metadata", await File.ReadAllBytesAsync(savedPlan.Manifest.PlanMetadataFile, cancellationToken));
+        ProvisioningEvidenceReference approvalReference = evidenceStore.Put("approval", Encoding.UTF8.GetBytes(approvalReceiptJson));
         try
         {
             // Terraform is a process-based external mutation and has no BackendGateway
@@ -1502,12 +1569,14 @@ internal sealed partial class HonuaOperationsToolkit
                 PlanSha256: savedPlan.Manifest.PlanSha256,
                 PlanMetadataDigest: receipt.PlanMetadataDigest,
                 ApprovalReceiptId: approvalReceipt.ApprovalReceiptId,
-                ApprovalReceiptSha256: ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(approvalReceipt))),
+                ApprovalReceiptSha256: approvalReference.Sha256,
                 ApplyAuditEventId: Guid.NewGuid().ToString("n"),
                 // Content-addresses the execution-receipt bytes carried verbatim in the
                 // provisioning state and echoed into the binding, so a holder can
                 // actually resolve and re-hash what this reference names.
-                ActuatorReceiptReference: $"urn:sha256:{receiptSha}");
+                ActuatorReceiptReference: $"urn:sha256:{receiptSha}",
+                EvidenceRefs: [planReference, metadataReference, approvalReference,
+                    evidenceStore.Put("apply", Encoding.UTF8.GetBytes(receiptDocument))]);
 
             SaveProvisioningState(new ProvisioningState(
                 lineage,
@@ -1574,7 +1643,7 @@ internal sealed partial class HonuaOperationsToolkit
                         : "This execution was not release-qualified and must not be presented as release evidence."
                 ],
                 BackendSteps: steps,
-                ProvisioningLineage: lineage);
+                ProvisioningLineage: lineage) { AuditEventId = lineage.ApplyAuditEventId! };
         }
         finally
         {
@@ -1655,9 +1724,9 @@ internal sealed partial class HonuaOperationsToolkit
         return (contract, null);
     }
 
-    private static string CreatePlanDirectory(out string token)
+    private static string CreatePlanDirectory(out string token, string? reservedToken = null)
     {
-        token = Guid.NewGuid().ToString("n");
+        token = reservedToken ?? Guid.NewGuid().ToString("n");
         string root = GetSavedPlanRoot();
         Directory.CreateDirectory(root);
         ProtectDirectory(root);
@@ -1676,6 +1745,9 @@ internal sealed partial class HonuaOperationsToolkit
             "honua-devops",
             "provisioning"));
 
+    private static ProvisioningEvidenceStore GetEvidenceStore()
+        => new(Path.Combine(GetProvisioningStateRoot(), "evidence"));
+
     private static string GetProvisioningStatePath(string provisioningOperationId)
         => Path.Combine(
             GetProvisioningStateRoot(),
@@ -1687,11 +1759,8 @@ internal sealed partial class HonuaOperationsToolkit
         Directory.CreateDirectory(root);
         ProtectDirectory(root);
         string destination = GetProvisioningStatePath(state.Lineage.ProvisioningOperationId);
-        string temporary = destination + $".{Guid.NewGuid():n}.tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-        ProtectSavedPlan(temporary);
-        File.Move(temporary, destination, overwrite: true);
-        ProtectSavedPlan(destination);
+        WriteEvidenceCopyAsync(destination, JsonSerializer.SerializeToUtf8Bytes(state), CancellationToken.None)
+            .GetAwaiter().GetResult();
     }
 
     private static bool TryLoadProvisioningState(string provisioningOperationId, out ProvisioningState? state)
@@ -1705,7 +1774,7 @@ internal sealed partial class HonuaOperationsToolkit
             return state is not null
                 && string.Equals(state.Lineage.ProvisioningOperationId, provisioningOperationId, StringComparison.Ordinal);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException)
         {
             return false;
         }
@@ -2135,7 +2204,9 @@ internal sealed partial class HonuaOperationsToolkit
         string? Endpoint = null,
         string? AdminKeySecretRef = null,
         string? OperatorContractDigest = null,
-        string? OperatorContractStatus = null);
+        string? OperatorContractStatus = null,
+        ProvisioningEvidenceReference? VerificationReceipt = null,
+        ProvisioningEvidenceReference? ProvisionBinding = null);
 
     private static OperationBackendStep ToBackendStep(
         string name,

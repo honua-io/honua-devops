@@ -50,7 +50,7 @@
         "approvalReceiptSha256": { "$ref": "#/$defs/sha256" },
         "applyAuditEventId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
         "actuatorReceiptReference": {
-          "description": "Content address of the honua-iac execution receipt carried verbatim in `execReceipt`. A holder can re-hash those bytes and confirm this reference resolves to them.",
+          "description": "Content address of the exact honua-iac execution receipt bytes retained by the apply evidence reference. The execReceipt object is a structured projection, not a byte-preserving serialization.",
           "type": "string",
           "pattern": "^urn:sha256:[0-9a-f]{64}$"
         },
@@ -63,7 +63,21 @@
         "serverDecisionReference": { "type": ["string", "null"] },
         "serverExecutionId": { "type": ["string", "null"] },
         "releaseReceiptReference": { "type": ["string", "null"] },
-        "releaseReceiptSha256": { "type": ["string", "null"] }
+        "releaseReceiptSha256": { "type": ["string", "null"] },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "reference", "sha256", "byteLength"],
+            "properties": {
+              "kind": { "type": "string", "minLength": 1 },
+              "reference": { "$ref": "#/$defs/receiptUrn" },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "byteLength": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": true
     },
@@ -98,7 +112,7 @@
     "iacExecution": { "$ref": "#/$defs/iacExecution" },
     "execReceiptSha256": { "$ref": "#/$defs/sha256" },
     "execReceipt": {
-      "description": "The honua.iac.exec-receipt document verbatim, so `actuatorReceiptReference` resolves to bytes the holder actually has.",
+      "description": "Structured projection of the honua.iac.exec-receipt document. Resolve the apply evidence reference to re-hash the exact original bytes; serializing this object again may change whitespace.",
       "type": "object",
       "required": ["schema_version", "kind", "plan_metadata_digest", "state_after"],
       "properties": {

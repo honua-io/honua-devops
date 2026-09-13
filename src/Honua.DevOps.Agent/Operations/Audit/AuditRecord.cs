@@ -17,4 +17,5 @@ internal sealed record AuditRecord(
     string? Provider,
     IReadOnlyList<OperationBackendStep>? BackendSteps,
     OperationEvidence? Evidence,
-    ProvisioningLineage? ProvisioningLineage = null);
+    ProvisioningLineage? ProvisioningLineage = null,
+    [property: JsonPropertyName("serverOperations")] IReadOnlyList<ServerOperationLineage>? ServerOperations = null);

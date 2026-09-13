@@ -1,7 +1,7 @@
 {
   "action": "apply",
   "actor_id": "honua-devops:urn:honua:provisioning:00000000000000000000000000000000",
-  "approved_digest": "e636601151bc3e3113bfc984250bbb5fd0850f1bf8e5dfb18c95c29c748b3ce8",
+  "approved_digest": "058307fcb139d9c5c6eb4ed483bc244778972f12e5bf13e351f5e38d9113f4f2",
   "backend_step": {
     "backend_config_digest": "0ea699e4b738a98ed5c9a7ce497ad94b7922fe0d1e86c88e38ba5be3902036a3",
     "backend_kind": "s3",
@@ -28,8 +28,8 @@
     "digest": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229",
     "output_name": "operator_contract_digest"
   },
-  "plan_metadata_digest": "e636601151bc3e3113bfc984250bbb5fd0850f1bf8e5dfb18c95c29c748b3ce8",
-  "saved_plan_sha256": "417a006e0884c8b9c9e1289c347c76ea29c29a7345179382b4b78fee3da2703f",
+  "plan_metadata_digest": "058307fcb139d9c5c6eb4ed483bc244778972f12e5bf13e351f5e38d9113f4f2",
+  "saved_plan_sha256": "3a691c59f9c8be1eb1ce3e7642643a7aedfa7a0314c8d01750546ea83efca6fe",
   "schema_version": "v1",
   "state_after": {
     "lineage": "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
