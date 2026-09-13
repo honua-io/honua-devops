@@ -59,6 +59,12 @@ internal static class GitOpsExecutionStatus
     internal const string Indeterminate = "indeterminate";
 }
 
+internal static class BackendCallClassification
+{
+    internal static bool IsForbidden(BackendCallResult result)
+        => !result.IsSuccess && result.Detail.StartsWith("403 ", StringComparison.Ordinal);
+}
+
 // Poll budget for SubmitAndPollAsync after a deploy/promotion is submitted. The reconciler
 // advances the operation server-side, so a real deploy routinely takes far longer than a
 // single poll cycle: the executor polls with capped exponential backoff up to a total

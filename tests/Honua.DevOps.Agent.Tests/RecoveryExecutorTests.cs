@@ -1,5 +1,8 @@
 using System.Net.Http;
 
+using System.Net;
+using System.Net.Http.Json;
+
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.GitOps;
@@ -261,16 +264,78 @@ public class RecoveryExecutorTests
         Assert.Equal(1, providerMutations);
     }
 
+    [Fact]
+    public async Task ExecuteRecoveryAsync_AcknowledgedButUnverifiedResponse_PreservesMutationEvidence()
+    {
+        TestHttpMessageHandler handler = new(request => request.Method == HttpMethod.Post
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("not-json") }
+            : TestHttpMessageHandler.JsonOk(Operation("Reconciling")));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+
+        GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
+            IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, result.Status);
+        Assert.True(result.Mutated);
+        Assert.True(Assert.Single(result.BackendSteps!, step => step.Name == "deploy-operation-recover").MutatesState);
+    }
+
+    [Fact]
+    public async Task ExecuteRecoveryAsync_ForbiddenRollback_ReturnsApprovalRequired()
+    {
+        TestHttpMessageHandler handler = new(request => request.Method == HttpMethod.Post
+            ? new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = JsonContent.Create(new { error = "approval-required" }) }
+            : TestHttpMessageHandler.JsonOk(Operation("Reconciling")));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+
+        GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
+            IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+        Assert.False(result.Mutated);
+        Assert.Contains("recovery-refused", result.BlockingReasons);
+    }
+
+    [Theory]
+    [InlineData("RolledBack", "recovering", "release/2026.01", "sha256:policy-digest", "release/2026.03", "release/2026.03")]
+    [InlineData("RollbackRequested", "recovering", "release/2026.02", "sha256:other-policy", "release/2026.03", "release/2026.03")]
+    [InlineData("Failed", "protected", "release/2026.02", "sha256:policy-digest", "release/2026.03", "release/2026.04")]
+    public async Task ExecuteRecoveryAsync_ObservationStateWithMismatchedProtectionScope_IsRefused(
+        string status, string phase, string prior, string policy, string candidate, string protectedCandidate)
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(
+            Operation(status, candidate, phase: phase, policy: policy, prior: prior, protectedCandidate: protectedCandidate)));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+
+        GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
+            IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+        Assert.False(result.Mutated);
+        Assert.Contains("recovery-protection-unavailable", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
     // Revisions and expected outcomes are declared independently of the executor.
     private static object Operation(string? status, string candidate = "release/2026.03",
         string operationId = "op-recover-1", string targetId = "prod-api",
-        string phase = "observing", string policy = "sha256:policy-digest", string prior = "release/2026.02")
+        string phase = "observing", string policy = "sha256:policy-digest", string prior = "release/2026.02",
+        string? protectedCandidate = null)
         => new
         {
             operationId,
             status,
             target = new { targetId, desiredRevision = candidate, currentRevision = prior },
-            protection = new { phase, previousRevision = prior, candidateRevision = candidate, policyDigest = policy, observationDeadline = "2099-01-01T00:00:00Z" }
+            protection = new { phase, previousRevision = prior, candidateRevision = protectedCandidate ?? candidate, policyDigest = policy, observationDeadline = "2099-01-01T00:00:00Z" }
         };
 
     // ---- helpers ----

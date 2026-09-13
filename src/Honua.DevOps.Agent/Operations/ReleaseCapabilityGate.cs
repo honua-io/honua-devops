@@ -136,6 +136,24 @@ internal static class ReleaseCapabilityGate
         return null;
     }
 
+    // Terminal/recovering observations may no longer have an active protection phase, but
+    // they must still carry the immutable scope that this grant was approved for.
+    internal static string? GetProtectedRecoveryObservationScopeRefusal(
+        ActuationSpine.DeploymentRecoveryGrant grant, JsonElement operation)
+    {
+        if (!string.Equals(DeployOperationReader.ReadPriorRevision(operation), grant.PriorRevision, StringComparison.Ordinal)
+            || !string.Equals(DeployOperationReader.ReadProtectionPolicyDigest(operation), grant.SafetyPolicyDigest, StringComparison.Ordinal)
+            || !operation.TryGetProperty("protection", out JsonElement protection)
+            || !protection.TryGetProperty("candidateRevision", out JsonElement candidate)
+            || candidate.ValueKind != JsonValueKind.String
+            || !string.Equals(candidate.GetString(), grant.CandidateRevision, StringComparison.Ordinal))
+        {
+            return "The server recovery observation does not match this grant's immutable protection scope.";
+        }
+
+        return null;
+    }
+
     /// <summary>Refusal for the bounded protected-recovery surface when it is disabled.</summary>
     internal static OperationResponse BuildProtectedRecoveryDisabledResponse()
         => new(

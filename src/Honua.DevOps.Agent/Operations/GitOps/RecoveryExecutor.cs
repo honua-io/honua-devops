@@ -118,6 +118,14 @@ internal sealed class RecoveryExecutor(
                 ["recovery-scope-mismatch"], scopeRefusal);
         }
 
+        string? observationScopeRefusal = ReleaseCapabilityGate.GetProtectedRecoveryObservationScopeRefusal(
+            grant, current.Payload.RootElement);
+        if (observationScopeRefusal is not null)
+        {
+            return Result(GitOpsExecutionStatus.ApprovalRequired, serverStatus, false,
+                ["recovery-protection-unavailable"], observationScopeRefusal);
+        }
+
         // A new process must observe recovery already claimed by the server. Reusing the
         // in-memory spine does not prove restart safety; no POST is needed in these states.
         ServerOperationStatus recognized = ServerOperationStatusParser.Recognize(serverStatus);
@@ -165,18 +173,20 @@ internal sealed class RecoveryExecutor(
 
         if (!recovered.CallResult.IsSuccess)
         {
-            // A failed HTTP acknowledgement cannot establish whether the provider mutated.
-            // Observe the durable operation on retry; never assert that nothing happened.
-            findings.Add($"Recovery acknowledgement unavailable ({recovered.CallResult.Detail}); observe operation `{grant.OperationId}` to resolve the outcome.");
+            bool acknowledged = recovered.CallResult.MutationAcknowledged;
+            bool approvalRefused = BackendCallClassification.IsForbidden(recovered.CallResult) && !acknowledged;
+            findings.Add(approvalRefused
+                ? $"Recovery was refused by deploy-control ({recovered.CallResult.Detail}); approval is still required for operation `{grant.OperationId}`."
+                : $"Recovery acknowledgement unavailable ({recovered.CallResult.Detail}); observe operation `{grant.OperationId}` to resolve the outcome.");
             return new GitOpsExecutionResult(
-                Status: GitOpsExecutionStatus.Indeterminate,
+                Status: approvalRefused ? GitOpsExecutionStatus.ApprovalRequired : GitOpsExecutionStatus.Indeterminate,
                 OperationId: grant.OperationId,
                 ServerStatus: recovered.Payload is null ? serverStatus : DeployOperationReader.ReadStatus(recovered.Payload.RootElement),
-                Mutated: false,
+                Mutated: acknowledged,
                 Decision: grant.Decision,
                 BackendSteps: steps,
                 Findings: findings,
-                BlockingReasons: ["recovery-acknowledgement-unavailable", .. recovered.Payload is null
+                BlockingReasons: [approvalRefused ? "recovery-refused" : "recovery-acknowledgement-unavailable", .. recovered.Payload is null
                     ? Array.Empty<string>()
                     : DeployOperationReader.ReadBlockingReasons(recovered.Payload.RootElement)]);
         }
