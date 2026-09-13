@@ -148,7 +148,9 @@ internal sealed class GitOpsExecutor(
         {
             findings.Add(authorization.Reason);
             return new GitOpsExecutionResult(
-                Status: GitOpsExecutionStatus.ContractUnavailable,
+                Status: authorization.Outcome == ActuationOutcome.Indeterminate
+                    ? GitOpsExecutionStatus.Indeterminate
+                    : GitOpsExecutionStatus.ContractUnavailable,
                 OperationId: null,
                 ServerStatus: null,
                 Mutated: false,
@@ -305,7 +307,8 @@ internal sealed class GitOpsExecutor(
                     Decision: decision,
                     BackendSteps: steps,
                     Findings: findings,
-                    BlockingReasons: ["manifest-apply-unconfirmed"]);
+                    BlockingReasons: ["manifest-apply-unconfirmed"],
+                    IdempotencyKey: idempotencyKey);
             }
 
             findings.Add($"Desired state applied for operation `{operationId}`.");
@@ -552,7 +555,9 @@ internal sealed class GitOpsExecutor(
                 Decision: decision,
                 BackendSteps: steps,
                 Findings: findings,
-                BlockingReasons: ["actuator-receipt-missing-or-mismatched"]);
+                BlockingReasons: ["actuator-receipt-missing-or-mismatched"],
+                ActuatorReceiptId: receiptId,
+                IdempotencyKey: grant.IdempotencyKey);
         }
 
         if (resultStatus == GitOpsExecutionStatus.Succeeded)
@@ -568,6 +573,8 @@ internal sealed class GitOpsExecutor(
             Decision: decision,
             BackendSteps: steps,
             Findings: findings,
-            BlockingReasons: []);
+            BlockingReasons: [],
+            ActuatorReceiptId: receiptId,
+            IdempotencyKey: grant.IdempotencyKey);
     }
 }

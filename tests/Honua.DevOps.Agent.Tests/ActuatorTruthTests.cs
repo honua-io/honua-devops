@@ -354,7 +354,7 @@ public class ActuatorTruthTests
         Assert.Equal("runbook-executed", response.Status);
         Assert.NotNull(response.BackendSteps);
         Assert.Contains(response.BackendSteps!, step => step.MutatesState && step.Success);
-        Assert.Contains(response.Findings, finding => finding.Contains("Actuator receipt: op-9", StringComparison.Ordinal));
+        Assert.Contains(response.Findings, finding => finding.Contains("Actuator receipt: rcpt-9", StringComparison.Ordinal));
         Assert.Contains(
             response.Findings,
             finding => finding.Contains("honua.deploy-operation.submit", StringComparison.Ordinal));

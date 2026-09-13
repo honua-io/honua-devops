@@ -5,6 +5,22 @@ namespace Honua.DevOps.Agent.Tests;
 
 public sealed class OpsLoopAuditTests
 {
+    [Fact]
+    public async Task EmitAsync_AppendOrFlushFailure_IsNotDowngradedToSuccess()
+    {
+        IOException expected = new("disk full");
+        FailingAuditSink sink = new(expected);
+
+        IOException actual = await Assert.ThrowsAsync<IOException>(() => ToolCallAuditor.EmitAsync(
+            new AuditContext("session", "execute", "execute-lower-env", "direct-allowed", "mcp", sink),
+            new ToolCallRecord("mutating-tool", new Dictionary<string, object?>()),
+            new { Status = "succeeded" },
+            CancellationToken.None));
+
+        Assert.Same(expected, actual);
+        Assert.Equal(1, sink.WriteCount);
+    }
+
     [Theory]
     [InlineData("ProposalCreated")]
     [InlineData("Executed")]
@@ -90,6 +106,18 @@ public sealed class OpsLoopAuditTests
             return Task.CompletedTask;
         }
 
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FailingAuditSink(Exception failure) : IAuditSink
+    {
+        internal int WriteCount { get; private set; }
+        public string Target => "fault-injected";
+        public Task WriteAsync(AuditRecord record, CancellationToken cancellationToken = default)
+        {
+            WriteCount++;
+            return Task.FromException(failure);
+        }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

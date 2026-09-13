@@ -470,4 +470,6 @@ internal sealed record GitOpsExecutionResult(
     GitOpsActuationDecision Decision,
     IReadOnlyList<OperationBackendStep> BackendSteps,
     IReadOnlyList<string> Findings,
-    IReadOnlyList<string> BlockingReasons);
+    IReadOnlyList<string> BlockingReasons,
+    string? ActuatorReceiptId = null,
+    string? IdempotencyKey = null);

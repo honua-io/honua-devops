@@ -15,7 +15,7 @@ internal sealed partial class HonuaOperationsToolkit
         bool proposeRecommendedAction,
         CancellationToken cancellationToken = default)
     {
-        OpsObserveDiagnoseProposeLoop loop = new(runtime, gateway);
+        OpsObserveDiagnoseProposeLoop loop = new(runtime, gateway, _spine);
         return loop.RunAsync(
             findingId,
             severity,

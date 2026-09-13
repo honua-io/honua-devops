@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Honua.DevOps.Agent.Operations.RuntimeAdapters;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -23,13 +24,14 @@ namespace Honua.DevOps.Agent.Operations.ConsoleBridge;
 internal sealed class ConsoleOperationBridge(
     OperationRuntime runtime,
     BackendGateway gateway,
-    OperatorPolicyModel? policy = null)
+    OperatorPolicyModel? policy = null,
+    IAuditSink? auditSink = null)
 {
     private const string OperationKind = "gitops-deploy";
     private const int MaxReadableKeyLength = 200;
     private const string AgentIdentity = "honua-devops";
 
-    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default);
+    private readonly ActuationSpine _spine = new(runtime, policy ?? OperatorPolicyModel.Default, auditSink);
 
     private OperatorPolicyModel EffectivePolicy => policy ?? OperatorPolicyModel.Default;
 
@@ -987,7 +989,25 @@ internal sealed class ConsoleOperationBridge(
                 "Proposal scope can drift from reality if submitted long after creation."
             ],
             BackendSteps: backendSteps,
-            ConsoleBridge: projection);
+            ConsoleBridge: projection,
+            Actuation: proposal.OperationId is null
+                ? null
+                : new ActuationResult(
+                    ActuatorId: "honua.gitops.proposal",
+                    Action: "proposal",
+                    Target: proposal.OperationId,
+                    Outcome: ActuationOutcome.Observed,
+                    Mutated: backendSteps?.Any(step => step.MutatesState && step.Success) == true,
+                    Receipt: new ActuationReceipt(
+                        "honua.gitops.proposal",
+                        proposal.OperationId,
+                        "honua-server.deploy-control",
+                        proposal.ProposalStatus),
+                    OperationId: proposal.OperationId,
+                    BackendSteps: backendSteps ?? [],
+                    Findings: findings,
+                    BlockingReasons: [],
+                    IdempotencyKey: proposal.IdempotencyKey));
     }
 
     private DevOpsOperationStatus BuildOperationStatus(

@@ -39,7 +39,7 @@ internal static class McpStdioServerHost
         await using (auditSink.ConfigureAwait(false))
         {
             string detectedEdition = await EditionDetector.DetectAsync(backendGateway, cancellationToken);
-            IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition);
+            IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition, auditSink);
 
             string sessionId = Guid.NewGuid().ToString("n");
             AuditContext auditContext = new(

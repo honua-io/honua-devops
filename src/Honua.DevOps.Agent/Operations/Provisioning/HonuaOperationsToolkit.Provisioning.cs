@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
+using Honua.DevOps.Agent.Operations.Actuation;
 
 namespace Honua.DevOps.Agent.Operations;
 
@@ -198,6 +199,15 @@ internal sealed partial class HonuaOperationsToolkit
                         out ProvisionApprovalReceipt? approvalReceipt,
                         out loadError))
                 {
+                    if (loadError.StartsWith("audit-sink-unavailable:", StringComparison.Ordinal))
+                    {
+                        return ProvisioningRefusal(
+                            "audit-sink-unavailable",
+                            loadError["audit-sink-unavailable:".Length..].Trim(),
+                            [],
+                            ["Repair the configured audit sink before retrying the exact plan."]);
+                    }
+
                     return ProvisioningRefusal(
                         "confirmation-required",
                         loadError,
@@ -458,6 +468,21 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Pass the exact provisioningOperationId; do not invent or substitute a server operation id."],
                 []);
         }
+
+        if (!_spine.TryAuthorizeLocalMutation(
+                action: "install-handoff",
+                target: outputDirectory,
+                idempotencyKey: $"honua-devops:install-handoff:{rootProvisioningOperationId}",
+                desiredState: rootProvisioningOperationId,
+                out string auditRefusal))
+        {
+            return ProvisioningRefusal(
+                "audit-sink-unavailable",
+                $"Durable audit evidence is unavailable: {auditRefusal}. Handoff files were not written.",
+                [],
+                ["Repair the configured audit sink before retrying the handoff."]);
+        }
+
         if (!TryLoadProvisioningState(rootProvisioningOperationId, out ProvisioningState? provisioningState)
             || provisioningState!.Stack != canonicalStack
             || provisioningState.Action != "apply")
@@ -783,6 +808,20 @@ internal sealed partial class HonuaOperationsToolkit
                 "provisioning-evidence-missing",
                 "The handoff cannot be joined to DevOps-produced apply evidence.",
                 [], []);
+        }
+
+        if (!_spine.TryAuthorizeLocalMutation(
+                action: "verify-install-handoff",
+                target: fullPath,
+                idempotencyKey: $"honua-devops:verify-install-handoff:{request.ProvisioningOperationId}",
+                desiredState: request.ProvisioningOperationId,
+                out string auditRefusal))
+        {
+            return ProvisioningRefusal(
+                "audit-sink-unavailable",
+                $"Durable audit evidence is unavailable: {auditRefusal}. The verifier process was not started.",
+                [],
+                ["Repair the configured audit sink before retrying verification."]);
         }
 
         IInstallHandoffVerifier verifier = installHandoffVerifier ?? SystemInstallHandoffVerifier.Instance;
@@ -1293,6 +1332,23 @@ internal sealed partial class HonuaOperationsToolkit
         string receiptPath = Path.Combine(savedPlan.Directory, "exec-receipt.json");
         try
         {
+            // Terraform is a process-based external mutation and has no BackendGateway
+            // method to force through the reflection catalog. Bind it to the same durable
+            // audit preflight before the exact wrapper is started.
+            if (!_spine.TryAuthorizeLocalMutation(
+                    action: action == "destroy" ? "terraform-exact-destroy" : "terraform-exact-apply",
+                    target: savedPlan.Manifest.TerraformRoot,
+                    idempotencyKey: TerraformRecoveryKey(savedPlan.Manifest, action),
+                    desiredState: savedPlan.Manifest.PlanMetadataDigest,
+                    out string auditRefusal))
+            {
+                return ProvisioningRefusal(
+                    "audit-sink-unavailable",
+                    $"Durable audit evidence is unavailable: {auditRefusal}. Terraform was not started.",
+                    [],
+                    ["Repair the configured audit sink before retrying the exact plan."]);
+            }
+
             // The apply wrapper re-derives every bound fact from the live context and
             // refuses before any mutation. It never regenerates a plan and never
             // accepts variables, so the approved artifact is the only thing consumed.
@@ -1509,7 +1565,11 @@ internal sealed partial class HonuaOperationsToolkit
         }
         finally
         {
-            DeletePlanDirectory(savedPlan.Directory);
+            // Keep the claimed plan and its execution receipt through the audit
+            // acknowledgement window. If the host loses the audit sink after Terraform
+            // acknowledges the mutation, a restarted host must still be able to identify
+            // the original plan and refuse a second apply. The hourly cleanup sweep removes
+            // expired protected plans.
         }
     }
 
@@ -1708,6 +1768,12 @@ internal sealed partial class HonuaOperationsToolkit
             return false;
         }
 
+        if (_spine.RecoveryStore.HasPending(TerraformRecoveryKey(manifest, action)))
+        {
+            error = "The original Terraform mutation is indeterminate/reconciliation-required; recover the recorded operation before retrying. No second mutation will be started.";
+            return false;
+        }
+
         TimeSpan age = DateTimeOffset.UtcNow - manifest.CreatedAtUtc;
         if (age < TimeSpan.FromMinutes(-5) || age > TimeSpan.FromMinutes(30))
         {
@@ -1740,6 +1806,17 @@ internal sealed partial class HonuaOperationsToolkit
                 out approvalReceipt,
                 out error))
         {
+            return false;
+        }
+
+        if (!_spine.TryAuthorizeLocalMutation(
+                action: action == "destroy" ? "terraform-exact-destroy" : "terraform-exact-apply",
+                target: manifest.TerraformRoot,
+                idempotencyKey: TerraformRecoveryKey(manifest, action),
+                desiredState: manifest.PlanMetadataDigest,
+                out string auditRefusal))
+        {
+            error = $"audit-sink-unavailable: Durable audit evidence is unavailable: {auditRefusal}. Terraform was not started.";
             return false;
         }
 
@@ -2181,6 +2258,9 @@ internal sealed partial class HonuaOperationsToolkit
             ValidationChecks: ["no Terraform process started"],
             Risks: risks);
     }
+
+    private static string TerraformRecoveryKey(SavedTerraformPlanManifest manifest, string action)
+        => $"honua-devops:terraform:{manifest.ProvisioningOperationId}:{(action == "destroy" ? "destroy" : "apply")}";
 
     private static string NormalizeToken(string value)
         => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
