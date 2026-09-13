@@ -354,12 +354,15 @@ internal sealed class ActuationSpine
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(tenant)
+        if (string.IsNullOrWhiteSpace(request.Actor)
+            || !Enum.IsDefined(compensation)
+            || string.Equals(priorRevision, candidateRevision, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(tenant)
             || string.IsNullOrWhiteSpace(priorRevision)
             || string.IsNullOrWhiteSpace(candidateRevision)
             || string.IsNullOrWhiteSpace(safetyPolicyDigest))
         {
-            refusalReason = "A recovery grant requires a tenant, prior revision, candidate revision, and safety policy digest.";
+            refusalReason = "A recovery grant requires an actor, tenant, distinct prior/candidate revisions, safety policy digest, and a defined compensation.";
             return false;
         }
 
@@ -530,7 +533,7 @@ internal sealed class ActuationSpine
             DateTimeOffset now,
             out string refusalReason)
         {
-            if (now > ExpiresAtUtc)
+            if (now >= ExpiresAtUtc)
             {
                 refusalReason = $"Recovery grant for operation `{OperationId}` expired at {ExpiresAtUtc:O} (now {now:O}).";
                 return false;

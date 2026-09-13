@@ -1,3 +1,8 @@
+using System.Text.Json;
+
+using Honua.DevOps.Agent.Operations.Actuation;
+using Honua.DevOps.Agent.Operations.GitOps;
+
 namespace Honua.DevOps.Agent.Operations;
 
 /// <summary>
@@ -104,6 +109,29 @@ internal static class ReleaseCapabilityGate
     {
         ArgumentNullException.ThrowIfNull(runtime);
         return runtime.ProtectedRecoveryEnabled ? null : BuildProtectedRecoveryDisabledResponse();
+    }
+
+    // An environment flag is only a local safety ceiling. Require the server's durable
+    // observation scope before the retained executor can request compensation.
+    internal static string? GetProtectedRecoveryScopeRefusal(
+        ActuationSpine.DeploymentRecoveryGrant grant, JsonElement operation)
+    {
+        if (DeployOperationReader.ReadProtectionPhase(operation) is not ("observing" or "protected")
+            || !string.Equals(DeployOperationReader.ReadPriorRevision(operation), grant.PriorRevision, StringComparison.Ordinal)
+            || !string.Equals(DeployOperationReader.ReadProtectionPolicyDigest(operation), grant.SafetyPolicyDigest, StringComparison.Ordinal)
+            || !operation.TryGetProperty("protection", out JsonElement protection)
+            || !protection.TryGetProperty("candidateRevision", out JsonElement candidate)
+            || candidate.ValueKind != JsonValueKind.String
+            || !string.Equals(candidate.GetString(), grant.CandidateRevision, StringComparison.Ordinal)
+            || !protection.TryGetProperty("observationDeadline", out JsonElement deadline)
+            || deadline.ValueKind != JsonValueKind.String
+            || !deadline.TryGetDateTimeOffset(out DateTimeOffset expiresAt)
+            || expiresAt <= DateTimeOffset.UtcNow)
+        {
+            return "The server has no matching active protection scope for this prior revision and safety policy.";
+        }
+
+        return null;
     }
 
     /// <summary>Refusal for the bounded protected-recovery surface when it is disabled.</summary>

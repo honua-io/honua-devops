@@ -33,17 +33,17 @@ public class RecoveryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteRecoveryAsync_ValidGrant_RestoresPriorRevisionAndQuarantinesCandidate()
+    public async Task ExecuteRecoveryAsync_ValidGrant_ReportsServerRecoveryWithoutInventingGitConvergence()
     {
         TestHttpMessageHandler handler = new(request =>
         {
             string path = request.RequestUri!.AbsolutePath;
             if (request.Method == HttpMethod.Post && path.EndsWith("/rollback", StringComparison.Ordinal))
             {
-                return TestHttpMessageHandler.JsonOk(new { operationId = "op-recover-1", status = "RolledBack" });
+                return TestHttpMessageHandler.JsonOk(Operation("RolledBack"));
             }
 
-            return TestHttpMessageHandler.JsonOk(new { operationId = "op-recover-1", status = "Succeeded", candidateRevision = "release/2026.03" });
+            return TestHttpMessageHandler.JsonOk(Operation("Reconciling"));
         });
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(protectedRecoveryEnabled: true);
@@ -57,14 +57,15 @@ public class RecoveryExecutorTests
         Assert.Equal(GitOpsExecutionStatus.RolledBack, result.Status);
         Assert.True(result.Mutated);
         Assert.Contains(handler.CapturedRequests, request => request.Uri.Contains("/rollback", StringComparison.Ordinal));
-        Assert.Contains(result.Findings, finding => finding.Contains("Restored desired revision: release/2026.02", StringComparison.Ordinal));
-        Assert.Contains(result.Findings, finding => finding.Contains("Quarantined rejected revision: release/2026.03", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Findings, finding => finding.StartsWith("Restored desired revision:", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Findings, finding => finding.StartsWith("Quarantined rejected revision:", StringComparison.Ordinal));
+        Assert.Contains(result.Findings, finding => finding.Contains("no Git convergence receipt", StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task ExecuteRecoveryAsync_WrongActor_RefusesAndCallsNoMutatingRoute()
     {
-        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { operationId = "op-recover-1", status = "Succeeded", candidateRevision = "release/2026.03" }));
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(Operation("Reconciling")));
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(protectedRecoveryEnabled: true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
@@ -85,7 +86,7 @@ public class RecoveryExecutorTests
         // The operation now shows a different candidate than the one this grant was approved
         // for -- some other approved intent has already superseded it. Recovery must not
         // overwrite that newer intent.
-        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { operationId = "op-recover-1", status = "Succeeded", candidateRevision = "release/2026.05" }));
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(Operation("Reconciling", candidate: "release/2026.05")));
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(protectedRecoveryEnabled: true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
@@ -103,10 +104,8 @@ public class RecoveryExecutorTests
     [Fact]
     public async Task ExecuteRecoveryAsync_RetryAfterCrash_IssuesExactlyOneCompensation()
     {
-        // Simulates a restart/retry immediately after the mutating call: the SAME grant is
-        // presented to a second RecoveryExecutor (a fresh process would resume this way), but
-        // the shared ActuationSpine ledger still holds the original claim, so the second
-        // attempt observes it instead of issuing a duplicate rollback.
+        // The second executor has a fresh spine with no in-memory claims. Only the
+        // independently retained server operation prevents a second provider request.
         int rollbackCalls = 0;
         TestHttpMessageHandler handler = new(request =>
         {
@@ -114,10 +113,10 @@ public class RecoveryExecutorTests
             if (request.Method == HttpMethod.Post && path.EndsWith("/rollback", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref rollbackCalls);
-                return TestHttpMessageHandler.JsonOk(new { operationId = "op-recover-1", status = "RolledBack" });
+                return TestHttpMessageHandler.JsonOk(Operation("RolledBack"));
             }
 
-            return TestHttpMessageHandler.JsonOk(new { operationId = "op-recover-1", status = "Succeeded", candidateRevision = "release/2026.03" });
+            return TestHttpMessageHandler.JsonOk(Operation(rollbackCalls == 0 ? "Reconciling" : "RolledBack"));
         });
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(protectedRecoveryEnabled: true);
@@ -128,16 +127,30 @@ public class RecoveryExecutorTests
         GitOpsExecutionResult firstResult = await first.ExecuteRecoveryAsync(
             grant, "operator@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
 
-        RecoveryExecutor retry = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        ActuationSpine restartedSpine = new(runtime, DirectAllowedPolicy());
+        RecoveryExecutor retry = new(runtime, gateway, DirectAllowedPolicy(), restartedSpine);
         GitOpsExecutionResult retryResult = await retry.ExecuteRecoveryAsync(
             grant, "operator@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
 
         Assert.Equal(GitOpsExecutionStatus.RolledBack, firstResult.Status);
         Assert.True(firstResult.Mutated);
-        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, retryResult.Status);
+        Assert.Equal(GitOpsExecutionStatus.RolledBack, retryResult.Status);
         Assert.False(retryResult.Mutated);
         Assert.Equal(1, rollbackCalls);
     }
+
+    // This fixture follows DeployOperationResponse/DeployProtectionResponse on server trunk.
+    // Revisions and expected outcomes are declared independently of the executor.
+    private static object Operation(string? status, string candidate = "release/2026.03",
+        string operationId = "op-recover-1", string targetId = "prod-api",
+        string phase = "observing", string policy = "sha256:policy-digest", string prior = "release/2026.02")
+        => new
+        {
+            operationId,
+            status,
+            target = new { targetId, desiredRevision = candidate, currentRevision = prior },
+            protection = new { phase, previousRevision = prior, candidateRevision = candidate, policyDigest = policy, observationDeadline = "2099-01-01T00:00:00Z" }
+        };
 
     // ---- helpers ----
 
