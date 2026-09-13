@@ -176,9 +176,9 @@ internal sealed class RecoveryExecutor(
                 Decision: grant.Decision,
                 BackendSteps: steps,
                 Findings: findings,
-                BlockingReasons: recovered.Payload is null
-                    ? ["recovery-refused"]
-                    : DeployOperationReader.ReadBlockingReasons(recovered.Payload.RootElement));
+                BlockingReasons: ["recovery-acknowledgement-unavailable", .. recovered.Payload is null
+                    ? Array.Empty<string>()
+                    : DeployOperationReader.ReadBlockingReasons(recovered.Payload.RootElement)]);
         }
 
         return Observe(recovered, true);

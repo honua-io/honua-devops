@@ -116,7 +116,9 @@ internal static class ReleaseCapabilityGate
     internal static string? GetProtectedRecoveryScopeRefusal(
         ActuationSpine.DeploymentRecoveryGrant grant, JsonElement operation)
     {
-        if (DeployOperationReader.ReadProtectionPhase(operation) is not ("observing" or "protected")
+        if (!string.Equals(DeployOperationReader.ReadStatus(operation), "Reconciling", StringComparison.OrdinalIgnoreCase)
+            || DeployOperationReader.ReadBlockingReasons(operation).Count != 0
+            || DeployOperationReader.ReadProtectionPhase(operation) is not ("observing" or "protected")
             || !string.Equals(DeployOperationReader.ReadPriorRevision(operation), grant.PriorRevision, StringComparison.Ordinal)
             || !string.Equals(DeployOperationReader.ReadProtectionPolicyDigest(operation), grant.SafetyPolicyDigest, StringComparison.Ordinal)
             || !operation.TryGetProperty("protection", out JsonElement protection)
@@ -148,7 +150,7 @@ internal static class ReleaseCapabilityGate
             Actions:
             [
                 "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
-                $"To enable bounded recovery for a qualified target, set `{ProtectedRecoveryEnableVariable}=true`."
+                "Keep protected recovery disabled until the approval/trigger path, atomic target-intent check and durable desired-state convergence are qualified (see docs/protected-deployment-recovery.md)."
             ],
             ValidationChecks:
             [
