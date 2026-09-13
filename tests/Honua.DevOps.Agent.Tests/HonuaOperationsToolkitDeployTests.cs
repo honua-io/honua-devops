@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -230,23 +232,48 @@ public class HonuaOperationsToolkitDeployTests
         // execute + direct-allowed (pre-authorized) + a server that returns a durable
         // operationId and drives it to Succeeded: the executor creates the operation with
         // submitImmediately=false, then submits and polls to a terminal status.
-        TestHttpMessageHandler handler = new(request =>
+        Dictionary<string, string>? operationParameters = null;
+        TestHttpMessageHandler? handler = null;
+        handler = new(request =>
         {
             string path = request.RequestUri!.AbsolutePath;
+            CapturedRequest captured = handler!.CapturedRequests[^1];
             if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
             {
+                using JsonDocument body = JsonDocument.Parse(captured.Body!);
+                operationParameters = body.RootElement.GetProperty("parameters").EnumerateObject()
+                    .ToDictionary(property => property.Name, property => property.Value.GetString()!, StringComparer.Ordinal);
                 return TestHttpMessageHandler.JsonOk(new { operationId = "op-promote", status = "Planned" });
+            }
+
+            if (request.Method == HttpMethod.Post && path.Contains("/manifest/apply", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { status = "Applied", operationId = "op-promote" });
             }
 
             if (request.Method == HttpMethod.Post && path.EndsWith("/submit", StringComparison.Ordinal))
             {
                 // Terminal success carries the actuator receipt bound to this operation;
                 // without it the executor fails closed to `indeterminate`.
+                string manifestAcknowledgement = Convert.ToHexString(
+                    SHA256.HashData(Encoding.UTF8.GetBytes("{\"status\":\"Applied\",\"operationId\":\"op-promote\"}")))
+                    .ToLowerInvariant();
                 return TestHttpMessageHandler.JsonOk(new
                 {
                     operationId = "op-promote",
                     status = "Succeeded",
-                    actuatorReceipt = new { receiptId = "rcpt-promote", operationId = "op-promote" }
+                    actuatorReceipt = new
+                    {
+                        receiptId = "rcpt-promote",
+                        operationId = "op-promote",
+                        idempotencyKey = operationParameters!["honua.devops/idempotency-key"],
+                        desiredStateDigest = operationParameters["honua.devops/desired-state-digest"],
+                        manifestAcknowledgement,
+                        approvalReference = "op-promote",
+                        policyDecision = "prod-promotion-gated",
+                        reconcileResult = "succeeded",
+                        verificationResult = "verified"
+                    }
                 });
             }
 

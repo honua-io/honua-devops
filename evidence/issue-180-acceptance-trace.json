@@ -1,0 +1,20 @@
+{
+  "scenario": "pr-first-approval-restart-crash-resume",
+  "durableOperationTransitions": [
+    "durable-operation-created: AwaitingApproval",
+    "approval-recorded: approval-180",
+    "process-boundary: first process terminated",
+    "manifest-apply",
+    "manifest-apply-replay",
+    "deploy-operation-submit"
+  ],
+  "processBoundary": "crash after manifest acknowledgement before checkpoint commit",
+  "approvalReceiptId": "approval-180",
+  "desiredStateDigest": "bf999f1edac0100513de645c3b8e0a90b441945d84f3c9383ca69c0a9b1ea0e2",
+  "manifestCallCount": 2,
+  "manifestMutationCount": 1,
+  "manifestAcknowledgement": "8d3e8732f5ffc6dc3a15b41a07f29ccda7103aa8c800416e411b86a6a1e38e34",
+  "submitCallCount": 1,
+  "terminalStatus": "succeeded",
+  "actuatorReceiptDigest": "604da61ef07eb56476c7c537c202ef0785fb2555f6a65e0adc0b2417e5f9917a"
+}

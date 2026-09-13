@@ -339,7 +339,7 @@ public class ActuatorTruthTests
                     // `indeterminate` and no execution claim is possible.
                     actuatorReceipt = new { receiptId = "rcpt-9", operationId = "op-9" }
                 })
-                : TestHttpMessageHandler.JsonOk(new { operationId = "op-9", status = "Submitted" }));
+                : TestHttpMessageHandler.JsonOk(new { operationId = "op-9", status = "Planned" }));
 
         HonuaOperationsToolkit toolkit = Toolkit(handler, ExecuteRuntime(), DirectAllowedPolicy());
 
