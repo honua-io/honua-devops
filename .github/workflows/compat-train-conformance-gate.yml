@@ -36,7 +36,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   conformance-gate-selftest:
@@ -44,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Bash syntax check
         run: |
@@ -58,13 +57,16 @@ jobs:
         run: ./scripts/smoke-compat-train-conformance-gate.sh
 
   conformance-gate-dispatch:
+    permissions:
+      contents: read
+      actions: write # Dispatch and monitor candidate workflows.
     name: Run consumer conformance against the candidate
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: conformance-gate-selftest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Run the conformance gate against the candidate
         env:
@@ -87,7 +89,7 @@ jobs:
 
       - name: Upload conformance evidence + report
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compat-train-conformance-${{ github.run_id }}
           if-no-files-found: warn
