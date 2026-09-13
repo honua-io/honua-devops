@@ -1030,7 +1030,7 @@ internal sealed partial class HonuaOperationsToolkit
             Actions:
             [
                 "Correct the specific cause named by the refusal reason; do not retry unchanged.",
-                "A refusal releases the plan claim, so the same approved plan can be retried once the cause is fixed."
+                "After an apply or destroy attempt, DevOps has spent its local plan claim. Create and approve a fresh plan once the cause is fixed."
             ],
             ValidationChecks: ["the substrate refused before any process mutated state"],
             Risks: ["Nothing was mutated by this call."],
@@ -1425,15 +1425,17 @@ internal sealed partial class HonuaOperationsToolkit
                     steps);
             }
 
-            // The approval bound one plan metadata digest; the receipt must record the
-            // same one, or the receipt describes a different execution.
-            if (!string.Equals(receipt.PlanMetadataDigest, savedPlan.Manifest.PlanMetadataDigest, StringComparison.Ordinal))
+            IReadOnlyList<string> receiptMismatches = receipt.FindPlanMismatches(savedPlan.Manifest.Metadata);
+            if (receiptMismatches.Count > 0)
             {
-                return ProvisioningRefusal(
-                    "exec-receipt-mismatch",
-                    "The execution receipt is bound to a different plan than the one that was approved.",
-                    ["Do not reuse receipts across operations."],
-                    ["Evidence that does not join to its approval is not evidence."]);
+                return new OperationResponse(
+                    Status: "exec-receipt-mismatch",
+                    Summary: "The execution receipt does not match the approved plan: " + string.Join(", ", receiptMismatches) + ".",
+                    Findings: ["No provisioning state or install-handoff authority was recorded."],
+                    Actions: ["Inspect the execution receipt and remote state before planning another mutation."],
+                    ValidationChecks: ["execution receipt failed its approved-plan binding checks"],
+                    Risks: ["The mutation may have run; this is an evidence failure, not a pre-execution refusal."],
+                    BackendSteps: steps);
             }
 
             OperatorContract? operatorContract = null;
@@ -1448,6 +1450,17 @@ internal sealed partial class HonuaOperationsToolkit
                 if (contractRefusal is not null)
                 {
                     return contractRefusal;
+                }
+                if (!string.Equals(operatorContract!.ContractDigest, receipt.OutputContractDigest, StringComparison.Ordinal))
+                {
+                    return new OperationResponse(
+                        Status: "operator-contract-receipt-mismatch",
+                        Summary: "The current operator contract does not match the contract recorded by the approved execution.",
+                        Findings: ["No provisioning state or install-handoff authority was recorded."],
+                        Actions: ["Inspect remote state for an intervening deployment before producing a new plan."],
+                        ValidationChecks: ["operator contract failed its execution-receipt digest check"],
+                        Risks: ["The mutation ran, but the subsequently read outputs cannot establish its handoff identity."],
+                        BackendSteps: steps);
                 }
             }
 

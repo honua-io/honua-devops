@@ -41,7 +41,14 @@ internal sealed record ExactPlanMetadata(
     string? StateLineageBefore,
     long? StateSerialBefore,
     string SavedPlanSha256,
-    bool ReleaseQualified)
+    bool ReleaseQualified,
+    string? ActorId,
+    string? TargetId,
+    string? CandidateDigest,
+    string? WorkloadIdentityContractDigest,
+    string? BackendBucketArn,
+    string? BackendLockingKind,
+    string? BackendLockingDetail)
 {
     internal static bool TryRead(string json, string schemaJson, out ExactPlanMetadata? metadata, out string error)
     {
@@ -106,7 +113,14 @@ internal sealed record ExactPlanMetadata(
             StateLineageBefore: ReadString(stateBefore, "lineage"),
             StateSerialBefore: ReadInt64(stateBefore, "serial"),
             SavedPlanSha256: plan.GetProperty("sha256").GetString()!,
-            ReleaseQualified: posture.GetProperty("release_qualified").GetBoolean());
+            ReleaseQualified: posture.GetProperty("release_qualified").GetBoolean(),
+            ActorId: ReadString(root, "actor_id"),
+            TargetId: ReadString(root, "target_id"),
+            CandidateDigest: ReadString(root, "candidate_digest"),
+            WorkloadIdentityContractDigest: ReadString(root, "workload_identity_contract_digest"),
+            BackendBucketArn: ReadString(backend, "bucket_arn"),
+            BackendLockingKind: ReadString(backend.GetProperty("locking"), "kind"),
+            BackendLockingDetail: ReadString(backend.GetProperty("locking"), "detail"));
         return true;
     }
 
@@ -162,7 +176,15 @@ internal sealed record TerraformExecReceipt(
     string OutputContractName,
     string? OutputContractDigest,
     string TeardownRoot,
-    string TeardownAction)
+    string TeardownAction,
+    string? ActorId,
+    string? TargetId,
+    string? CandidateDigest,
+    string? Issuer,
+    string? WorkloadIdentityContractDigest,
+    string? BackendBucketArn,
+    string? BackendLockingKind,
+    string? BackendLockingDetail)
 {
     internal static bool TryRead(string json, string schemaJson, out TerraformExecReceipt? receipt, out string error)
     {
@@ -219,11 +241,65 @@ internal sealed record TerraformExecReceipt(
             OutputContractName: outputContract.GetProperty("output_name").GetString()!,
             OutputContractDigest: ExactPlanMetadata.ReadString(outputContract, "digest"),
             TeardownRoot: cleanup.GetProperty("teardown_root").GetString()!,
-            TeardownAction: cleanup.GetProperty("teardown_action").GetString()!);
+            TeardownAction: cleanup.GetProperty("teardown_action").GetString()!,
+            ActorId: ExactPlanMetadata.ReadString(root, "actor_id"),
+            TargetId: ExactPlanMetadata.ReadString(root, "target_id"),
+            CandidateDigest: ExactPlanMetadata.ReadString(root, "candidate_digest"),
+            Issuer: ExactPlanMetadata.ReadString(workload, "issuer"),
+            WorkloadIdentityContractDigest: ExactPlanMetadata.ReadString(workload, "contract_digest"),
+            BackendBucketArn: ExactPlanMetadata.ReadString(backendStep, "bucket_arn"),
+            BackendLockingKind: ExactPlanMetadata.ReadString(backendStep.GetProperty("locking"), "kind"),
+            BackendLockingDetail: ExactPlanMetadata.ReadString(backendStep.GetProperty("locking"), "detail"));
         return true;
     }
 
     internal bool Succeeded => string.Equals(Status, "succeeded", StringComparison.Ordinal) && ExitStatus == 0;
+
+    // A valid schema and an echoed digest do not establish that the receipt describes
+    // the approved execution. Compare the independently emitted facts before they can
+    // enter durable provisioning state or authorize an install handoff.
+    internal IReadOnlyList<string> FindPlanMismatches(ExactPlanMetadata plan)
+    {
+        List<string> mismatches = [];
+        void Match(string field, string? actual, string? expected)
+        {
+            if (!string.Equals(actual, expected, StringComparison.Ordinal))
+            {
+                mismatches.Add(field);
+            }
+        }
+
+        Match("plan_metadata_digest", PlanMetadataDigest, plan.PlanMetadataDigest);
+        Match("approved_digest", ApprovedDigest, plan.PlanMetadataDigest);
+        Match("saved_plan_sha256", SavedPlanSha256, plan.SavedPlanSha256);
+        Match("action", Action, plan.Action);
+        Match("actor_id", ActorId, plan.ActorId);
+        Match("target_id", TargetId, plan.TargetId);
+        Match("candidate_digest", CandidateDigest, plan.CandidateDigest);
+        Match("backend_step.backend_config_digest", BackendConfigDigest, plan.BackendConfigDigest);
+        Match("backend_step.backend_kind", BackendKind, plan.BackendKind);
+        Match("backend_step.workspace", Workspace, plan.Workspace);
+        Match("backend_step.object_key", ObjectKey, plan.ObjectKey);
+        Match("backend_step.bucket_arn", BackendBucketArn, plan.BackendBucketArn);
+        Match("backend_step.locking.kind", BackendLockingKind, plan.BackendLockingKind);
+        Match("backend_step.locking.detail", BackendLockingDetail, plan.BackendLockingDetail);
+        Match("workload_identity.account_id", AccountId, plan.AccountId);
+        Match("workload_identity.assumed_role_arn", AssumedRoleArn, plan.AssumedRoleArn);
+        Match("workload_identity.role_id", RoleId, plan.RoleId);
+        Match("workload_identity.partition", Partition, plan.Partition);
+        Match("workload_identity.credential_kind", CredentialKind, plan.CredentialKind);
+        Match("workload_identity.issuer", Issuer, plan.Issuer);
+        Match("workload_identity.contract_digest", WorkloadIdentityContractDigest, plan.WorkloadIdentityContractDigest);
+        Match("state_before.lineage", StateLineageBefore, plan.StateLineageBefore);
+        if (StateSerialBefore != plan.StateSerialBefore)
+        {
+            mismatches.Add("state_before.serial");
+        }
+        Match("cleanup.teardown_root", TeardownRoot, plan.TerraformRoot);
+        Match("cleanup.teardown_action", TeardownAction, "destroy");
+        Match("output_contract.output_name", OutputContractName, "operator_contract_digest");
+        return mismatches;
+    }
 }
 
 /// <summary>

@@ -221,7 +221,7 @@ live MCP surface 1:1):
 
 ## Governed provisioning and verified handoff
 
-Terraform is never invoked directly. Every plan and apply runs through the
+Every plan and apply runs through the
 honua-iac governed execution substrate — `scripts/terraform-exact-plan.sh` and
 `scripts/terraform-exact-apply.sh` in the checkout named by
 `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` — which owns backend resolution, the
@@ -233,8 +233,10 @@ Terraform argv.
 When the substrate refuses, its reason code is the tool status:
 `iac-refused-state-serial-drift`, `iac-refused-account-mismatch`,
 `iac-refused-backend-substituted`, and so on. A refusal happens **before any
-mutation**, so nothing was changed and the same approved plan can be retried
-once the named cause is fixed. See
+mutation**. DevOps nevertheless spends its local plan claim once the wrapper is
+invoked, including on refusal: fix the cause, then create and approve a fresh plan.
+Read-only `terraform show` and `terraform output` calls consume saved artifacts
+and stack outputs directly. See
 `docs/devops/terraform-exact-plan-contract.md` in honua-iac for the full matrix.
 
 `provision_infrastructure` returns a stable `provisioningOperationId`, the exact
@@ -244,15 +246,25 @@ identity, plus a one-time challenge.
 
 Apply/destroy additionally requires `approvalReceiptJson` using schema
 `honua.devops.provision-approval/v1` (`contracts/honua-devops-provision-approval.v1.schema.json`).
-The receipt issuer must appear in `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS`
-(`issuer=base64-hmac-key`, semicolon-separated; keys are secret-injected, never
-committed). Its base64 HMAC-SHA256 signature covers these newline-separated
+The certified path sets `HONUA_DEVOPS_PROVISION_APPROVAL_SIGNING_MODE=kms-mac`
+and allowlists issuers in `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS`
+(`issuer=kms-key-arn`, semicolon-separated). The signer principal needs
+`kms:GenerateMac`; the verifier principal needs only `kms:VerifyMac` on the
+allowlisted key. The key id is the first 16 hex characters of SHA-256 over the
+UTF-8 KMS key ARN. No key material is exported.
+
+The explicitly non-evidentiary development mode `local-hmac-dev` instead uses
+`HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS` (`issuer=base64-hmac-key`), with
+the key id derived from the decoded key bytes. Its verifier can sign receipts,
+so it cannot qualify the release approval boundary.
+
+The base64 HMAC-SHA256 signature covers these newline-separated
 UTF-8 fields in order:
 
-`schemaVersion`, `approvalReceiptId`, `issuer`, `keyId` (first 16 hex chars of
-SHA-256 over the decoded key), `provisioningOperationId`, lowercase
+`schemaVersion`, `approvalReceiptId`, `issuer`, `keyId`, `provisioningOperationId`, lowercase
 `planSha256`, lowercase `planMetadataDigest`, `action`, `stack`, `environment`,
-`decision`, UTC `issuedAtUtc` and UTC `expiresAtUtc` in round-trip (`O`) format.
+`decision`, UTC `issuedAtUtc` and UTC `expiresAtUtc` in round-trip (`O`) format,
+and `signingMode`. The declared mode must match the configured verifier.
 
 `planMetadataDigest` is the value the apply wrapper checks against
 `--approved-digest`. It transitively binds the backend, target account and role,
@@ -264,6 +276,15 @@ a missing approval fails closed inside the substrate as well.
 Receipts must say `approved`, expire within one hour, and match the exact saved
 plan. Missing, expired, substituted, untrusted, malformed, or replayed receipts
 start no Terraform apply process.
+
+After execution, DevOps compares the receipt's approval and plan hashes, action,
+actor/target/candidate identities, backend, execution identity, prior state, and
+teardown root against the reviewed plan metadata. The operator-contract digest
+read from Terraform output must also match the execution receipt. A mismatch
+returns `exec-receipt-mismatch` or `operator-contract-receipt-mismatch`, records
+the attempted mutation in backend evidence, and creates no successful
+provisioning state or handoff authority. Inspect remote state before replanning:
+these are post-execution evidence failures.
 
 Handoff emission also requires immutable release inputs:
 
