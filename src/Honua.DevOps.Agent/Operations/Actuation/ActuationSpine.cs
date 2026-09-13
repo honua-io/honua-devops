@@ -307,6 +307,290 @@ internal sealed class ActuationSpine
     }
 
     // ---------------------------------------------------------------------------------
+    // Bounded deployment recovery (issue #191)
+    // ---------------------------------------------------------------------------------
+    //
+    // A DeploymentRecoveryGrant is a THIRD grant kind, distinct from OperationGrant/
+    // MutationGrant above. It is minted once, at the moment a deployment is approved, and
+    // seals the EXACT scope of compensation that approval authorized: the actor, tenant and
+    // target it covers, the prior/candidate revision pair, the safety-policy digest that
+    // governed the approval, an expiry, and which single compensation it permits. Recovery
+    // execution later (RecoveryExecutor) re-verifies a request against this sealed scope
+    // instead of trusting a fresh caller-supplied operationId/reason the way the generic,
+    // model-invocable RollbackGitOpsOperationAsync tool does -- so "only the declared recovery
+    // is preauthorized; generic model tools remain proposal-only and arbitrary rollback stays
+    // gated" holds structurally, not just by convention.
+
+    // Stage 1 for recovery: mint the sealed grant. Reuses Authorize's fail-closed checks
+    // (target configured, audit sink configured, idempotency key present) and its
+    // GitOpsActuationDecision, then additionally requires every recovery-specific field and an
+    // expiry that is still in the future at issuance.
+    internal bool AuthorizeRecoveryGrant(
+        ActuationRequest request,
+        string tenant,
+        string priorRevision,
+        string candidateRevision,
+        string safetyPolicyDigest,
+        DateTimeOffset expiresAtUtc,
+        PermittedCompensation compensation,
+        string? operationId,
+        out DeploymentRecoveryGrant? grant,
+        out string refusalReason,
+        TimeProvider? timeProvider = null)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        grant = null;
+
+        ActuationAuthorization authorization = Authorize(request);
+        if (!authorization.IsGranted)
+        {
+            refusalReason = authorization.Reason;
+            return false;
+        }
+
+        if (!authorization.MayMutate)
+        {
+            refusalReason = authorization.Decision.Rationale;
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(tenant)
+            || string.IsNullOrWhiteSpace(priorRevision)
+            || string.IsNullOrWhiteSpace(candidateRevision)
+            || string.IsNullOrWhiteSpace(safetyPolicyDigest))
+        {
+            refusalReason = "A recovery grant requires a tenant, prior revision, candidate revision, and safety policy digest.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(operationId))
+        {
+            refusalReason = "No durable operation id was returned by the control plane; a recovery grant cannot be bound to an invented id.";
+            return false;
+        }
+
+        DateTimeOffset now = (timeProvider ?? TimeProvider.System).GetUtcNow();
+        if (expiresAtUtc <= now)
+        {
+            refusalReason = $"Recovery grant expiry `{expiresAtUtc:O}` must be after issuance time `{now:O}`.";
+            return false;
+        }
+
+        grant = DeploymentRecoveryGrant.Issue(
+            IssuanceSeal,
+            request.Actor,
+            tenant,
+            request.Target,
+            priorRevision,
+            candidateRevision,
+            safetyPolicyDigest,
+            expiresAtUtc,
+            compensation,
+            request.IdempotencyKey,
+            operationId.Trim(),
+            authorization.Decision);
+        refusalReason = string.Empty;
+        return true;
+    }
+
+    // Stage 2 for recovery: re-verify a recovery request against the sealed grant (actor,
+    // target, requested compensation, expiry, and a compare-and-set against the CURRENTLY
+    // OBSERVED candidate revision so recovery never overwrites a newer approved intent), then
+    // fall through to the same at-most-once ledger every other mutation uses so a restart/retry
+    // observes the original claim instead of issuing a second compensation.
+    internal bool TryAuthorizeRecovery(
+        DeploymentRecoveryGrant grant,
+        string requestedActor,
+        string requestedTarget,
+        string observedCandidateRevision,
+        PermittedCompensation requestedCompensation,
+        out MutationGrant? mutationGrant,
+        out string refusalReason,
+        TimeProvider? timeProvider = null)
+    {
+        ArgumentNullException.ThrowIfNull(grant);
+        mutationGrant = null;
+
+        DateTimeOffset now = (timeProvider ?? TimeProvider.System).GetUtcNow();
+        if (!grant.TryAuthorize(requestedActor, requestedTarget, observedCandidateRevision, requestedCompensation, now, out refusalReason))
+        {
+            return false;
+        }
+
+        OperationGrant origin = OperationGrant.Issue(
+            IssuanceSeal,
+            "honua.deploy-operation.recovery",
+            "recover",
+            grant.Target,
+            ComputeRecoveryDigest(grant),
+            grant.IdempotencyKey,
+            "protected-recovery",
+            grant.Actor,
+            BackendMutation.DeployOperationCreate,
+            grant.Decision);
+
+        ApprovalEvidence approval = ApprovalEvidence.NotRequired(
+            $"Bounded recovery grant for operation `{grant.OperationId}` was authorized at deployment-approval time " +
+            $"(expires {grant.ExpiresAtUtc:O}); scope re-verified against actor, target, candidate revision, and expiry before compensation.");
+
+        return TryAuthorizeMutation(origin, BackendMutation.DeployOperationRollback, grant.OperationId, approval, out mutationGrant, out refusalReason);
+    }
+
+    private static string ComputeRecoveryDigest(DeploymentRecoveryGrant grant)
+    {
+        string canonical = string.Join(
+            "\n",
+            grant.Actor,
+            grant.Tenant,
+            grant.Target,
+            grant.PriorRevision,
+            grant.CandidateRevision,
+            grant.SafetyPolicyDigest,
+            grant.Compensation.ToString());
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    // The bounded compensation(s) a DeploymentRecoveryGrant may authorize. Kept as its own enum
+    // (rather than reusing BackendMutation) so a distinct compensation must be separately
+    // declared and approved -- a grant issued for one can never be presented to authorize the
+    // other; DeploymentRecoveryGrant.TryAuthorize refuses any requested compensation that does
+    // not exactly match what was granted.
+    internal enum PermittedCompensation
+    {
+        // Restore the target to PriorRevision through the deploy-control rollback route.
+        RestorePriorRevision,
+
+        // Record CandidateRevision as rejected without restoring traffic -- for a target where
+        // the prior revision is no longer a safe restore point. Not yet wired to an actuator;
+        // declared now so a grant scoped to it is structurally distinct from RestorePriorRevision.
+        QuarantineCandidateOnly
+    }
+
+    // Immutable, sealed the same way OperationGrant/MutationGrant are: a private constructor
+    // reachable only through Issue(seal, ...), so a hand-rolled grant cannot authorize anything.
+    internal sealed class DeploymentRecoveryGrant
+    {
+        private DeploymentRecoveryGrant(
+            string actor,
+            string tenant,
+            string target,
+            string priorRevision,
+            string candidateRevision,
+            string safetyPolicyDigest,
+            DateTimeOffset expiresAtUtc,
+            PermittedCompensation compensation,
+            string idempotencyKey,
+            string operationId,
+            GitOpsActuationDecision decision)
+        {
+            Actor = actor;
+            Tenant = tenant;
+            Target = target;
+            PriorRevision = priorRevision;
+            CandidateRevision = candidateRevision;
+            SafetyPolicyDigest = safetyPolicyDigest;
+            ExpiresAtUtc = expiresAtUtc;
+            Compensation = compensation;
+            IdempotencyKey = idempotencyKey;
+            OperationId = operationId;
+            Decision = decision;
+        }
+
+        internal string Actor { get; }
+
+        internal string Tenant { get; }
+
+        internal string Target { get; }
+
+        internal string PriorRevision { get; }
+
+        internal string CandidateRevision { get; }
+
+        internal string SafetyPolicyDigest { get; }
+
+        internal DateTimeOffset ExpiresAtUtc { get; }
+
+        internal PermittedCompensation Compensation { get; }
+
+        internal string IdempotencyKey { get; }
+
+        internal string OperationId { get; }
+
+        internal GitOpsActuationDecision Decision { get; }
+
+        // Every bound field must match exactly. A mismatch is a widening or misdirection
+        // attempt (wrong actor/target, a broader compensation than declared, an expired grant,
+        // or a candidate revision that has moved since approval) and is refused with a specific
+        // machine-readable reason -- never silently narrowed or coerced to fit.
+        internal bool TryAuthorize(
+            string requestedActor,
+            string requestedTarget,
+            string observedCandidateRevision,
+            PermittedCompensation requestedCompensation,
+            DateTimeOffset now,
+            out string refusalReason)
+        {
+            if (now > ExpiresAtUtc)
+            {
+                refusalReason = $"Recovery grant for operation `{OperationId}` expired at {ExpiresAtUtc:O} (now {now:O}).";
+                return false;
+            }
+
+            if (!string.Equals(requestedActor, Actor, StringComparison.Ordinal))
+            {
+                refusalReason = $"Recovery grant for operation `{OperationId}` was issued to actor `{Actor}`, not `{requestedActor}`.";
+                return false;
+            }
+
+            if (!string.Equals(requestedTarget, Target, StringComparison.Ordinal))
+            {
+                refusalReason = $"Recovery grant for operation `{OperationId}` was issued for target `{Target}`, not `{requestedTarget}`.";
+                return false;
+            }
+
+            if (requestedCompensation != Compensation)
+            {
+                refusalReason = $"Recovery grant for operation `{OperationId}` authorizes `{Compensation}` only, not `{requestedCompensation}`.";
+                return false;
+            }
+
+            // Compare-and-set: recovery may only compensate the exact candidate it was approved
+            // against. If the operation now shows a different (newer) candidate revision, some
+            // other approved intent has already superseded this grant.
+            if (!string.Equals(observedCandidateRevision, CandidateRevision, StringComparison.Ordinal))
+            {
+                refusalReason =
+                    $"Operation `{OperationId}` now shows candidate revision `{observedCandidateRevision}`, not the granted `{CandidateRevision}`; " +
+                    "a newer approved intent has superseded this recovery grant.";
+                return false;
+            }
+
+            refusalReason = string.Empty;
+            return true;
+        }
+
+        internal static DeploymentRecoveryGrant Issue(
+            object seal,
+            string actor,
+            string tenant,
+            string target,
+            string priorRevision,
+            string candidateRevision,
+            string safetyPolicyDigest,
+            DateTimeOffset expiresAtUtc,
+            PermittedCompensation compensation,
+            string idempotencyKey,
+            string operationId,
+            GitOpsActuationDecision decision)
+        {
+            RequireSeal(seal);
+            return new DeploymentRecoveryGrant(
+                actor, tenant, target, priorRevision, candidateRevision, safetyPolicyDigest,
+                expiresAtUtc, compensation, idempotencyKey, operationId, decision);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------
     // Stage 2: bind a resolved operation + verified approval to one mutating route
     // ---------------------------------------------------------------------------------
 

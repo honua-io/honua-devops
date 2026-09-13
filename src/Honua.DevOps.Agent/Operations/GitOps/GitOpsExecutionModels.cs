@@ -373,6 +373,17 @@ internal static class DeployOperationReader
         return true;
     }
 
+    // The revision currently activated for the target (candidate/current) and the known-good
+    // revision recovery would restore (prior). Field names mirror the vocabulary already used
+    // by MetadataReleaseChangeSetBuilder's rollback-policy reader (knownGoodRevision/
+    // priorRevision/previousRevision) so a recovery grant's compare-and-set (honua-devops#191)
+    // reads the same server contract every other rollback-adjacent path already reads.
+    internal static string? ReadCandidateRevision(JsonElement root)
+        => ReadString(root, "candidateRevision", "candidate_revision", "currentRevision", "current_revision", "revision");
+
+    internal static string? ReadPriorRevision(JsonElement root)
+        => ReadString(root, "priorRevision", "prior_revision", "knownGoodRevision", "known_good_revision", "previousRevision", "previous_revision");
+
     internal static string? ReadRollbackClass(JsonElement root)
     {
         if (TryGetObject(root, "metadataRelease", out JsonElement metadataRelease)
@@ -541,6 +552,91 @@ internal static class DeployOperationReader
                 && property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 value = property.Value.GetBoolean();
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+// Maps the executor's machine-readable GitOpsExecutionStatus (plus the server's own status/
+// phase) onto the simple, outcome-oriented rollout journey the release contract promises
+// (honua-devops#191): "change preview -> scoped approval -> Checking update / Updating /
+// Confirming service health -> Update complete or Previous version restored or Needs
+// attention." No Git/PR/telemetry mechanics are required to read this vocabulary; it is a
+// pure, deterministic projection of state already on the operation -- never a new backend
+// call, never mutating.
+internal static class RolloutJourneyStatus
+{
+    internal const string CheckingUpdate = "checking-update";
+    internal const string Updating = "updating";
+    internal const string ConfirmingServiceHealth = "confirming-service-health";
+    internal const string UpdateComplete = "update-complete";
+    internal const string PreviousVersionRestored = "previous-version-restored";
+    internal const string NeedsAttention = "needs-attention";
+
+    // Server phase tokens that indicate the rollout has moved past "applying" into
+    // post-activation health verification. Tolerant substring match, mirroring the rest of
+    // DeployOperationReader's tolerant vocabulary -- the exact phase names are server-owned and
+    // may vary by target/version.
+    private static readonly string[] HealthVerificationPhaseTokens =
+        ["smoke", "verify", "observ", "health", "confirm"];
+
+    internal static string From(GitOpsExecutionResult result)
+        => Describe(result.Status, result.ServerStatus, currentPhase: null);
+
+    internal static string Describe(string executionStatus, string? serverStatus, string? currentPhase)
+    {
+        ArgumentNullException.ThrowIfNull(executionStatus);
+
+        switch (executionStatus)
+        {
+            case GitOpsExecutionStatus.PlanOnly:
+            case GitOpsExecutionStatus.ExperimentalDisabled:
+            case GitOpsExecutionStatus.ContractUnavailable:
+            case GitOpsExecutionStatus.AwaitingApproval:
+                // No mutation has actuated yet: still evaluating/gating whether the update may
+                // proceed at all.
+                return CheckingUpdate;
+
+            case GitOpsExecutionStatus.Succeeded:
+                return UpdateComplete;
+
+            case GitOpsExecutionStatus.RolledBack:
+                return PreviousVersionRestored;
+
+            case GitOpsExecutionStatus.Failed:
+            case GitOpsExecutionStatus.ApprovalRequired:
+            case GitOpsExecutionStatus.Indeterminate:
+                return NeedsAttention;
+
+            case GitOpsExecutionStatus.InProgress:
+                if (DeployOperationReader.IsManualInterventionRequired(serverStatus))
+                {
+                    return NeedsAttention;
+                }
+
+                bool verifyingHealth = ContainsAnyToken(currentPhase, HealthVerificationPhaseTokens)
+                    || ContainsAnyToken(serverStatus, HealthVerificationPhaseTokens);
+                return verifyingHealth ? ConfirmingServiceHealth : Updating;
+
+            default:
+                return NeedsAttention;
+        }
+    }
+
+    private static bool ContainsAnyToken(string? value, IReadOnlyList<string> tokens)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        foreach (string token in tokens)
+        {
+            if (value.Contains(token, StringComparison.OrdinalIgnoreCase))
+            {
                 return true;
             }
         }

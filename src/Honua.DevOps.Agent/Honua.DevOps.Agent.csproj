@@ -40,6 +40,14 @@
     <PackageReference Include="AWSSDK.KeyManagementService" Version="4.0.4" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc3" />
     <!--
+      PublishSingleFile above pulls in Microsoft.NET.ILLink.Tasks implicitly, at whatever
+      version ships with the installed SDK. CI's actions/setup-dotnet floats on `10.0.x`, so an
+      SDK patch bump silently drifts the implicit version out from under the committed lock
+      file and every locked restore fails NU1004. Pin it explicitly so the package graph is a
+      function of this file, not of whichever SDK patch happens to be installed.
+    -->
+    <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="10.0.12" />
+    <!--
       Keep Microsoft.Extensions.AI aligned with the Microsoft.Extensions.AI.Abstractions
       floor pulled in by ModelContextProtocol.Core. A split train (AI 10.3.x with
       Abstractions 10.5.x) causes TypeLoadException in FunctionInvokingChatClient.

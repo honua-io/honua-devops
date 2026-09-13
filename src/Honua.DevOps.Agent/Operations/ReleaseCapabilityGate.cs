@@ -17,9 +17,11 @@ internal static class ReleaseCapabilityGate
 {
     internal const string RollbackCapability = "gitops-rollback";
     internal const string CrossEnvironmentPromotionCapability = "cross-environment-promotion";
+    internal const string ProtectedRecoveryCapability = "protected-deployment-recovery";
 
     private const string RollbackEnableVariable = OperationRuntime.RollbackEnabledVariable;
     private const string CrossEnvEnableVariable = OperationRuntime.CrossEnvironmentPromotionEnabledVariable;
+    private const string ProtectedRecoveryEnableVariable = OperationRuntime.ProtectedRecoveryEnabledVariable;
 
     /// <summary>
     /// Returns the canonical rollback refusal when the release capability is disabled,
@@ -89,5 +91,44 @@ internal static class ReleaseCapabilityGate
             Risks:
             [
                 "Enabling experimental cross-environment promotion outside the release posture ships an unsupported multi-environment path."
+            ]);
+
+    /// <summary>
+    /// Returns the canonical protected-recovery refusal when the capability is disabled,
+    /// otherwise <see langword="null"/>. Distinct from <see cref="GetRollbackRefusal"/>: this
+    /// gates only the bounded, declared-at-approval-time compensation
+    /// (<c>DeploymentRecoveryGrant</c>/<c>RecoveryExecutor</c>, honua-devops#191), never the
+    /// free-form model-invoked rollback tool.
+    /// </summary>
+    internal static OperationResponse? GetProtectedRecoveryRefusal(OperationRuntime runtime)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        return runtime.ProtectedRecoveryEnabled ? null : BuildProtectedRecoveryDisabledResponse();
+    }
+
+    /// <summary>Refusal for the bounded protected-recovery surface when it is disabled.</summary>
+    internal static OperationResponse BuildProtectedRecoveryDisabledResponse()
+        => new(
+            Status: "experimental-disabled",
+            Summary: $"Capability `{ProtectedRecoveryCapability}` is not qualified/enabled for this target.",
+            Findings:
+            [
+                "Bounded deployment recovery compensates only the exact prior/candidate revision pair declared and approved at deployment time.",
+                $"The recovery code is retained but gated; it stays off unless `{ProtectedRecoveryEnableVariable}` is explicitly enabled for a qualified target.",
+                $"This is independent of `{RollbackEnableVariable}`: enabling one does not enable the other."
+            ],
+            Actions:
+            [
+                "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
+                $"To enable bounded recovery for a qualified target, set `{ProtectedRecoveryEnableVariable}=true`."
+            ],
+            ValidationChecks:
+            [
+                "Bounded recovery stays disabled by default; only an explicit opt-in per qualified target enables it.",
+                "The forward path (single-environment deploy) remains fully available."
+            ],
+            Risks:
+            [
+                "Enabling bounded recovery for a target that has not been certified end-to-end (honua-release#321) ships an unverified safety claim."
             ]);
 }

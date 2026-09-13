@@ -21,7 +21,12 @@ internal sealed record OperationRuntime(
     // explicitly non-evidentiary: omitting configuration can only remove evidentiary
     // weight from a receipt, never grant it.
     string ProvisionApprovalSigningMode = ApprovalSigningModes.LocalHmacDev,
-    IReadOnlyDictionary<string, string>? ProvisionApprovalIssuerKeyArns = null)
+    IReadOnlyDictionary<string, string>? ProvisionApprovalIssuerKeyArns = null,
+    // honua-devops#191. A distinct, narrowly-scoped capability from the generic experimental
+    // rollback tool above: it gates ONLY the bounded, declared-at-approval-time recovery grant
+    // (DeploymentRecoveryGrant/RecoveryExecutor), never arbitrary model-invoked rollback.
+    // Off by default for the same reason: it stays off until an environment is qualified.
+    bool ProtectedRecoveryEnabled = false)
 {
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
     private static readonly string[] DefaultProductionEnvironments = ["prod", "production", "prd"];
@@ -60,6 +65,12 @@ internal sealed record OperationRuntime(
     // code is retained but not advertised/actuated unless these flags are explicitly enabled.
     internal const string RollbackEnabledVariable = "HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK";
     internal const string CrossEnvironmentPromotionEnabledVariable = "HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION";
+
+    // honua-devops#191. Gates the bounded protected-deployment recovery path independently of
+    // the generic experimental rollback flag above: an environment can qualify bounded recovery
+    // for an approved protected deployment without exposing the free-form rollback tool, and
+    // vice versa. Off by default until an environment/target is certified (honua-release#321).
+    internal const string ProtectedRecoveryEnabledVariable = "HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED";
 
     /// <summary>
     /// Fail-closed runtime: plan mode, observe tier, no deploy target. Used where a runtime
@@ -121,6 +132,8 @@ internal sealed record OperationRuntime(
             Environment.GetEnvironmentVariable(RollbackEnabledVariable));
         bool crossEnvironmentPromotionEnabled = ParseExperimentalFlag(
             Environment.GetEnvironmentVariable(CrossEnvironmentPromotionEnabledVariable));
+        bool protectedRecoveryEnabled = ParseExperimentalFlag(
+            Environment.GetEnvironmentVariable(ProtectedRecoveryEnabledVariable));
         IReadOnlyDictionary<string, string> approvalIssuerKeys = ParseApprovalIssuerKeys(
             Environment.GetEnvironmentVariable(ProvisionApprovalIssuerKeysVariable));
         string? mcpProxyPackage = NormalizeOptionalValue(Environment.GetEnvironmentVariable(McpProxyPackageVariable));
@@ -155,7 +168,8 @@ internal sealed record OperationRuntime(
             mcpProxyIntegrity,
             candidateReference,
             approvalSigningMode,
-            approvalIssuerKeyArns);
+            approvalIssuerKeyArns,
+            protectedRecoveryEnabled);
     }
 
     private static string ParseApprovalSigningMode(string? value)
