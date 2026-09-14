@@ -118,8 +118,10 @@ target after such a failure.
 
 Check out a pinned revision of `honua-devops` alongside the calling repository.
 Invoke the script by path from any working directory; keep its sibling Python
-helper. Requirements: Bash, Python 3 (standard library only), curl, and standard
-Unix utilities. No .NET build, AWS CLI, AWS credentials, or Honua CLI is required.
+helper. Requirements: Bash, Python 3 (standard library only), the command-line
+HTTP client invoked by the script's request wrapper (see `scripts/run-demo-e2e.sh`),
+and standard Unix utilities. No .NET build, AWS CLI, AWS credentials, or Honua CLI
+is required.
 The optional Honua CLI is used only for the existing read count probe.
 
 ```bash
