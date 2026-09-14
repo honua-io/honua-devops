@@ -685,7 +685,7 @@ internal sealed partial class HonuaOperationsToolkit(
 
         if (isPromote)
         {
-            PromotionExecutor promotionExecutor = new(runtime, gateway, EffectivePolicy, _spine);
+            PromotionExecutor promotionExecutor = new(runtime, gateway, EffectivePolicy, _spine, ProtectedRecoveryIntentLedger());
             return await promotionExecutor.ExecutePromotionAsync(
                 revision,
                 currentRevision: null,
@@ -700,7 +700,7 @@ internal sealed partial class HonuaOperationsToolkit(
                 desiredState);
         }
 
-        GitOpsExecutor executor = new(runtime, gateway, EffectivePolicy, spine: _spine);
+        GitOpsExecutor executor = new(runtime, gateway, EffectivePolicy, spine: _spine, intentLedger: ProtectedRecoveryIntentLedger());
         return await executor.ExecuteSyncAsync(
             revision,
             currentRevision: null,
@@ -714,6 +714,11 @@ internal sealed partial class HonuaOperationsToolkit(
             cancellationToken,
             desiredState);
     }
+
+    // Approved sync/submit intent is recorded only where protected recovery is enabled, so a
+    // later recovery can compare-and-set against it and the next reconcile honors quarantine.
+    private IDesiredIntentLedger? ProtectedRecoveryIntentLedger()
+        => runtime.ProtectedRecoveryEnabled ? DesiredIntentLedgerFactory.Create(EffectivePolicy.AuditHookTarget) : null;
 
     // Maps the executor's actuation status onto the tool's response Status vocabulary.
     private static string MapActuationStatus(string actuationStatus)
@@ -1736,7 +1741,7 @@ internal sealed partial class HonuaOperationsToolkit(
         }
         else
         {
-            GitOpsExecutor submitExecutor = new(runtime, gateway, EffectivePolicy, spine: _spine);
+            GitOpsExecutor submitExecutor = new(runtime, gateway, EffectivePolicy, spine: _spine, intentLedger: ProtectedRecoveryIntentLedger());
             rollbackExecution = await submitExecutor.ExecuteSubmitAsync(
                 ExtractRequiredParameter(parameters, "operationId"),
                 SanitizeFreeText(parameters, "approved runbook submit"),

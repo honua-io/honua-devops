@@ -403,6 +403,10 @@ internal static class DeployOperationReader
     internal static string? ReadProtectionPolicyDigest(JsonElement root)
         => TryGetObject(root, "protection", out JsonElement protection) ? ReadString(protection, "policyDigest") : null;
 
+    // Git lineage the server attaches to a metadata release; absent for image-only deploys.
+    internal static string? ReadMetadataReleaseCommitSha(JsonElement root)
+        => TryGetObject(root, "metadataRelease", out JsonElement metadataRelease) ? ReadString(metadataRelease, "commitSha") : null;
+
     internal static string? ReadRollbackClass(JsonElement root)
     {
         if (TryGetObject(root, "metadataRelease", out JsonElement metadataRelease)
