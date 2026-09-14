@@ -89,6 +89,11 @@ internal static class DesiredIntentLedgerFactory
             : null;
 }
 
+// Thrown when a committed (non-trailing) ledger line fails to parse, distinguishing that from
+// an unterminated final write so the ledger can fail closed instead of silently reading a
+// stale version.
+internal sealed class MalformedDesiredIntentLedgerException(string message) : Exception(message);
+
 internal sealed class FileDesiredIntentLedger : IDesiredIntentLedger
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -107,9 +112,9 @@ internal sealed class FileDesiredIntentLedger : IDesiredIntentLedger
         try
         {
             await using FileStream stream = await OpenExclusiveAsync(cancellationToken).ConfigureAwait(false);
-            return new DesiredIntentSnapshot(true, ReadLatest(stream, target), string.Empty);
+            return new DesiredIntentSnapshot(true, ReadLatest(stream, target, _path), string.Empty);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or MalformedDesiredIntentLedgerException)
         {
             return new DesiredIntentSnapshot(false, null, $"Desired-intent ledger `{_path}` is unreadable: {exception.Message}");
         }
@@ -126,7 +131,7 @@ internal sealed class FileDesiredIntentLedger : IDesiredIntentLedger
             // The exclusive handle spans read -> compare -> append, so two writers (in this
             // process or another) cannot both observe the same version and both append.
             await using FileStream stream = await OpenExclusiveAsync(cancellationToken).ConfigureAwait(false);
-            DesiredIntentRecord? latest = ReadLatest(stream, next.Target);
+            DesiredIntentRecord? latest = ReadLatest(stream, next.Target, _path);
             if (latest is not null && latest.SameIntentAs(next))
             {
                 return new DesiredIntentCommitResult(DesiredIntentCommitStatus.AlreadyRecorded, latest,
@@ -161,7 +166,7 @@ internal sealed class FileDesiredIntentLedger : IDesiredIntentLedger
             return new DesiredIntentCommitResult(DesiredIntentCommitStatus.Committed, committed,
                 $"Desired intent for `{next.Target}` recorded at version {committed.Version}.");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or MalformedDesiredIntentLedgerException)
         {
             return new DesiredIntentCommitResult(DesiredIntentCommitStatus.WriteFailed, null,
                 $"Desired-intent ledger `{_path}` write failed: {exception.Message}");
@@ -191,7 +196,7 @@ internal sealed class FileDesiredIntentLedger : IDesiredIntentLedger
         }
     }
 
-    private static DesiredIntentRecord? ReadLatest(FileStream stream, string target)
+    private static DesiredIntentRecord? ReadLatest(FileStream stream, string target, string path)
     {
         stream.Position = 0;
         using StreamReader reader = new(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
@@ -215,6 +220,15 @@ internal sealed class FileDesiredIntentLedger : IDesiredIntentLedger
             }
             catch (JsonException)
             {
+                if (reader.Peek() != -1)
+                {
+                    // A malformed line before the final one is real corruption, not an
+                    // unterminated trailing write; fail closed rather than falling back to a
+                    // stale version that could silently discard a restored/quarantine record.
+                    throw new MalformedDesiredIntentLedgerException(
+                        $"Desired-intent ledger `{path}` contains a malformed record before the final line for target `{target}`.");
+                }
+
                 // A torn trailing line was never acknowledged as committed; ignore it.
             }
         }

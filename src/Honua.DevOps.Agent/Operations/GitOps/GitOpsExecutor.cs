@@ -152,6 +152,14 @@ internal sealed class GitOpsExecutor(
         if (_intentLedger is not null)
         {
             DesiredIntentSnapshot intent = await _intentLedger.ReadLatestAsync(_runtime.DeployTargetId ?? string.Empty, cancellationToken);
+            if (!intent.Readable)
+            {
+                findings.Add($"{intent.Detail}; nothing was submitted.");
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.ContractUnavailable, null, null, false, decision, steps, findings,
+                    ["desired-intent-write-failed"]);
+            }
+
             string? quarantine = ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(intent.Latest, desiredRevision);
             if (quarantine is not null)
             {
@@ -276,6 +284,34 @@ internal sealed class GitOpsExecutor(
                 DeployOperationReader.IsAwaitingApproval(serverStatus),
                 createBlockers));
 
+        // Mirror TryAuthorizeMutation's approval check here, BEFORE recording intent and BEFORE
+        // consuming the at-most-once submit claim below: the ledger write is fallible (disk
+        // error, CAS conflict), and the submit claim can never be released once granted, so it
+        // must be the last fallible thing to run on this path. TryAuthorizeMutation re-verifies
+        // approval + the claim itself right after.
+        if (!approval.Satisfied)
+        {
+            findings.Add($"Submission paused: {approval.Reason}");
+            findings.Add($"Surface operationId `{operationId}` and the recorded evidence for governed approval; submit it through the deploy-control approval path.");
+            return new GitOpsExecutionResult(
+                Status: GitOpsExecutionStatus.AwaitingApproval,
+                OperationId: operationId,
+                ServerStatus: serverStatus,
+                Mutated: operationRecorded,
+                Decision: decision,
+                BackendSteps: steps,
+                Findings: findings,
+                BlockingReasons: createBlockers);
+        }
+
+        GitOpsExecutionResult? intentRefusal = await RecordApprovedIntentAsync(
+            operationId, desiredRevision, approval.ReceiptId, correlationId, serverStatus, operationRecorded,
+            decision, steps, findings, cancellationToken);
+        if (intentRefusal is not null)
+        {
+            return intentRefusal;
+        }
+
         if (!_spine.TryAuthorizeMutation(
                 operationGrant,
                 BackendMutation.DeployOperationSubmit,
@@ -299,14 +335,6 @@ internal sealed class GitOpsExecutor(
 
         findings.Add(
             $"Mutation authorized for operation `{operationId}` by {approval.Kind} ({approval.ReceiptId ?? "no reference"}).");
-
-        GitOpsExecutionResult? intentRefusal = await RecordApprovedIntentAsync(
-            operationId, desiredRevision, approval.ReceiptId, correlationId, serverStatus, operationRecorded,
-            decision, steps, findings, cancellationToken);
-        if (intentRefusal is not null)
-        {
-            return intentRefusal;
-        }
 
         // Desired-state write, when this actuation carries one. It happens HERE — after the
         // durable operation exists and its approval gate is satisfied — never on the planning
@@ -617,6 +645,23 @@ internal sealed class GitOpsExecutor(
             findings.Add($"Submission paused: {refusal}");
             return new GitOpsExecutionResult(
                 GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings, blockers);
+        }
+
+        // Verify the fetched operation actually belongs to the configured target before its
+        // revision is recorded under that target's intent chain: an operationId for another
+        // target would otherwise let that target's revision supersede/inherit this one's
+        // quarantine.
+        string? operationTargetId = DeployOperationReader.ReadTargetId(current.Payload.RootElement);
+        if (!string.IsNullOrWhiteSpace(operationTargetId)
+            && !string.IsNullOrWhiteSpace(_runtime.DeployTargetId)
+            && !string.Equals(operationTargetId, _runtime.DeployTargetId, StringComparison.Ordinal))
+        {
+            findings.Add(
+                $"Deploy operation `{operationId}` targets `{operationTargetId}`, not the configured target " +
+                $"`{_runtime.DeployTargetId}`; nothing was submitted.");
+            return new GitOpsExecutionResult(
+                GitOpsExecutionStatus.ContractUnavailable, operationId, serverStatus, false, decision, steps, findings,
+                ["submit-operation-target-mismatch"]);
         }
 
         GitOpsExecutionResult? intentRefusal = await RecordApprovedIntentAsync(

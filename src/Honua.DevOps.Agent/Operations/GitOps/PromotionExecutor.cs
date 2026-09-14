@@ -16,9 +16,10 @@ internal sealed class PromotionExecutor(
     OperationRuntime runtime,
     BackendGateway gateway,
     OperatorPolicyModel policy,
-    ActuationSpine? spine = null)
+    ActuationSpine? spine = null,
+    IDesiredIntentLedger? intentLedger = null)
 {
-    private readonly GitOpsExecutor _executor = new(runtime, gateway, policy, spine: spine);
+    private readonly GitOpsExecutor _executor = new(runtime, gateway, policy, spine: spine, intentLedger: intentLedger);
 
     internal Task<GitOpsExecutionResult> ExecutePromotionAsync(
         string desiredRevision,
