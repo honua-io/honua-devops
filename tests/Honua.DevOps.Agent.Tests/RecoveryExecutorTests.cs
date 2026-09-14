@@ -16,8 +16,32 @@ namespace Honua.DevOps.Agent.Tests;
 // RecoveryExecutor. Unlike RollbackExecutor's tests (a fresh caller-supplied operationId/
 // reason each call), every scenario here starts from an already-sealed grant, proving the
 // declared-at-approval-time scope -- not a fresh model decision -- gates the compensation.
-public class RecoveryExecutorTests
+public sealed class RecoveryExecutorTests : IDisposable
 {
+    // Every scenario starts from the approved desired intent the deployment approval recorded.
+    // Restart scenarios share this file-backed ledger exactly as a restarted process would.
+    private readonly string _ledgerDirectory = Directory.CreateTempSubdirectory("honua-devops-recovery-").FullName;
+    private readonly FileDesiredIntentLedger _ledger;
+
+    public RecoveryExecutorTests()
+    {
+        _ledger = new FileDesiredIntentLedger(Path.Combine(_ledgerDirectory, "audit.jsonl.desired-intent.jsonl"));
+        Assert.Equal(DesiredIntentCommitStatus.Committed, _ledger
+            .TryCommitAsync(0, ApprovedIntent("release/2026.03", "op-recover-1"), CancellationToken.None)
+            .GetAwaiter().GetResult().Status);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_ledgerDirectory, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
     [Fact]
     public async Task ExecuteRecoveryAsync_CapabilityDisabled_IssuesNothing()
     {
@@ -25,7 +49,7 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         ActuationSpine spine = new(ExecuteRuntime(protectedRecoveryEnabled: false), DirectAllowedPolicy());
         ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
-        RecoveryExecutor executor = new(ExecuteRuntime(protectedRecoveryEnabled: false), gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(ExecuteRuntime(protectedRecoveryEnabled: false), gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             grant, "operator@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
@@ -52,7 +76,7 @@ public class RecoveryExecutorTests
         OperationRuntime runtime = ExecuteRuntime(protectedRecoveryEnabled: true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
         ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             grant, "operator@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
@@ -73,7 +97,7 @@ public class RecoveryExecutorTests
         OperationRuntime runtime = ExecuteRuntime(protectedRecoveryEnabled: true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
         ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             grant, "someone-else@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
@@ -94,7 +118,7 @@ public class RecoveryExecutorTests
         OperationRuntime runtime = ExecuteRuntime(protectedRecoveryEnabled: true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
         ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             grant, "operator@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
@@ -126,12 +150,12 @@ public class RecoveryExecutorTests
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
         ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
 
-        RecoveryExecutor first = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor first = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
         GitOpsExecutionResult firstResult = await first.ExecuteRecoveryAsync(
             grant, "operator@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
 
         ActuationSpine restartedSpine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor retry = new(runtime, gateway, DirectAllowedPolicy(), restartedSpine);
+        RecoveryExecutor retry = new(runtime, gateway, DirectAllowedPolicy(), restartedSpine, _ledger);
         GitOpsExecutionResult retryResult = await retry.ExecuteRecoveryAsync(
             grant, "operator@honua.io", "prod-api", "observation-window-expired", CancellationToken.None);
 
@@ -160,7 +184,7 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
@@ -194,7 +218,7 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
@@ -216,7 +240,7 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
@@ -245,14 +269,14 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(true);
         ActuationSpine firstSpine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor first = new(runtime, gateway, DirectAllowedPolicy(), firstSpine);
+        RecoveryExecutor first = new(runtime, gateway, DirectAllowedPolicy(), firstSpine, _ledger);
         GitOpsExecutionResult firstResult = await first.ExecuteRecoveryAsync(
             IssueGrant(firstSpine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
 
         // No shared grant or claim ledger: reconstruct the declared scope and consume the
         // surviving server operation, as the restarted caller must do.
         ActuationSpine restartedSpine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor restarted = new(runtime, gateway, DirectAllowedPolicy(), restartedSpine);
+        RecoveryExecutor restarted = new(runtime, gateway, DirectAllowedPolicy(), restartedSpine, _ledger);
         GitOpsExecutionResult retryResult = await restarted.ExecuteRecoveryAsync(
             IssueGrant(restartedSpine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
 
@@ -273,7 +297,7 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
@@ -292,7 +316,7 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
@@ -314,7 +338,7 @@ public class RecoveryExecutorTests
         using BackendGateway gateway = CreateGateway(handler);
         OperationRuntime runtime = ExecuteRuntime(true);
         ActuationSpine spine = new(runtime, DirectAllowedPolicy());
-        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine);
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
 
         GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
             IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
@@ -323,6 +347,265 @@ public class RecoveryExecutorTests
         Assert.False(result.Mutated);
         Assert.Contains("recovery-protection-unavailable", result.BlockingReasons);
         Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    [Fact]
+    public async Task ExecuteRecoveryAsync_VerifiedRecovery_RecordsRestoredIntentQuarantineAndLineage()
+    {
+        const string commitSha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        TestHttpMessageHandler handler = new(request => TestHttpMessageHandler.JsonOk(request.Method == HttpMethod.Post
+            ? OperationWithCommit("RolledBack", commitSha)
+            : Operation("Reconciling")));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
+
+        GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
+            IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.RolledBack, result.Status);
+        Assert.Equal(RolloutJourneyStatus.PreviousVersionRestored, RolloutJourneyStatus.From(result));
+        DesiredIntentRecord restored = (await _ledger.ReadLatestAsync("prod-api", CancellationToken.None)).Latest!;
+        Assert.Equal(2, restored.Version);
+        Assert.Equal(DesiredIntentKind.Restored, restored.Kind);
+        Assert.Equal("release/2026.02", restored.DesiredRevision);
+        Assert.Equal(["release/2026.03"], restored.RejectedRevisions);
+        Assert.Equal("op-recover-1", restored.OperationId);
+        Assert.Equal("approval-receipt-op-recover-1", restored.ApprovalReference);
+        Assert.Equal("operator@honua.io", restored.Actor);
+        Assert.Equal(commitSha, restored.CommitSha);
+        Assert.Contains(result.Findings, finding => finding.Contains("restores `release/2026.02` and quarantines `release/2026.03`", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteRecoveryAsync_NewerApprovedIntent_RefusesBeforeAnyBackendCall()
+    {
+        await CommitAsync(1, ApprovedIntent("release/2026.04", "op-newer-2"));
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(Operation("Reconciling")));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
+
+        GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
+            IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+        Assert.Contains("recovery-intent-superseded", result.BlockingReasons);
+        Assert.Empty(handler.CapturedRequests);
+        DesiredIntentRecord latest = (await _ledger.ReadLatestAsync("prod-api", CancellationToken.None)).Latest!;
+        Assert.Equal((2, DesiredIntentKind.Approved, "release/2026.04"), (latest.Version, latest.Kind, latest.DesiredRevision));
+    }
+
+    [Fact]
+    public async Task ExecuteRecoveryAsync_NewerApprovalRecordedDuringRecovery_ConflictsAndNeverClaimsRestoration()
+    {
+        TestHttpMessageHandler handler = new(request =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                // A newer approval lands after recovery read its compare-and-set basis.
+                Assert.Equal(DesiredIntentCommitStatus.Committed,
+                    _ledger.TryCommitAsync(1, ApprovedIntent("release/2026.04", "op-newer-2"), CancellationToken.None).GetAwaiter().GetResult().Status);
+                return TestHttpMessageHandler.JsonOk(Operation("RolledBack"));
+            }
+
+            return TestHttpMessageHandler.JsonOk(Operation("Reconciling"));
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        RecoveryExecutor executor = new(runtime, gateway, DirectAllowedPolicy(), spine, _ledger);
+
+        GitOpsExecutionResult result = await executor.ExecuteRecoveryAsync(
+            IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, result.Status);
+        Assert.Contains("desired-intent-conflict", result.BlockingReasons);
+        Assert.Equal(RolloutJourneyStatus.NeedsAttention, RolloutJourneyStatus.From(result));
+        Assert.True(result.Mutated);
+        DesiredIntentRecord latest = (await _ledger.ReadLatestAsync("prod-api", CancellationToken.None)).Latest!;
+        Assert.Equal((2, DesiredIntentKind.Approved, "release/2026.04"), (latest.Version, latest.Kind, latest.DesiredRevision));
+        Assert.Empty(latest.RejectedRevisions);
+        Assert.DoesNotContain(result.Findings, finding => finding.Contains("quarantines", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteRecoveryAsync_WithoutDurableOrRecordedIntent_IssuesNothing()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(Operation("Reconciling")));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+
+        // The stdout audit target has no durable ledger.
+        GitOpsExecutionResult noLedger = await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), spine)
+            .ExecuteRecoveryAsync(IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+        FileDesiredIntentLedger empty = new(Path.Combine(_ledgerDirectory, "empty.desired-intent.jsonl"));
+        GitOpsExecutionResult unrecorded = await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), spine, empty)
+            .ExecuteRecoveryAsync(IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, noLedger.Status);
+        Assert.Contains("desired-intent-ledger-unavailable", noLedger.BlockingReasons);
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, unrecorded.Status);
+        Assert.Contains("recovery-intent-unrecorded", unrecorded.BlockingReasons);
+        Assert.Empty(handler.CapturedRequests);
+    }
+
+    [Fact]
+    public async Task ExecuteRecoveryAsync_LedgerWriteFailsThenRestart_RecordsOnceWithoutSecondCompensation()
+    {
+        int providerMutations = 0;
+        string durableStatus = "Reconciling";
+        TestHttpMessageHandler handler = new(request =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                providerMutations++;
+                durableStatus = "RolledBack";
+            }
+
+            return TestHttpMessageHandler.JsonOk(Operation(durableStatus));
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+
+        ActuationSpine firstSpine = new(runtime, DirectAllowedPolicy());
+        GitOpsExecutionResult failed = await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), firstSpine, new FailingCommitLedger(_ledger))
+            .ExecuteRecoveryAsync(IssueGrant(firstSpine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+        DesiredIntentRecord afterFailure = (await _ledger.ReadLatestAsync("prod-api", CancellationToken.None)).Latest!;
+
+        ActuationSpine restartedSpine = new(runtime, DirectAllowedPolicy());
+        GitOpsExecutionResult restarted = await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), restartedSpine, _ledger)
+            .ExecuteRecoveryAsync(IssueGrant(restartedSpine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+        ActuationSpine replayedSpine = new(runtime, DirectAllowedPolicy());
+        GitOpsExecutionResult replayed = await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), replayedSpine, _ledger)
+            .ExecuteRecoveryAsync(IssueGrant(replayedSpine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, failed.Status);
+        Assert.Contains("desired-intent-write-failed", failed.BlockingReasons);
+        Assert.Equal(RolloutJourneyStatus.NeedsAttention, RolloutJourneyStatus.From(failed));
+        Assert.Equal((1, DesiredIntentKind.Approved), (afterFailure.Version, afterFailure.Kind));
+        Assert.Equal(GitOpsExecutionStatus.RolledBack, restarted.Status);
+        Assert.False(restarted.Mutated);
+        Assert.Equal(GitOpsExecutionStatus.RolledBack, replayed.Status);
+        Assert.Equal(1, providerMutations);
+        DesiredIntentRecord latest = (await _ledger.ReadLatestAsync("prod-api", CancellationToken.None)).Latest!;
+        Assert.Equal((2, DesiredIntentKind.Restored, "release/2026.02"), (latest.Version, latest.Kind, latest.DesiredRevision));
+        Assert.Equal(2, File.ReadAllLines(Path.Combine(_ledgerDirectory, "audit.jsonl.desired-intent.jsonl")).Length);
+    }
+
+    [Fact]
+    public async Task NextReconcileAfterRecovery_RefusesQuarantinedCandidateAndCarriesQuarantineForward()
+    {
+        TestHttpMessageHandler recoveryHandler = new(request => TestHttpMessageHandler.JsonOk(
+            Operation(request.Method == HttpMethod.Post ? "RolledBack" : "Reconciling")));
+        using BackendGateway recoveryGateway = CreateGateway(recoveryHandler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        GitOpsExecutionResult recovery = await new RecoveryExecutor(runtime, recoveryGateway, DirectAllowedPolicy(), spine, _ledger)
+            .ExecuteRecoveryAsync(IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+        Assert.Equal(GitOpsExecutionStatus.RolledBack, recovery.Status);
+
+        TestHttpMessageHandler syncHandler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-fix-3", status = "Planned" });
+            }
+
+            if (request.Method == HttpMethod.Post && path.EndsWith("/submit", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new { operationId = "op-fix-3", status = "Reconciling" });
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/op-fix-3", StringComparison.Ordinal))
+            {
+                return TestHttpMessageHandler.JsonOk(new
+                {
+                    operationId = "op-fix-3",
+                    status = "Succeeded",
+                    actuatorReceipt = new { receiptId = "rcpt-fix-3", operationId = "op-fix-3" }
+                });
+            }
+
+            return TestHttpMessageHandler.JsonOk(new { status = "ok" });
+        });
+        using BackendGateway syncGateway = CreateGateway(syncHandler);
+        GitOpsExecutor sync = new(runtime, syncGateway, DirectAllowedPolicy(), intentLedger: _ledger);
+
+        GitOpsExecutionResult resurrect = await SyncAsync(sync, "release/2026.03");
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, resurrect.Status);
+        Assert.Contains("desired-revision-quarantined", resurrect.BlockingReasons);
+        Assert.False(resurrect.Mutated);
+        Assert.Empty(syncHandler.CapturedRequests);
+
+        GitOpsExecutionResult forward = await SyncAsync(sync, "release/2026.04");
+        Assert.Equal(GitOpsExecutionStatus.Succeeded, forward.Status);
+        DesiredIntentRecord latest = (await _ledger.ReadLatestAsync("prod-api", CancellationToken.None)).Latest!;
+        Assert.Equal((3, DesiredIntentKind.Approved, "release/2026.04", "op-fix-3"),
+            (latest.Version, latest.Kind, latest.DesiredRevision, latest.OperationId));
+        Assert.Equal(["release/2026.03"], latest.RejectedRevisions);
+    }
+
+    [Fact]
+    public async Task ExecuteSubmitAsync_QuarantinedOperationRevision_RefusesBeforeSubmit()
+    {
+        await CommitAsync(1, ApprovedIntent("release/2026.02", "op-recover-1", ["release/2026.03"]) with { Kind = DesiredIntentKind.Restored });
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new
+        {
+            operationId = "op-resume",
+            status = "Planned",
+            target = new { targetId = "prod-api", desiredRevision = "release/2026.03" }
+        }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(ExecuteRuntime(true), gateway, DirectAllowedPolicy(), intentLedger: _ledger);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-resume", "approved", true, false, "prod-promotion-gated", CancellationToken.None, "approval-receipt-9");
+
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+        Assert.Contains("desired-revision-quarantined", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    private async Task CommitAsync(long expectedVersion, DesiredIntentRecord record)
+        => Assert.Equal(DesiredIntentCommitStatus.Committed,
+            (await _ledger.TryCommitAsync(expectedVersion, record, CancellationToken.None)).Status);
+
+    private static DesiredIntentRecord ApprovedIntent(string revision, string operationId, IReadOnlyList<string>? rejected = null)
+        => new("prod-api", 0, DesiredIntentKind.Approved, revision, rejected ?? [], operationId,
+            $"approval-receipt-{operationId}", "operator@honua.io", null, DateTimeOffset.UtcNow);
+
+    private static Task<GitOpsExecutionResult> SyncAsync(GitOpsExecutor executor, string revision)
+        => executor.ExecuteSyncAsync(
+            desiredRevision: revision,
+            currentRevision: null,
+            reason: "ship prod-api",
+            idempotencyKey: $"honua-devops:proposal:prod-api:{revision}:sync",
+            correlationId: "honua-devops:sync:prod-api",
+            priority: "normal",
+            parameters: new Dictionary<string, string> { ["service"] = "prod-api", ["environments"] = "dev", ["action"] = "sync" },
+            authorizationDryRun: false,
+            policyGate: "lower-env-execution",
+            CancellationToken.None);
+
+    private static System.Text.Json.Nodes.JsonObject OperationWithCommit(string status, string commitSha)
+    {
+        System.Text.Json.Nodes.JsonObject operation = System.Text.Json.JsonSerializer.SerializeToNode(Operation(status))!.AsObject();
+        operation["metadataRelease"] = new System.Text.Json.Nodes.JsonObject { ["commitSha"] = commitSha };
+        return operation;
+    }
+
+    private sealed class FailingCommitLedger(IDesiredIntentLedger inner) : IDesiredIntentLedger
+    {
+        public Task<DesiredIntentSnapshot> ReadLatestAsync(string target, CancellationToken cancellationToken)
+            => inner.ReadLatestAsync(target, cancellationToken);
+
+        public Task<DesiredIntentCommitResult> TryCommitAsync(long expectedVersion, DesiredIntentRecord next, CancellationToken cancellationToken)
+            => Task.FromResult(new DesiredIntentCommitResult(DesiredIntentCommitStatus.WriteFailed, null, "injected: no space left on device"));
     }
 
     // Revisions and expected outcomes are declared independently of the executor.

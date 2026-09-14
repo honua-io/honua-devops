@@ -154,6 +154,21 @@ internal static class ReleaseCapabilityGate
         return null;
     }
 
+    // Restored intent and candidate quarantine must survive a restart, or the next reconcile
+    // could resurrect the rejected candidate. No durable ledger means no protected recovery.
+    internal static string? GetProtectedRecoveryIntentLedgerRefusal(IDesiredIntentLedger? ledger)
+        => ledger is null
+            ? "Protected recovery needs a durable desired-intent ledger: set `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///path/to/audit.jsonl` so restored intent and candidate quarantine survive a restart."
+            : null;
+
+    // A revision rejected by a recorded recovery stays quarantined for its target; the operate
+    // path is a corrected forward revision, never a reconcile back onto the rejected candidate.
+    internal static string? GetQuarantinedRevisionRefusal(DesiredIntentRecord? latest, string desiredRevision)
+        => latest is not null && latest.IsQuarantined(desiredRevision)
+            ? $"Revision `{desiredRevision}` was rejected and quarantined for target `{latest.Target}` (desired-intent version {latest.Version}, " +
+              $"operation `{latest.OperationId}`); propose a corrected revision instead of reconciling it again."
+            : null;
+
     /// <summary>Refusal for the bounded protected-recovery surface when it is disabled.</summary>
     internal static OperationResponse BuildProtectedRecoveryDisabledResponse()
         => new(
@@ -168,7 +183,8 @@ internal static class ReleaseCapabilityGate
             Actions:
             [
                 "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
-                "Keep protected recovery disabled until the approval/trigger path, atomic target-intent check and durable desired-state convergence are qualified (see docs/protected-deployment-recovery.md)."
+                "Keep protected recovery disabled until the approval/trigger path and the server's atomic target-intent check are qualified (see docs/protected-deployment-recovery.md).",
+                "Protected recovery also requires a file-backed `HONUA_DEVOPS_AUDIT_HOOK_TARGET`: its desired-intent ledger records restored intent and candidate quarantine for the next reconcile."
             ],
             ValidationChecks:
             [

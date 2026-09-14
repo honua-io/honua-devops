@@ -14,13 +14,16 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 // model decision is required" -- consuming a DeploymentRecoveryGrant minted at the moment the
 // deployment itself was approved:
 //
-//   deployment approved -> ActuationSpine.AuthorizeRecoveryGrant seals actor/tenant/target/
-//     prior+candidate revisions/policy digest/expiry/compensation into a DeploymentRecoveryGrant
-//     -> [later, when the trigger fires] RecoveryExecutor.ExecuteRecoveryAsync re-verifies the
-//        grant against the CURRENTLY OBSERVED operation -> ActuationSpine.TryAuthorizeRecovery
-//        binds the same in-process ledger every other mutation uses -> the existing
-//        deploy-control rollback endpoint reports recovery progress. This read-side check is
-//        NOT an atomic target compare-and-set or a durable Git restoration/quarantine write.
+//   deployment approved -> GitOpsExecutor records the approved desired intent in the durable
+//     ledger -> ActuationSpine.AuthorizeRecoveryGrant seals actor/tenant/target/prior+candidate
+//     revisions/policy digest/expiry/compensation into a DeploymentRecoveryGrant
+//     -> [later, when the trigger fires] RecoveryExecutor.ExecuteRecoveryAsync requires the
+//        ledger's latest intent to still be that approval, re-verifies the grant against the
+//        CURRENTLY OBSERVED operation -> ActuationSpine.TryAuthorizeRecovery binds the same
+//        in-process ledger every other mutation uses -> the existing deploy-control rollback
+//        endpoint reports recovery progress -> only a verified RolledBack outcome is recorded
+//        as restored intent + candidate quarantine, conditional on the intent version read
+//        before the request. The server must still fence its own target mutation atomically.
 //
 // The server's own OperatorApprovalGate is still honored on the wire: a grant proves the
 // DECLARED scope was approved, it does not bypass the server's own data-affecting check.
@@ -28,12 +31,14 @@ internal sealed class RecoveryExecutor(
     OperationRuntime runtime,
     BackendGateway gateway,
     OperatorPolicyModel policy,
-    ActuationSpine? spine = null)
+    ActuationSpine? spine = null,
+    IDesiredIntentLedger? intentLedger = null)
 {
     private readonly OperationRuntime _runtime = runtime;
     private readonly BackendGateway _gateway = gateway;
     private readonly OperatorPolicyModel _policy = policy;
     private readonly ActuationSpine _spine = spine ?? new ActuationSpine(runtime, policy);
+    private readonly IDesiredIntentLedger? _intentLedger = intentLedger ?? DesiredIntentLedgerFactory.Create(policy.AuditHookTarget);
 
     internal async Task<GitOpsExecutionResult> ExecuteRecoveryAsync(
         ActuationSpine.DeploymentRecoveryGrant grant,
@@ -82,6 +87,41 @@ internal sealed class RecoveryExecutor(
                 BackendSteps: steps,
                 Findings: findings,
                 BlockingReasons: []);
+        }
+
+        string? ledgerRefusal = ReleaseCapabilityGate.GetProtectedRecoveryIntentLedgerRefusal(_intentLedger);
+        if (ledgerRefusal is not null)
+        {
+            return Result(GitOpsExecutionStatus.ContractUnavailable, null, false,
+                ["desired-intent-ledger-unavailable"], ledgerRefusal);
+        }
+
+        // Compare-and-set basis: the latest recorded intent for the target must still be the
+        // approval this grant was minted for (or this grant's own restoration, on a retry).
+        // Anything newer is approved intent that recovery must not overwrite.
+        DesiredIntentSnapshot intent = await _intentLedger!.ReadLatestAsync(grant.Target, cancellationToken);
+        if (!intent.Readable)
+        {
+            return Result(GitOpsExecutionStatus.ContractUnavailable, null, false,
+                ["desired-intent-ledger-unavailable"], intent.Detail);
+        }
+
+        DesiredIntentRecord? basis = intent.Latest;
+        bool approvedBasis = basis is { Kind: DesiredIntentKind.Approved }
+            && string.Equals(basis.OperationId, grant.OperationId, StringComparison.Ordinal)
+            && string.Equals(basis.DesiredRevision, grant.CandidateRevision, StringComparison.Ordinal);
+        bool restoredBasis = basis is { Kind: DesiredIntentKind.Restored }
+            && string.Equals(basis.OperationId, grant.OperationId, StringComparison.Ordinal)
+            && string.Equals(basis.DesiredRevision, grant.PriorRevision, StringComparison.Ordinal)
+            && basis.IsQuarantined(grant.CandidateRevision);
+        if (!approvedBasis && !restoredBasis)
+        {
+            return Result(GitOpsExecutionStatus.ApprovalRequired, null, false,
+                [basis is null ? "recovery-intent-unrecorded" : "recovery-intent-superseded"],
+                basis is null
+                    ? $"No approved desired intent is recorded for target `{grant.Target}`; recovery cannot prove it would not overwrite newer intent."
+                    : $"Target `{grant.Target}` desired intent is now {basis.Kind} `{basis.DesiredRevision}` from operation `{basis.OperationId}` " +
+                      $"(version {basis.Version}); recovery of `{grant.OperationId}` would overwrite newer approved intent.");
         }
 
         // Read the operation first: recovery must consume server-owned truth, never a locally
@@ -133,7 +173,16 @@ internal sealed class RecoveryExecutor(
             or ServerOperationStatus.Failed or ServerOperationStatus.ManualInterventionRequired
             || DeployOperationReader.ReadProtectionPhase(current.Payload.RootElement) == "recovering")
         {
-            return Observe(current, false);
+            return await ObserveAsync(current, false);
+        }
+
+        // A recorded restoration is only reachable through a server RolledBack observation;
+        // it is never a reason to issue a second compensation.
+        if (restoredBasis)
+        {
+            return Result(GitOpsExecutionStatus.Indeterminate, serverStatus, false,
+                ["recovery-intent-contradicts-server"],
+                $"The desired-intent ledger records restoration for `{grant.OperationId}` but the server reports `{serverStatus ?? "unknown"}`.");
         }
 
         string? protectionRefusal = ReleaseCapabilityGate.GetProtectedRecoveryScopeRefusal(grant, current.Payload.RootElement);
@@ -191,9 +240,9 @@ internal sealed class RecoveryExecutor(
                     : DeployOperationReader.ReadBlockingReasons(recovered.Payload.RootElement)]);
         }
 
-        return Observe(recovered, true);
+        return await ObserveAsync(recovered, true);
 
-        GitOpsExecutionResult Observe(BackendJsonResult response, bool mutated)
+        async Task<GitOpsExecutionResult> ObserveAsync(BackendJsonResult response, bool mutated)
         {
             string? status = response.Payload is null ? null : DeployOperationReader.ReadStatus(response.Payload.RootElement);
             if (response.Payload is null
@@ -215,10 +264,52 @@ internal sealed class RecoveryExecutor(
                 _ => GitOpsExecutionStatus.Indeterminate
             };
 
-            // A rollback receipt says nothing about the Git desired-state branch. Do not
-            // invent a commit, quarantine, or a guarantee about the next reconciliation.
-            findings.Add("Desired-state restoration and candidate quarantine are unverified; no Git convergence receipt is available.");
-            return Result(outcome, status, mutated, blockers,
+            if (outcome != GitOpsExecutionStatus.RolledBack)
+            {
+                // A rollback receipt says nothing about desired state. Do not invent a
+                // restoration, quarantine, or a guarantee about the next reconciliation.
+                findings.Add("Desired-state restoration and candidate quarantine are unverified; no Git convergence receipt is available.");
+                return Result(outcome, status, mutated, blockers,
+                    $"Server recovery status for `{grant.OperationId}`: {status ?? "unknown"}.");
+            }
+
+            // Server-reported recovery becomes restored desired intent only through a
+            // compare-and-set against the version read before any request was issued.
+            string? commitSha = DeployOperationReader.ReadMetadataReleaseCommitSha(response.Payload.RootElement);
+            DesiredIntentCommitResult commit = await _intentLedger!.TryCommitAsync(
+                basis!.Version,
+                new DesiredIntentRecord(
+                    grant.Target,
+                    Version: 0,
+                    DesiredIntentKind.Restored,
+                    grant.PriorRevision,
+                    [.. basis.RejectedRevisions.Union([grant.CandidateRevision], StringComparer.Ordinal)],
+                    grant.OperationId,
+                    basis.ApprovalReference,
+                    grant.Actor,
+                    commitSha,
+                    DateTimeOffset.UtcNow),
+                cancellationToken);
+
+            if (!commit.Recorded)
+            {
+                bool conflict = commit.Status == DesiredIntentCommitStatus.Conflict;
+                findings.Add(conflict
+                    ? "The server reports RolledBack, but newer approved intent was recorded first; the previous version is not the desired state."
+                    : "The server reports RolledBack, but restored intent and candidate quarantine could not be recorded.");
+                return Result(GitOpsExecutionStatus.Indeterminate, status, mutated,
+                    [conflict ? "desired-intent-conflict" : "desired-intent-write-failed", .. blockers], commit.Detail);
+            }
+
+            DesiredIntentRecord restored = commit.Latest!;
+            findings.Add(
+                $"Desired intent version {restored.Version} for `{restored.Target}` restores `{restored.DesiredRevision}` and quarantines " +
+                $"`{grant.CandidateRevision}` (operation `{restored.OperationId}`, approval `{restored.ApprovalReference ?? "unrecorded"}`, " +
+                $"commit `{restored.CommitSha ?? "none reported"}`).");
+            findings.Add(restored.CommitSha is null
+                ? "The server reported no desired-state commit; no Git convergence receipt is available, so the next DevOps reconcile is fenced by the desired-intent ledger."
+                : $"The server reported desired-state commit `{restored.CommitSha}`; the next DevOps reconcile is fenced by the desired-intent ledger.");
+            return Result(GitOpsExecutionStatus.RolledBack, status, mutated, blockers,
                 $"Server recovery status for `{grant.OperationId}`: {status ?? "unknown"}.");
         }
 

@@ -24,9 +24,41 @@ is only an in-process duplicate guard.
 Successful HTTP delivery is not completed recovery. `RollbackRequested` and
 `Reconciling` remain in progress; failure and manual intervention need attention;
 missing, unknown, mismatched or contradictory responses are indeterminate.
-`RolledBack` reports only the server's recovery outcome. It does not prove a Git
-commit, quarantine, restored desired state, or that the next reconcile is safe.
-A lost acknowledgement is also indeterminate, resolved by reading the operation.
+A server `RolledBack` becomes **Previous version restored** only after the
+DevOps desired-intent ledger records it (next section). A lost acknowledgement is
+also indeterminate, resolved by reading the operation.
+
+## Desired-intent ledger: restoration, quarantine and compare-and-set
+
+With protected recovery enabled, DevOps keeps one append-only version chain per
+target in `<audit journal>.desired-intent.jsonl`, next to the file-backed audit
+journal (`HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///...`). Recovery refuses without
+it: an in-memory record would forget the quarantine on restart.
+
+- **Approved intent.** Before a sync or explicit submit is sent, the executor
+  appends an `approved` record with the desired revision, operation, approval
+  reference and actor. If the ledger cannot be read or written, nothing is submitted.
+- **Recovery basis.** Before any backend call, the latest record for the target
+  must be the approval this grant belongs to (same operation, candidate
+  revision). Newer intent refuses with `recovery-intent-superseded`; no record
+  refuses with `recovery-intent-unrecorded`.
+- **Restoration.** Only a verified server `RolledBack` appends a `restored`
+  record: prior revision as desired, candidate added to the quarantine set, with
+  operation, approval, actor and any server-reported `metadataRelease.commitSha`.
+  The write is conditional on the version read before the rollback request.
+- **Conflict or failure.** If newer approval landed first, or the write fails,
+  the result is `indeterminate` (`desired-intent-conflict` /
+  `desired-intent-write-failed`) and the journey is **Needs attention**. The
+  newer intent is never overwritten. A restarted recovery reads the server's
+  `RolledBack` and records it once, with no second rollback request.
+- **Next reconcile.** A sync or submit for a quarantined revision is refused
+  before any backend call (`desired-revision-quarantined`). Approved intent
+  carries the quarantine forward, so recovery is forward with a corrected revision.
+
+Writes take an exclusive file handle across read, compare and append, so
+concurrent DevOps processes on the same host cannot both commit at one version.
+The ledger fences DevOps-originated intent. It is not a Git commit, and it does
+not fence other writers to the server's target intent.
 
 The intended ordinary journey remains change preview, scoped approval, Checking
 update / Updating / Confirming service health, then Update complete / Previous
@@ -52,10 +84,11 @@ grant or Git restoration receipt. Therefore:
   permitted compensation, deadline and the current target intent atomically.
   Checking a historical operation's candidate on the client is **not** a
   compare-and-set against newer approved target intent and has a read/write race.
-- A canonical Git desired-state writer must commit restoration plus candidate
-  rejection/quarantine with operation, approval and commit lineage, conditional
-  on the approved branch head. Conflicts and write failures must prevent a
-  converged outcome. Neither this executor nor its strings implement that writer.
+- The DevOps desired-intent ledger records restoration and quarantine with
+  compare-and-set and fences the next DevOps reconcile. A canonical Git
+  metadata-branch writer (honua-devops#57, 2026.2) and the server's own target
+  intent still do not consume that record. Server-initiated reconciles are fenced
+  only when the server enforces the recovery scope.
 - The ordinary interaction must be wired to that actual approval and observation
   path before it advertises protected change.
 
@@ -77,10 +110,15 @@ prior/candidate identities and an explicit expected outcome matrix. It rejects
 wrong operation/target/policy/revisions, expired/unavailable/missing protection,
 and mismatched success responses. The lost-acknowledgement fixture retains server
 state across newly constructed spines and asserts one operation and one provider
-request. This is an HTTP boundary fixture, not installed provider qualification.
+request. Ledger fixtures cover restoration lineage, newer approval before and
+during recovery, write failure followed by restart (one rollback, one restored
+record), and refusal of the quarantined candidate on the next sync and submit.
+`DesiredIntentLedgerTests` covers compare-and-set, restart durability, 16
+concurrent writers (exactly one commit), torn lines and unwritable storage.
+These are HTTP boundary fixtures, not installed provider qualification.
 
 `DeploymentRecoveryGrantTests` retains the actor, target, broadened compensation,
 plan-mode and expiry negatives, and adds exact-expiry, missing-actor,
 same-revision and undefined-compensation checks. No test asserts generated shell
-commands as execution evidence. Installed fault/recovery, atomic target intent,
-Git conflict/write failure and next-reconcile preservation remain unproven.
+commands as execution evidence. Installed fault/recovery, atomic server target
+intent and server-side next-reconcile preservation remain unproven.

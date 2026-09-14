@@ -36,7 +36,8 @@ internal sealed class GitOpsExecutor(
     TimeProvider? timeProvider = null,
     ActuationSpine? spine = null,
     IManifestApplyCheckpointStore? checkpointStore = null,
-    Func<Task>? afterManifestAcknowledgement = null)
+    Func<Task>? afterManifestAcknowledgement = null,
+    IDesiredIntentLedger? intentLedger = null)
 {
     private readonly OperationRuntime _runtime = runtime;
     private readonly BackendGateway _gateway = gateway;
@@ -48,6 +49,10 @@ internal sealed class GitOpsExecutor(
     private readonly IManifestApplyCheckpointStore _checkpointStore =
         checkpointStore ?? ManifestApplyCheckpointStoreFactory.Create(policy.AuditHookTarget);
     private readonly Func<Task>? _afterManifestAcknowledgement = afterManifestAcknowledgement;
+
+    // Present only when protected recovery is enabled (issue #191): approved intent is recorded
+    // before submit and a quarantined revision is never reconciled again.
+    private readonly IDesiredIntentLedger? _intentLedger = intentLedger;
 
     internal OperationRuntime Runtime => _runtime;
 
@@ -140,6 +145,21 @@ internal sealed class GitOpsExecutor(
                 BackendSteps: steps,
                 Findings: findings,
                 BlockingReasons: []);
+        }
+
+        // A revision rejected by a recorded recovery must not be resurrected by the next
+        // reconcile. Refuse before any backend call; the record step below re-checks under CAS.
+        if (_intentLedger is not null)
+        {
+            DesiredIntentSnapshot intent = await _intentLedger.ReadLatestAsync(_runtime.DeployTargetId ?? string.Empty, cancellationToken);
+            string? quarantine = ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(intent.Latest, desiredRevision);
+            if (quarantine is not null)
+            {
+                findings.Add(quarantine);
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.ApprovalRequired, null, null, false, decision, steps, findings,
+                    ["desired-revision-quarantined"]);
+            }
         }
 
         // Seal the request identity BEFORE any write. The spine fails closed here when the
@@ -280,6 +300,14 @@ internal sealed class GitOpsExecutor(
         findings.Add(
             $"Mutation authorized for operation `{operationId}` by {approval.Kind} ({approval.ReceiptId ?? "no reference"}).");
 
+        GitOpsExecutionResult? intentRefusal = await RecordApprovedIntentAsync(
+            operationId, desiredRevision, approval.ReceiptId, correlationId, serverStatus, operationRecorded,
+            decision, steps, findings, cancellationToken);
+        if (intentRefusal is not null)
+        {
+            return intentRefusal;
+        }
+
         // Desired-state write, when this actuation carries one. It happens HERE — after the
         // durable operation exists and its approval gate is satisfied — never on the planning
         // path (issue #153).
@@ -346,6 +374,88 @@ internal sealed class GitOpsExecutor(
             desiredState is null ? null : ComputeDesiredStateDigest(desiredState),
             manifestAcknowledgementDigest,
             approval.ReceiptId);
+    }
+
+    // Records the approved desired revision before anything is submitted (issue #191), so a
+    // later protected recovery compares-and-sets against it instead of restoring over an
+    // approval it never saw. The quarantine is re-checked on the same snapshot the write is
+    // conditioned on; a write failure or persistent conflict stops the submit explicitly.
+    private async Task<GitOpsExecutionResult?> RecordApprovedIntentAsync(
+        string operationId,
+        string? desiredRevision,
+        string? approvalReference,
+        string actor,
+        string? serverStatus,
+        bool mutated,
+        GitOpsActuationDecision decision,
+        List<OperationBackendStep> steps,
+        List<string> findings,
+        CancellationToken cancellationToken)
+    {
+        if (_intentLedger is null)
+        {
+            return null;
+        }
+
+        string target = _runtime.DeployTargetId ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(desiredRevision))
+        {
+            return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-revision-unknown",
+                $"Operation `{operationId}` has no desired revision to record; nothing was submitted.");
+        }
+
+        string detail = string.Empty;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            DesiredIntentSnapshot snapshot = await _intentLedger.ReadLatestAsync(target, cancellationToken);
+            if (!snapshot.Readable)
+            {
+                return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-write-failed",
+                    $"{snapshot.Detail}; nothing was submitted.");
+            }
+
+            string? quarantine = ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(snapshot.Latest, desiredRevision);
+            if (quarantine is not null)
+            {
+                return Refuse(GitOpsExecutionStatus.ApprovalRequired, "desired-revision-quarantined", quarantine);
+            }
+
+            DesiredIntentCommitResult commit = await _intentLedger.TryCommitAsync(
+                snapshot.Latest?.Version ?? 0,
+                new DesiredIntentRecord(
+                    target,
+                    Version: 0,
+                    DesiredIntentKind.Approved,
+                    desiredRevision,
+                    snapshot.Latest?.RejectedRevisions ?? [],
+                    operationId,
+                    approvalReference,
+                    actor,
+                    CommitSha: null,
+                    _timeProvider.GetUtcNow()),
+                cancellationToken);
+            if (commit.Recorded)
+            {
+                findings.Add($"Approved desired intent `{desiredRevision}` recorded for `{target}` at version {commit.Latest!.Version}.");
+                return null;
+            }
+
+            detail = commit.Detail;
+            if (commit.Status == DesiredIntentCommitStatus.WriteFailed)
+            {
+                return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-write-failed",
+                    $"{detail}; nothing was submitted.");
+            }
+        }
+
+        return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-conflict",
+            $"{detail}; the desired intent kept changing, so nothing was submitted.");
+
+        GitOpsExecutionResult Refuse(string status, string blocker, string finding)
+        {
+            findings.Add(finding);
+            return new GitOpsExecutionResult(status, operationId, serverStatus, mutated, decision, steps, findings, [blocker]);
+        }
     }
 
     private static IReadOnlyList<string> ReadEnvironments(IReadOnlyDictionary<string, string> parameters)
@@ -507,6 +617,14 @@ internal sealed class GitOpsExecutor(
             findings.Add($"Submission paused: {refusal}");
             return new GitOpsExecutionResult(
                 GitOpsExecutionStatus.AwaitingApproval, operationId, serverStatus, false, decision, steps, findings, blockers);
+        }
+
+        GitOpsExecutionResult? intentRefusal = await RecordApprovedIntentAsync(
+            operationId, DeployOperationReader.ReadCandidateRevision(current.Payload.RootElement), approval.ReceiptId,
+            "honua-devops:runbook:deploy-submit", serverStatus, false, decision, steps, findings, cancellationToken);
+        if (intentRefusal is not null)
+        {
+            return intentRefusal;
         }
 
         if (recoveredDesiredState is not null)
