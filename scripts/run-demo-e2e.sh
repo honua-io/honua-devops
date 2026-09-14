@@ -11,7 +11,7 @@
 #     vars / flags at runtime. No secrets in source.
 #   * Read vs write split. READ-path checks run against the live customer-facing
 #     base URL (HONUA_DEMO_BASE_URL). WRITE / destructive checks (Demo A
-#     import/publish, Demo B failure-injection + rollback) target a SEPARATE
+#     import/publish, Demo B atomic edit rollback) target a SEPARATE
 #     non-customer-facing write target (HONUA_DEMO_WRITE_BASE_URL — a staging
 #     Lambda alias / ephemeral env) under a scoped, self-cleaning resource prefix.
 #     Writes NEVER touch the customer-facing alias.
@@ -21,7 +21,7 @@
 #
 # Cross-refs: honua-devops#97 (demo program), honua-devops#98 (publish-all matrix).
 # Reuses repo conventions from scripts/run-backup-restore-gameday.sh,
-# scripts/smoke-contract.sh, and scripts/fault-injection/*.
+# scripts/smoke-contract.sh.
 #
 set -euo pipefail
 
@@ -40,6 +40,7 @@ PRO_AI_LIVE="${HONUA_DEMO_PRO_AI_LIVE:-false}"    # gate Pro/Bedrock/export asse
 TIMEOUT_SECONDS="${HONUA_DEMO_TIMEOUT_SECONDS:-30}"
 RESOURCE_PREFIX="${HONUA_DEMO_RESOURCE_PREFIX:-e2e-$(date -u +%Y%m%d%H%M%S)}"
 OUTPUT_DIR="${HONUA_DEMO_OUTPUT_DIR:-}"
+JSON_SUMMARY=""
 HONUA_CLI="${HONUA_CLI:-}"                         # path/cmd for the `honua` CLI; auto-detected if empty
 
 # Demo A read fixtures (parameterized; defaults match the live demo.honua.io v18 seed).
@@ -67,9 +68,12 @@ Connection (WRITE path — separate non-customer-facing target):
   --admin-key <key>             Admin/write key        (or HONUA_DEMO_ADMIN_KEY)
   --resource-prefix <p>         Scoped, self-cleaning prefix for write artifacts
                                 (or HONUA_DEMO_RESOURCE_PREFIX)
+  Serving writes run with a distinct write URL + admin key, independent of Pro.
+  Optional staging env: HONUA_DEMO_READ_ONLY_KEY, HONUA_DEMO_WRITE_SERVICE_ID,
+  HONUA_DEMO_WRITE_LAYER_ID, HONUA_DEMO_WRITE_MARKER_FIELD (default name).
 
 Gating:
-  --pro-ai-live                 Run Pro/Bedrock/export & Demo B write assertions.
+  --pro-ai-live                 Run Pro/Bedrock/export assertions.
                                 Default: false (those report PENDING until deploy).
                                 (or HONUA_DEMO_PRO_AI_LIVE=true)
 
@@ -81,6 +85,7 @@ Read fixtures (parameterized; defaults target the live demo Maui seed):
 
 Other:
   --output-dir <path>           Evidence directory (default artifacts/demo-e2e/<id>)
+  --json-summary <path>         Copy the machine-readable receipt to this path
   --timeout-seconds <n>         Per-request timeout (default 30)
   --help                        Show this help
 
@@ -109,6 +114,7 @@ while [[ "$#" -gt 0 ]]; do
     --min-feature-count) DEMO_MIN_FEATURE_COUNT="$2"; shift 2 ;;
     --bbox) DEMO_BBOX="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    --json-summary) JSON_SUMMARY="$2"; shift 2 ;;
     --timeout-seconds) TIMEOUT_SECONDS="$2"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "[ERROR] Unknown argument: $1" >&2; usage; exit 1 ;;
@@ -125,11 +131,36 @@ if [[ -z "$BASE_URL" ]]; then
   usage
   exit 1
 fi
-BASE_URL="${BASE_URL%/}"
-WRITE_BASE_URL="${WRITE_BASE_URL%/}"
+# Validate before logging URLs so credentials can never enter the receipt.
+normalize_url() {
+  python3 - "$1" <<'PY_URL'
+import sys, urllib.parse
+try:
+    u = urllib.parse.urlsplit(sys.argv[1])
+    assert u.scheme in ('http', 'https') and u.hostname
+    assert not u.username and not u.password and not u.query and not u.fragment
+    assert not any(c.isspace() for c in sys.argv[1])
+    host = u.hostname.lower()
+    if ':' in host:
+        host = '[' + host + ']'
+    port = u.port
+    if port and port != (443 if u.scheme == 'https' else 80):
+        host += ':' + str(port)
+    print(urllib.parse.urlunsplit((u.scheme, host, u.path.rstrip('/'), '', '')))
+except (ValueError, AssertionError):
+    sys.exit(1)
+PY_URL
+}
+if ! BASE_URL="$(normalize_url "$BASE_URL")"; then
+  echo "[ERROR] Invalid read URL; use HTTP(S) without credentials, query, or fragment." >&2
+  exit 1
+fi
+if [[ -n "$WRITE_BASE_URL" ]] && ! WRITE_BASE_URL="$(normalize_url "$WRITE_BASE_URL")"; then
+  echo "[ERROR] Invalid write URL; use HTTP(S) without credentials, query, or fragment." >&2
+  exit 1
+fi
 
-# Guardrail: a write target MUST be a distinct host from the customer-facing read
-# base URL. Refuse to run write/destructive hops against the customer alias.
+# Guardrail: refuse equal normalized base URLs. Callers own alias isolation.
 WRITE_TARGET_OK="false"
 WRITE_TARGET_REASON="write base URL not configured"
 if [[ -n "$WRITE_BASE_URL" ]]; then
@@ -147,6 +178,7 @@ if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="$REPO_ROOT/artifacts/demo-e2e/${ENVIRONMENT}-${TIMESTAMP}"
 fi
 mkdir -p "$OUTPUT_DIR/logs"
+rm -f "$OUTPUT_DIR/write-hops.json"
 
 # Auto-detect the honua CLI (honua-sdk-js #292). Falls back to direct HTTP.
 if [[ -z "$HONUA_CLI" ]]; then
@@ -163,6 +195,7 @@ CLI_AVAILABLE="false"
 # ---------------------------------------------------------------------------
 declare -a R_ID R_FLOW R_STATUS R_DETAIL R_DRIVER
 FAILURES=0
+CONFIGURATION_ERROR=false
 
 record() {
   # record <id> <workflow> <PASS|FAIL|PENDING> <driver> <detail...>
@@ -221,15 +254,6 @@ demo_a() {
     record "demoA.catalog" "Demo A" FAIL http "rest/info -> $(code_of "$r")"
   fi
 
-  # --- A1: import -> poll job to Succeeded (WRITE; gated + staging-only) ------
-  if [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" ]]; then
-    assert_import_job
-  else
-    local why="pro_and_ai_live=false"
-    [[ "$WRITE_TARGET_OK" != "true" ]] && why="$WRITE_TARGET_REASON"
-    record "demoA.import" "Demo A" PENDING http "import->job Succeeded gated ($why)"
-  fi
-
   # --- A2: layer queryable — FeatureServer returns non-zero/expected count ----
   # Prefer the honua CLI (#292) for the count; fall back to direct HTTP.
   local count="" driver="http"
@@ -272,20 +296,22 @@ demo_a() {
   # --- A3: AI generate via Bedrock -> VALID workflow/map proposal ------------
   # AI generate hits Bedrock and must NOT be POSTed at the customer-facing alias,
   # so it requires both pro_and_ai_live AND a distinct (staging) target.
-  if [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" ]]; then
+  if [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -n "$ADMIN_KEY" ]]; then
     assert_ai_generate
   else
     local why="pro_and_ai_live=false"
     [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" != "true" ]] && why="$WRITE_TARGET_REASON"
+    [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -z "$ADMIN_KEY" ]] && why="HONUA_DEMO_ADMIN_KEY not configured"
     record "demoA.ai_generate" "Demo A" PENDING http "Bedrock generate (status=Generated, real graph) gated ($why)"
   fi
 
   # --- A4: publish (WRITE; gated + staging-only) -----------------------------
-  if [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" ]]; then
+  if [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -n "$ADMIN_KEY" ]]; then
     assert_publish
   else
     local why="pro_and_ai_live=false"
     [[ "$WRITE_TARGET_OK" != "true" ]] && why="$WRITE_TARGET_REASON"
+    [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -z "$ADMIN_KEY" ]] && why="HONUA_DEMO_ADMIN_KEY not configured"
     record "demoA.publish" "Demo A" PENDING http "publish gated ($why)"
   fi
 
@@ -316,11 +342,12 @@ demo_a() {
   # --- A6: export PDF/PNG -> assert valid magic bytes (gated) -----------------
   # Export of the published map runs on the staging target where the artifact
   # was published; gated behind pro_and_ai_live + a distinct write target.
-  if [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" ]]; then
+  if [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -n "$ADMIN_KEY" ]]; then
     assert_export_bytes
   else
     local why="pro_and_ai_live=false"
     [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" != "true" ]] && why="$WRITE_TARGET_REASON"
+    [[ "$PRO_AI_LIVE" == "true" && "$WRITE_TARGET_OK" == "true" && -z "$ADMIN_KEY" ]] && why="HONUA_DEMO_ADMIN_KEY not configured"
     record "demoA.export" "Demo A" PENDING http "export PDF/PNG byte-validation (%PDF / PNG magic) gated ($why)"
   fi
 }
@@ -340,41 +367,6 @@ is_pdf() {
 }
 
 # --- gated write/AI assertions (run only when pro_and_ai_live and write target ok) ---
-assert_import_job() {
-  # Import a small fixture into the STAGING write target under RESOURCE_PREFIX,
-  # poll the job to Succeeded. Idempotent + self-cleaning (teardown in cleanup()).
-  local target="$WRITE_BASE_URL"
-  local import_layer="${RESOURCE_PREFIX}-import"
-  local body="$OUTPUT_DIR/logs/import-submit.json"
-  local args=(--silent --show-error --output "$body" --write-out "%{http_code}"
-              --max-time "$TIMEOUT_SECONDS" -X POST
-              --header "Content-Type: application/json")
-  [[ -n "$ADMIN_KEY" ]] && args+=(--header "X-API-Key: $ADMIN_KEY")
-  local payload; payload="$(printf '{"layerId":"%s","source":"demo-e2e-fixture","resourcePrefix":"%s"}' "$import_layer" "$RESOURCE_PREFIX")"
-  local code; code="$(curl "${args[@]}" --data "$payload" "$target/api/v1/import/jobs" 2>>"$OUTPUT_DIR/logs/http.log" || echo 000)"
-  if [[ "$code" != "200" && "$code" != "201" && "$code" != "202" ]]; then
-    record "demoA.import" "Demo A" FAIL http "import submit -> $code (target=$target)"
-    return
-  fi
-  local job_id; job_id="$(python3 -c "import json,sys;print(json.load(open('$body')).get('jobId',''))" 2>/dev/null || echo '')"
-  CLEANUP_LAYERS+=("$import_layer")
-  # Poll up to ~90s for terminal status.
-  local status="" i
-  for i in $(seq 1 30); do
-    local pb="$OUTPUT_DIR/logs/import-poll.json"
-    local pc; pc="$(http_probe "$pb" "$target/api/v1/import/jobs/$job_id")"
-    [[ "$(code_of "$pc")" == "200" ]] || break
-    status="$(python3 -c "import json,sys;print(json.load(open('$pb')).get('status',''))" 2>/dev/null || echo '')"
-    case "$status" in Succeeded|Failed|Cancelled) break ;; esac
-    sleep 3
-  done
-  if [[ "$status" == "Succeeded" ]]; then
-    record "demoA.import" "Demo A" PASS http "import job $job_id -> Succeeded (staging)"
-  else
-    record "demoA.import" "Demo A" FAIL http "import job $job_id -> '${status:-no-status}' (expected Succeeded)"
-  fi
-}
-
 assert_ai_generate() {
   # AI generate via Bedrock must return a VALID proposal: status=Generated with
   # a real workflow/map graph — NOT Unsupported / error.
@@ -503,122 +495,44 @@ is_image_any()         { local m; m="$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n
 is_xml_metadata()      { grep -qi 'edmx\|<?xml' "$1" 2>/dev/null; }
 
 # ===========================================================================
-# WORKFLOW: Demo B (ops) — STAGING write target ONLY.
-# proposal -> approve -> submit -> Succeeded; then inject failing change ->
-# RolledBack AND schema+data actually reverted (capture before/after, diff).
-# Reuses scripts/fault-injection/* lifecycle. Idempotent + self-cleaning.
+# WORKFLOW: staging serving import, denial, atomic edit rollback, and cleanup.
+# Each run owns a unique fixture marker. Cleanup completes before evidence.
 # ===========================================================================
 demo_b() {
-  if [[ "$PRO_AI_LIVE" != "true" ]]; then
-    record "demoB.proposal"    "Demo B" PENDING http "proposal->approve->submit->Succeeded gated (pro_and_ai_live=false)"
-    record "demoB.rollback"    "Demo B" PENDING http "fault-injection -> RolledBack + schema/data reverted gated (pro_and_ai_live=false)"
+  if [[ "$WRITE_TARGET_OK" != "true" || -z "$ADMIN_KEY" ]]; then
+    local why="$WRITE_TARGET_REASON"
+    [[ "$WRITE_TARGET_OK" == "true" ]] && why="HONUA_DEMO_ADMIN_KEY not configured"
+    record "demoA.import" "Demo A" PENDING http "$why"
+    record "demoB.rollback" "Demo B" PENDING http "$why"
+    record "auth.no_key" "Authorization" PENDING http "$why"
+    record "auth.read_only" "Authorization" PENDING http "$why"
     return
   fi
-  if [[ "$WRITE_TARGET_OK" != "true" ]]; then
-    # NEVER inject a failure into the customer-facing alias.
-    record "demoB.proposal"    "Demo B" PENDING http "$WRITE_TARGET_REASON"
-    record "demoB.rollback"    "Demo B" PENDING http "$WRITE_TARGET_REASON"
-    return
-  fi
-
-  local target="$WRITE_BASE_URL"
-  local op="${RESOURCE_PREFIX}-opsB"
-
-  # proposal -> approve -> submit
-  local pj="$OUTPUT_DIR/logs/opsB-proposal.json"
-  local args=(--silent --show-error --output "$pj" --write-out "%{http_code}"
-              --max-time "$TIMEOUT_SECONDS" -X POST --header "Content-Type: application/json")
-  [[ -n "$ADMIN_KEY" ]] && args+=(--header "X-API-Key: $ADMIN_KEY")
-  local code; code="$(curl "${args[@]}" --data "$(printf '{"operationId":"%s","resourcePrefix":"%s"}' "$op" "$RESOURCE_PREFIX")" "$target/api/v1/devops/proposals" 2>>"$OUTPUT_DIR/logs/http.log" || echo 000)"
-  CLEANUP_OPS+=("$op")
-  if [[ "$code" != "200" && "$code" != "201" && "$code" != "202" ]]; then
-    record "demoB.proposal" "Demo B" FAIL http "proposal/approve/submit -> $code"
-  else
-    # Poll the operation to Succeeded.
-    local status="" i
-    for i in $(seq 1 40); do
-      local sb="$OUTPUT_DIR/logs/opsB-status.json"
-      local sc; sc="$(http_probe "$sb" "$target/api/v1/devops/operations/$op")"
-      [[ "$(code_of "$sc")" == "200" ]] || break
-      status="$(python3 -c "import json,sys;print(json.load(open('$sb')).get('status',''))" 2>/dev/null || echo '')"
-      case "$status" in Succeeded|Failed|RolledBack) break ;; esac
-      sleep 3
-    done
-    if [[ "$status" == "Succeeded" ]]; then
-      record "demoB.proposal" "Demo B" PASS http "operation $op -> Succeeded (staging)"
-    else
-      record "demoB.proposal" "Demo B" FAIL http "operation $op -> '${status:-no-status}' (expected Succeeded)"
-    fi
-  fi
-
-  # Capture schema+data state BEFORE injecting the fault.
-  local before="$OUTPUT_DIR/logs/opsB-schema-before.json"
-  http_probe "$before" "$target/rest/services/$DEMO_SERVICE_ID/FeatureServer/$DEMO_LAYER_ID?f=json" >/dev/null
-
-  # Inject a failing change / health-check via the repo's fault-injection lifecycle.
-  # Uses FAULT_DRY_RUN unless explicitly armed; restore always runs in cleanup.
-  local fi_inject="$REPO_ROOT/scripts/fault-injection/FAULT-010-inject.sh"
-  if [[ -x "$fi_inject" ]]; then
-    FAULT_ENV="$ENVIRONMENT" FAULT_REGION="${HONUA_DEMO_FAULT_REGION:-us-west-2}" \
-      FAULT_RESOURCE_PREFIX="$RESOURCE_PREFIX" FAULT_DRY_RUN="${HONUA_DEMO_FAULT_DRY_RUN:-true}" \
-      "$fi_inject" >"$OUTPUT_DIR/logs/opsB-fault-inject.log" 2>&1 || true
-    FAULT_INJECTED="true"
-  fi
-
-  # Submit the failing change and expect RolledBack.
-  local rj="$OUTPUT_DIR/logs/opsB-rollback.json"
-  local rc; rc="$(curl "${args[@]}" --data "$(printf '{"operationId":"%s-fail","resourcePrefix":"%s","injectFailure":true}' "$op" "$RESOURCE_PREFIX")" "$target/api/v1/devops/proposals" 2>>"$OUTPUT_DIR/logs/http.log" || echo 000)"
-  CLEANUP_OPS+=("${op}-fail")
-  local rstatus="" i
-  for i in $(seq 1 40); do
-    local rsb="$OUTPUT_DIR/logs/opsB-rollback-status.json"
-    local rsc; rsc="$(http_probe "$rsb" "$target/api/v1/devops/operations/${op}-fail")"
-    [[ "$(code_of "$rsc")" == "200" ]] || break
-    rstatus="$(python3 -c "import json,sys;print(json.load(open('$rsb')).get('status',''))" 2>/dev/null || echo '')"
-    case "$rstatus" in RolledBack|Succeeded|Failed) break ;; esac
-    sleep 3
-  done
-
-  # Capture schema+data AFTER, and diff against BEFORE to PROVE the revert.
-  local after="$OUTPUT_DIR/logs/opsB-schema-after.json"
-  http_probe "$after" "$target/rest/services/$DEMO_SERVICE_ID/FeatureServer/$DEMO_LAYER_ID?f=json" >/dev/null
-  local reverted="false"
-  if [[ -s "$before" && -s "$after" ]]; then
-    if python3 -c "import json,sys;a=json.load(open('$before'));b=json.load(open('$after'));sys.exit(0 if json.dumps(a,sort_keys=True)==json.dumps(b,sort_keys=True) else 1)" 2>/dev/null; then
-      reverted="true"
-    fi
-  fi
-  if [[ "$rstatus" == "RolledBack" && "$reverted" == "true" ]]; then
-    record "demoB.rollback" "Demo B" PASS http "operation ${op}-fail -> RolledBack; schema/data reverted (before==after diff clean)"
-  else
-    record "demoB.rollback" "Demo B" FAIL http "rollback status='${rstatus:-none}' reverted=$reverted (expected RolledBack + clean revert)"
-  fi
+  BASE_URL="$BASE_URL" WRITE_BASE_URL="$WRITE_BASE_URL" ADMIN_KEY="$ADMIN_KEY" \
+    DEMO_SERVICE_ID="$DEMO_SERVICE_ID" DEMO_LAYER_ID="$DEMO_LAYER_ID" \
+    RESOURCE_PREFIX="$RESOURCE_PREFIX" TIMEOUT_SECONDS="$TIMEOUT_SECONDS" \
+    python3 "$SCRIPT_DIR/demo-e2e-write.py" "$OUTPUT_DIR/write-hops.json" || CONFIGURATION_ERROR=true
+  while IFS=$'\t' read -r id flow status detail; do
+    record "$id" "$flow" "$status" http "$detail"
+  done < <(python3 - "$OUTPUT_DIR/write-hops.json" <<'PY_HOPS'
+import json, sys
+for h in json.load(open(sys.argv[1])):
+    print('\t'.join(h[k] for k in ('id', 'workflow', 'status', 'detail')))
+PY_HOPS
+  )
 }
 
 # ===========================================================================
-# Cleanup / teardown — idempotent, self-cleaning. Restores any injected fault
-# and removes scoped staging artifacts. Runs on EXIT.
+# Existing gated publish teardown. Serving cleanup is asserted in the helper.
 # ===========================================================================
-declare -a CLEANUP_LAYERS CLEANUP_SERVICES CLEANUP_OPS
-FAULT_INJECTED="false"
+declare -a CLEANUP_SERVICES=()
 cleanup() {
-  # Restore the fault first so we never leave a degraded staging target.
-  if [[ "$FAULT_INJECTED" == "true" ]]; then
-    local fi_restore="$REPO_ROOT/scripts/fault-injection/FAULT-010-restore.sh"
-    if [[ -x "$fi_restore" ]]; then
-      FAULT_ENV="$ENVIRONMENT" FAULT_REGION="${HONUA_DEMO_FAULT_REGION:-us-west-2}" \
-        FAULT_RESOURCE_PREFIX="$RESOURCE_PREFIX" FAULT_DRY_RUN="${HONUA_DEMO_FAULT_DRY_RUN:-true}" \
-        "$fi_restore" >"$OUTPUT_DIR/logs/opsB-fault-restore.log" 2>&1 || true
-    fi
-  fi
   # Delete scoped staging artifacts (never the customer alias).
   if [[ "$WRITE_TARGET_OK" == "true" ]]; then
     local args=(--silent --output /dev/null --max-time "$TIMEOUT_SECONDS" -X DELETE)
     [[ -n "$ADMIN_KEY" ]] && args+=(--header "X-API-Key: $ADMIN_KEY")
     local id
     for id in "${CLEANUP_SERVICES[@]:-}"; do [[ -n "$id" ]] && curl "${args[@]}" "$WRITE_BASE_URL/api/v1/publish/$id" 2>/dev/null || true; done
-    for id in "${CLEANUP_LAYERS[@]:-}"; do [[ -n "$id" ]] && curl "${args[@]}" "$WRITE_BASE_URL/api/v1/import/layers/$id" 2>/dev/null || true; done
-    for id in "${CLEANUP_OPS[@]:-}"; do [[ -n "$id" ]] && curl "${args[@]}" "$WRITE_BASE_URL/api/v1/devops/operations/$id" 2>/dev/null || true; done
   fi
 }
 trap cleanup EXIT
@@ -642,7 +556,7 @@ echo
 echo "--- Publish-all matrix (honua-devops#98) ----------------------"
 publish_all_matrix
 echo
-echo "--- Demo B: ops proposal/approve/submit/rollback (staging) ----"
+echo "--- Staging: fixture import, authorization, rollback, cleanup ----"
 demo_b
 echo
 
@@ -715,6 +629,29 @@ report_path="$OUTPUT_DIR/demo-e2e-report.md"
   echo "(honua-mobile live-server-integration, client-interop-nightly, geobench)."
 } >"$report_path"
 
+# Merge typed serving assertions into the stable per-hop receipt.
+python3 - "$evidence_path" "$OUTPUT_DIR/write-hops.json" <<'PY_VALUES'
+import json, pathlib, sys
+path, write_path = map(pathlib.Path, sys.argv[1:])
+evidence = json.loads(path.read_text())
+values = {h['id']: h['asserted_values'] for h in json.loads(write_path.read_text())} if write_path.exists() else {}
+evidence['schema_version'] = 1
+for hop in evidence['hops']:
+    hop['asserted_values'] = values.get(hop['id'], {})
+path.write_text(json.dumps(evidence, indent=2) + '\n')
+PY_VALUES
+
+# Explicit receipt destination for workflows that check out this repo elsewhere.
+if [[ -n "$JSON_SUMMARY" ]]; then
+  python3 - "$evidence_path" "$JSON_SUMMARY" <<'PY_SUMMARY'
+import pathlib, sys
+source, destination = map(pathlib.Path, sys.argv[1:])
+destination.parent.mkdir(parents=True, exist_ok=True)
+if source.resolve() != destination.resolve():
+    destination.write_bytes(source.read_bytes())
+PY_SUMMARY
+fi
+
 # GitHub step summary (when in CI).
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   cat "$report_path" >>"$GITHUB_STEP_SUMMARY"
@@ -724,6 +661,12 @@ echo
 echo "Evidence written to: $OUTPUT_DIR"
 echo "  - demo-e2e-evidence.json"
 echo "  - demo-e2e-report.md"
+
+# Configuration errors take precedence over assertion failures after writing evidence.
+if [[ "$CONFIGURATION_ERROR" == true ]]; then
+  echo "[ERROR] Invalid write configuration." >&2
+  exit 1
+fi
 
 # Exit non-zero on any non-pending failure; PENDING never fails the run.
 if [[ "$FAIL_N" -gt 0 ]]; then
