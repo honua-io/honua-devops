@@ -685,7 +685,7 @@ internal sealed partial class HonuaOperationsToolkit(
 
         if (isPromote)
         {
-            PromotionExecutor promotionExecutor = new(runtime, gateway, EffectivePolicy, _spine);
+            PromotionExecutor promotionExecutor = new(runtime, gateway, EffectivePolicy, _spine, ProtectedRecoveryIntentLedger());
             return await promotionExecutor.ExecutePromotionAsync(
                 revision,
                 currentRevision: null,

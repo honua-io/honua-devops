@@ -59,18 +59,42 @@ public sealed class DesiredIntentLedgerTests : IDisposable
     }
 
     [Fact]
-    public async Task TryCommitAsync_TornTrailingLineIsIgnoredAndTheNextRecordStartsOnItsOwnLine()
+    public async Task TryCommitAsync_TornTrailingLineIsIgnoredWhileItIsStillTheFileTail()
     {
         string path = Path.Combine(_directory, "ledger.jsonl");
         FileDesiredIntentLedger ledger = new(path);
         await ledger.TryCommitAsync(0, Intent("release/2026.03", "op-1"), CancellationToken.None);
         await File.AppendAllTextAsync(path, "{\"target\":\"prod-api\",\"version\":2,\"kind\":\"appr");
 
+        // The torn write is still the tail of the file here, so the same process that left it
+        // behind (e.g. after a crash mid-write) can recover from it and commit past it.
         DesiredIntentCommitResult next = await ledger.TryCommitAsync(1, Intent("release/2026.04", "op-2"), CancellationToken.None);
 
         Assert.Equal((DesiredIntentCommitStatus.Committed, 2L), (next.Status, next.Latest!.Version));
-        Assert.Equal((2L, "op-2"), await LatestAsync(new FileDesiredIntentLedger(path)));
         Assert.Equal(3, File.ReadAllLines(path).Length);
+
+        // Once the torn write is no longer the tail (a later record now follows it), it can no
+        // longer be distinguished from genuine corruption; a fresh read must fail closed rather
+        // than silently skipping it and returning a stale version.
+        DesiredIntentSnapshot snapshot = await new FileDesiredIntentLedger(path).ReadLatestAsync("prod-api", CancellationToken.None);
+        Assert.False(snapshot.Readable);
+    }
+
+    [Fact]
+    public async Task ReadLatestAsync_MalformedNonTrailingLine_FailsClosedInsteadOfSkippingToAnOlderVersion()
+    {
+        string path = Path.Combine(_directory, "ledger.jsonl");
+        FileDesiredIntentLedger ledger = new(path);
+        await ledger.TryCommitAsync(0, Intent("release/2026.03", "op-1"), CancellationToken.None);
+        await ledger.TryCommitAsync(1, Intent("release/2026.04", "op-2"), CancellationToken.None);
+        string[] lines = await File.ReadAllLinesAsync(path);
+        lines[0] = "{not valid json";
+        await File.WriteAllLinesAsync(path, lines);
+
+        DesiredIntentSnapshot snapshot = await ledger.ReadLatestAsync("prod-api", CancellationToken.None);
+
+        Assert.False(snapshot.Readable);
+        Assert.Null(snapshot.Latest);
     }
 
     [Fact]
@@ -114,12 +138,6 @@ public sealed class DesiredIntentLedgerTests : IDisposable
         Assert.Null(ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(restored, "release/2026.04"));
         Assert.Null(ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(restored, "release/2026.02"));
         Assert.Null(ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(null, "release/2026.03"));
-    }
-
-    private static async Task<(long Version, string OperationId)> LatestAsync(FileDesiredIntentLedger ledger)
-    {
-        DesiredIntentRecord latest = (await ledger.ReadLatestAsync("prod-api", CancellationToken.None)).Latest!;
-        return (latest.Version, latest.OperationId);
     }
 
     private static DesiredIntentRecord Intent(string revision, string operationId)

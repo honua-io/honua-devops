@@ -405,6 +405,73 @@ public class GitOpsExecutorTests
         Assert.DoesNotContain(handler.CapturedRequests, request => request.Uri.Contains("/submit", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task ExecutePromotionAsync_QuarantinedRevision_RefusesBeforeAnyBackendCall()
+    {
+        string ledgerDirectory = Directory.CreateTempSubdirectory("honua-devops-promote-").FullName;
+        try
+        {
+            FileDesiredIntentLedger ledger = new(Path.Combine(ledgerDirectory, "audit.jsonl.desired-intent.jsonl"));
+            Assert.Equal(DesiredIntentCommitStatus.Committed, (await ledger.TryCommitAsync(
+                0,
+                new DesiredIntentRecord(
+                    "prod-api", 0, DesiredIntentKind.Restored, "release/2026.02", ["release/2026.03"],
+                    "op-recover-1", "approval-op-recover-1", "operator@honua.io", null, DateTimeOffset.UtcNow),
+                CancellationToken.None)).Status);
+
+            TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+            using BackendGateway gateway = CreateGateway(handler);
+            PromotionExecutor executor = new(
+                CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+                gateway,
+                DirectAllowedPolicy(),
+                spine: null,
+                intentLedger: ledger);
+
+            GitOpsExecutionResult result = await executor.ExecutePromotionAsync(
+                "release/2026.03", null, "promote", "idem", "corr", "high", SyncParameters,
+                authorizationDryRun: false, policyGate: "prod-promotion-gated", CancellationToken.None);
+
+            Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+            Assert.Null(result.OperationId);
+            Assert.Empty(handler.CapturedRequests);
+        }
+        finally
+        {
+            Directory.Delete(ledgerDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteSyncAsync_IntentLedgerUnreadable_RefusesBeforeAnyBackendCall()
+    {
+        // An existing directory at the ledger path: no file handle can be opened for it, so
+        // every read reports Readable=false.
+        string unreadableDirectory = Directory.CreateTempSubdirectory("honua-devops-unreadable-ledger-").FullName;
+        try
+        {
+            FileDesiredIntentLedger ledger = new(unreadableDirectory, TimeSpan.FromMilliseconds(100));
+            TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+            using BackendGateway gateway = CreateGateway(handler);
+            GitOpsExecutor executor = new(
+                CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+                gateway,
+                DirectAllowedPolicy(),
+                intentLedger: ledger);
+
+            GitOpsExecutionResult result = await ExecuteSyncAsync(executor);
+
+            Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+            Assert.Null(result.OperationId);
+            Assert.False(result.Mutated);
+            Assert.Empty(handler.CapturedRequests);
+        }
+        finally
+        {
+            Directory.Delete(unreadableDirectory, recursive: true);
+        }
+    }
+
     // ---- Invariant 4: data-affecting rollback without approval is refused. ----
 
     [Fact]
@@ -736,14 +803,16 @@ public class GitOpsExecutorTests
             if (request.Method == HttpMethod.Get)
                 return TestHttpMessageHandler.JsonOk(new
                 {
-                    operationId = "op-resume", status = "Planned",
+                    operationId = "op-resume",
+                    status = "Planned",
                     target = new { parameters }
                 });
             return path.Contains("/manifest/apply", StringComparison.Ordinal)
                 ? TestHttpMessageHandler.JsonOk(new { status = "Applied", operationId = "op-resume" })
                 : TestHttpMessageHandler.JsonOk(new
                 {
-                    operationId = "op-resume", status = "Succeeded",
+                    operationId = "op-resume",
+                    status = "Succeeded",
                     actuatorReceipt = FullActuatorReceipt(
                         "receipt-resume",
                         "op-resume",
@@ -971,6 +1040,33 @@ public class GitOpsExecutorTests
 
         Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
         Assert.Contains("desired-state-seal-invalid", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+    }
+
+    [Fact]
+    public async Task ExecuteSubmitAsync_OperationTargetsAnotherDeployTarget_RefusesBeforeIntentIsRecorded()
+    {
+        Dictionary<string, string> parameters = SealedParameters(DesiredState());
+        TestHttpMessageHandler handler = new(request => request.Method == HttpMethod.Get
+            ? TestHttpMessageHandler.JsonOk(new
+            {
+                operationId = "op-other-target",
+                status = "Planned",
+                target = new { targetId = "other-api", parameters }
+            })
+            : TestHttpMessageHandler.JsonOk(new { status = "unexpected" }));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            CreateRuntime(ExecutionMode.Execute, deployTargetId: "prod-api"),
+            gateway,
+            OperatorPolicyModel.Default);
+
+        GitOpsExecutionResult result = await executor.ExecuteSubmitAsync(
+            "op-other-target", "cross-target operation id", confirmed: true, authorizationDryRun: false,
+            "resume-policy", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.Contains("submit-operation-target-mismatch", result.BlockingReasons);
         Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
     }
 
