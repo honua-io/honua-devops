@@ -136,7 +136,7 @@ public sealed class ServerOwnedRecoveryTests : IDisposable
     }
 
     [Fact]
-    public async Task NewerIntentRecordedDuringPoll_ConflictsAndIsNotOverwritten()
+    public async Task NewerIntentRecordedDuringPoll_KeepsNewerIntentAndCarriesQuarantine()
     {
         int reads = 0;
         TestHttpMessageHandler handler = DeployHandler("op-7f3", Candidate, () =>
@@ -158,9 +158,80 @@ public sealed class ServerOwnedRecoveryTests : IDisposable
         Assert.Equal(GitOpsExecutionStatus.Indeterminate, result.Status);
         Assert.Equal(["desired-intent-conflict"], result.BlockingReasons);
         Assert.Equal(RolloutJourneyStatus.NeedsAttention, RolloutJourneyStatus.From(result));
+        Assert.DoesNotContain(result.Findings, finding => finding.Contains("restores `", StringComparison.Ordinal));
+
+        // The newer approval stays the desired state, lineage intact, with the rejected
+        // candidate quarantined in it.
         DesiredIntentRecord latest = await LatestAsync();
-        Assert.Equal((2L, DesiredIntentKind.Approved, Corrected), (latest.Version, latest.Kind, latest.DesiredRevision));
+        Assert.Equal((3L, DesiredIntentKind.Approved, Corrected, "op-newer"),
+            (latest.Version, latest.Kind, latest.DesiredRevision, latest.OperationId));
+        Assert.Equal("approval-receipt-op-newer", latest.ApprovalReference);
+        Assert.Equal([Candidate], latest.RejectedRevisions);
+
+        TestHttpMessageHandler next = new(_ => TestHttpMessageHandler.JsonOk(Observing("op-newer", Corrected, Prior)));
+        using BackendGateway nextGateway = CreateGateway(next);
+        GitOpsExecutionResult resurrect = await SyncAsync(Executor(nextGateway), Candidate);
+        Assert.Contains("desired-revision-quarantined", resurrect.BlockingReasons);
+        Assert.DoesNotContain(next.CapturedRequests, request => request.Method == "POST");
+    }
+
+    [Fact]
+    public async Task NewerIntentRecordedDuringRestartReconcile_CarriesQuarantineAndRefusesCandidate()
+    {
+        await CommitAsync(0, Approved(Candidate, "op-7f3"));
+        TestHttpMessageHandler handler = new(request =>
+            request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith("/op-7f3", StringComparison.Ordinal)
+                ? TestHttpMessageHandler.JsonOk(Settled("op-7f3", Candidate, "RolledBack"))
+                : TestHttpMessageHandler.JsonOk(Observing("op-newer", Corrected, Prior)));
+        using BackendGateway gateway = CreateGateway(handler);
+        GitOpsExecutor executor = new(
+            ExecuteRuntime(), gateway, DirectAllowedPolicy(),
+            delay: (_, _) => Task.CompletedTask,
+            intentLedger: new NewerApprovalBeforeFirstRecoveryLedger(_ledger, Approved(Corrected, "op-newer")));
+
+        GitOpsExecutionResult result = await SyncAsync(executor, Candidate);
+
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+        Assert.Contains("desired-revision-quarantined", result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+        DesiredIntentRecord latest = await LatestAsync();
+        Assert.Equal((3L, DesiredIntentKind.Approved, Corrected, "op-newer"),
+            (latest.Version, latest.Kind, latest.DesiredRevision, latest.OperationId));
+        Assert.Equal([Candidate], latest.RejectedRevisions);
+    }
+
+    [Fact]
+    public async Task ServerRolledBackWithBlockingReasons_DuringPoll_RecordsNothing()
+    {
+        TestHttpMessageHandler handler = DeployHandler("op-7f3", Candidate, () =>
+            Settled("op-7f3", Candidate, "RolledBack", blockingReasons: ["provider-state-unconfirmed"]));
+        using BackendGateway gateway = CreateGateway(handler);
+
+        GitOpsExecutionResult result = await SyncAsync(Executor(gateway), Candidate);
+
+        Assert.Equal(GitOpsExecutionStatus.Indeterminate, result.Status);
+        Assert.Equal(["server-recovery-unverified", "provider-state-unconfirmed"], result.BlockingReasons);
+        Assert.Equal(RolloutJourneyStatus.NeedsAttention, RolloutJourneyStatus.From(result));
+        DesiredIntentRecord latest = await LatestAsync();
+        Assert.Equal((1L, DesiredIntentKind.Approved, Candidate), (latest.Version, latest.Kind, latest.DesiredRevision));
         Assert.Empty(latest.RejectedRevisions);
+    }
+
+    [Fact]
+    public async Task ServerRolledBackWithBlockingReasons_OnRestart_StopsTheReconcile()
+    {
+        await CommitAsync(0, Approved(Candidate, "op-7f3"));
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(
+            Settled("op-7f3", Candidate, "RolledBack", blockingReasons: ["provider-state-unconfirmed"])));
+        using BackendGateway gateway = CreateGateway(handler);
+
+        GitOpsExecutionResult result = await SyncAsync(Executor(gateway), Candidate);
+
+        Assert.Equal(GitOpsExecutionStatus.ContractUnavailable, result.Status);
+        Assert.Equal(["server-recovery-unverified"], result.BlockingReasons);
+        Assert.False(result.Mutated);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+        Assert.Equal((1L, DesiredIntentKind.Approved), ((await LatestAsync()).Version, (await LatestAsync()).Kind));
     }
 
     [Theory]
@@ -279,11 +350,13 @@ public sealed class ServerOwnedRecoveryTests : IDisposable
             }
         };
 
-    private static object Settled(string operationId, string candidate, string status, string targetId = Target)
+    private static object Settled(string operationId, string candidate, string status, string targetId = Target,
+        string[]? blockingReasons = null)
         => new
         {
             operationId,
             status,
+            blockingReasons = blockingReasons ?? [],
             currentPhase = "Deploy backend recommended rollback.",
             target = new { targetId, desiredRevision = candidate, currentRevision = candidate },
             protection = (object?)null,
@@ -406,6 +479,27 @@ public sealed class ServerOwnedRecoveryTests : IDisposable
 
         public Task<DesiredIntentCommitResult> TryCommitAsync(long expectedVersion, DesiredIntentRecord next, CancellationToken cancellationToken)
             => Task.FromResult(new DesiredIntentCommitResult(DesiredIntentCommitStatus.WriteFailed, null, "injected: no space left on device"));
+    }
+
+    // Another process records a newer approval in the gap between this process reading the
+    // recovered approval and committing its recovery record.
+    private sealed class NewerApprovalBeforeFirstRecoveryLedger(IDesiredIntentLedger inner, DesiredIntentRecord newer) : IDesiredIntentLedger
+    {
+        private bool _raced;
+
+        public Task<DesiredIntentSnapshot> ReadLatestAsync(string target, CancellationToken cancellationToken)
+            => inner.ReadLatestAsync(target, cancellationToken);
+
+        public async Task<DesiredIntentCommitResult> TryCommitAsync(long expectedVersion, DesiredIntentRecord next, CancellationToken cancellationToken)
+        {
+            if (!_raced && next.Kind is DesiredIntentKind.Rejected or DesiredIntentKind.Restored)
+            {
+                _raced = true;
+                Assert.Equal(DesiredIntentCommitStatus.Committed, (await inner.TryCommitAsync(expectedVersion, newer, cancellationToken)).Status);
+            }
+
+            return await inner.TryCommitAsync(expectedVersion, next, cancellationToken);
+        }
     }
 
     private sealed class SteppingTimeProvider : TimeProvider

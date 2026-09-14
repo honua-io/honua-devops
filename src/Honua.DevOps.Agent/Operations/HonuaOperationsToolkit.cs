@@ -574,7 +574,8 @@ internal sealed partial class HonuaOperationsToolkit(
         ];
         if (execution is not null)
         {
-            deployFindings.Add($"Rollout: {RolloutJourneyStatus.Label(RolloutJourneyStatus.From(execution))}.");
+            // The plain-language rollout state leads; plan and configuration details are diagnostics.
+            deployFindings.Insert(0, $"Rollout: {RolloutJourneyStatus.Label(RolloutJourneyStatus.From(execution))}.");
             deployFindings.Add($"GitOps actuation status: {execution.Status} (mutated={execution.Mutated}).");
             deployFindings.AddRange(execution.Findings.Select(finding => $"Actuation: {finding}"));
         }

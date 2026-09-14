@@ -78,10 +78,17 @@ outcome into the ledger:
   A settled `RolledBack` is folded in as `rejected` before the quarantine check.
   The rejected candidate is refused, with one read and no mutation, and a corrected
   revision proceeds carrying the quarantine forward.
-- **Mismatch, conflict or failure.** A `RolledBack` whose target or candidate
-  differs from the approval is `server-recovery-unverified`. Newer intent is never
-  overwritten (`desired-intent-conflict`), and a failed write is
-  `desired-intent-write-failed`. All three are **Needs attention**.
+- **Mismatch or blocked outcome.** A `RolledBack` whose target or candidate
+  differs from the approval, or that still carries `blockingReasons`, is
+  `server-recovery-unverified`. Nothing is recorded. On the next reconcile it
+  stops the sync or submit instead of leaving the candidate unfenced.
+- **Conflict.** If newer intent landed first, it stays the desired state with
+  its lineage intact. The rejected candidate is added to that intent's quarantine
+  by compare-and-set, so a reconcile cannot resurrect it; the result is still
+  `desired-intent-conflict` and no restoration is claimed. If the quarantine
+  cannot be carried (the intent keeps changing, or the newer intent desires that
+  same revision), the reconcile stops. A failed write is
+  `desired-intent-write-failed`. All of these are **Needs attention**.
 
 The retained `RecoveryExecutor` restart path also accepts a settled `RolledBack`
 without `protection` as an observation, so a crash between the rollback
