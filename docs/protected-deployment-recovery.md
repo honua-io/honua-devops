@@ -55,16 +55,51 @@ it: an in-memory record would forget the quarantine on restart.
   before any backend call (`desired-revision-quarantined`). Approved intent
   carries the quarantine forward, so recovery is forward with a corrected revision.
 
+## Server-owned recovery becomes desired intent
+
+The deterministic trigger belongs to the server. Its deploy reconciler opens the
+post-activation observation window and issues the rollback itself when the
+safety policy fires. DevOps does not run a second lifecycle. It folds that server
+outcome into the ledger:
+
+- **While watching.** With protected recovery enabled, an approved sync or submit
+  keeps the prior revision the server exposes in `protection.previousRevision`
+  while the candidate's window is open. If the operation settles `RolledBack` for
+  the same operation, target and candidate, DevOps appends `restored` (prior
+  revision, candidate quarantined) at the approval's version. The journey is
+  **Previous version restored**.
+- **Prior revision never exposed.** A settled `RolledBack` clears `protection`
+  on the server. If DevOps never saw the prior revision (for example, recovery fired
+  before promotion), it appends `rejected`. That record quarantines the candidate
+  with an empty desired revision. The result is `indeterminate`
+  (`restored-revision-unverified`, **Needs attention**); no restoration is claimed.
+- **Nobody watching.** If the process restarted mid-poll or the server recovered
+  later, the next sync or submit reads the latest `approved` record's operation first.
+  A settled `RolledBack` is folded in as `rejected` before the quarantine check.
+  The rejected candidate is refused, with one read and no mutation, and a corrected
+  revision proceeds carrying the quarantine forward.
+- **Mismatch, conflict or failure.** A `RolledBack` whose target or candidate
+  differs from the approval is `server-recovery-unverified`. Newer intent is never
+  overwritten (`desired-intent-conflict`), and a failed write is
+  `desired-intent-write-failed`. All three are **Needs attention**.
+
+The retained `RecoveryExecutor` restart path also accepts a settled `RolledBack`
+without `protection` as an observation, so a crash between the rollback
+acknowledgement and the ledger write records restoration once with no second
+rollback request. Unsettled observations without `protection` are still refused.
+
+Deploy responses lead with a plain `Rollout:` line (Checking update, Updating,
+Confirming service health, Update complete, Previous version restored, Needs
+attention). An open observation window maps to Confirming service health.
+
 Writes take an exclusive file handle across read, compare and append, so
 concurrent DevOps processes on the same host cannot both commit at one version.
 The ledger fences DevOps-originated intent. It is not a Git commit, and it does
 not fence other writers to the server's target intent.
 
-The intended ordinary journey remains change preview, scoped approval, Checking
-update / Updating / Confirming service health, then Update complete / Previous
-version restored / Needs attention. Git and telemetry details are optional
-diagnostics. The retained journey mapper is not yet connected to a protected
-deployment approval/trigger flow.
+The ordinary journey is change preview, scoped approval, Checking update /
+Updating / Confirming service health, then Update complete / Previous version
+restored / Needs attention. Git and telemetry details are optional diagnostics.
 
 ## Remaining acceptance and blockers (2026-09-13)
 
@@ -77,9 +112,12 @@ At server trunk `0fa0a5d0e441eea2f986cf58f8a80630454a41c9`,
 `DeployOperationResponse` exposes protection state, but no conditional recovery
 grant or Git restoration receipt. Therefore:
 
-- The deployment approval path still needs durable grant/approval lineage and a
-  server-owned deterministic trigger consuming that exact scope. The retained
-  `AuthorizeRecoveryGrant` and `RecoveryExecutor` have no production callers.
+- The server's reconciler is the deterministic trigger, and DevOps consumes its
+  outcome (previous section). The server does not accept a scoped recovery grant,
+  and its protection state carries no actor or tenant. The retained
+  `AuthorizeRecoveryGrant` and `RecoveryExecutor` therefore still have no
+  production callers: minting a grant nothing on the server enforces would be
+  theater.
 - The server contract must enforce actor/tenant/target, approval/policy,
   permitted compensation, deadline and the current target intent atomically.
   Checking a historical operation's candidate on the client is **not** a

@@ -21,6 +21,11 @@ internal static class DesiredIntentKind
 {
     internal const string Approved = "approved";
     internal const string Restored = "restored";
+
+    // The server recovered the approved candidate, but DevOps could not verify which revision
+    // it restored (a settled server RolledBack clears its protection window). The candidate is
+    // quarantined; DesiredRevision is empty and no restoration is claimed.
+    internal const string Rejected = "rejected";
 }
 
 internal sealed record DesiredIntentRecord(
@@ -77,6 +82,36 @@ internal interface IDesiredIntentLedger
         long expectedVersion,
         DesiredIntentRecord next,
         CancellationToken cancellationToken);
+}
+
+// Server-reported recovery of an approved candidate becomes durable intent only through a
+// compare-and-set against the record it recovers. A verified prior revision is recorded as
+// restored; without one the candidate is still quarantined, but nothing claims restoration.
+internal static class DesiredIntentRecovery
+{
+    internal static Task<DesiredIntentCommitResult> RecordAsync(
+        IDesiredIntentLedger ledger,
+        DesiredIntentRecord basis,
+        string candidateRevision,
+        string? restoredRevision,
+        string actor,
+        string? commitSha,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken)
+        => ledger.TryCommitAsync(
+            basis.Version,
+            new DesiredIntentRecord(
+                basis.Target,
+                Version: 0,
+                restoredRevision is null ? DesiredIntentKind.Rejected : DesiredIntentKind.Restored,
+                restoredRevision ?? string.Empty,
+                [.. basis.RejectedRevisions.Union([candidateRevision], StringComparer.Ordinal)],
+                basis.OperationId,
+                basis.ApprovalReference,
+                actor,
+                commitSha,
+                recordedAtUtc),
+            cancellationToken);
 }
 
 internal static class DesiredIntentLedgerFactory

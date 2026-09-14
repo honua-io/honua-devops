@@ -276,19 +276,14 @@ internal sealed class RecoveryExecutor(
             // Server-reported recovery becomes restored desired intent only through a
             // compare-and-set against the version read before any request was issued.
             string? commitSha = DeployOperationReader.ReadMetadataReleaseCommitSha(response.Payload.RootElement);
-            DesiredIntentCommitResult commit = await _intentLedger!.TryCommitAsync(
-                basis!.Version,
-                new DesiredIntentRecord(
-                    grant.Target,
-                    Version: 0,
-                    DesiredIntentKind.Restored,
-                    grant.PriorRevision,
-                    [.. basis.RejectedRevisions.Union([grant.CandidateRevision], StringComparer.Ordinal)],
-                    grant.OperationId,
-                    basis.ApprovalReference,
-                    grant.Actor,
-                    commitSha,
-                    DateTimeOffset.UtcNow),
+            DesiredIntentCommitResult commit = await DesiredIntentRecovery.RecordAsync(
+                _intentLedger!,
+                basis!,
+                grant.CandidateRevision,
+                grant.PriorRevision,
+                grant.Actor,
+                commitSha,
+                DateTimeOffset.UtcNow,
                 cancellationToken);
 
             if (!commit.Recorded)

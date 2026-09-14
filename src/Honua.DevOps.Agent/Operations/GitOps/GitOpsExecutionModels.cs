@@ -607,7 +607,19 @@ internal static class RolloutJourneyStatus
         ["smoke", "verify", "observ", "health", "confirm"];
 
     internal static string From(GitOpsExecutionResult result)
-        => Describe(result.Status, result.ServerStatus, currentPhase: null);
+        => Describe(result.Status, result.ServerStatus, result.CurrentPhase);
+
+    // The words an ordinary operator reads; the machine token stays available for automation.
+    internal static string Label(string journeyStatus)
+        => journeyStatus switch
+        {
+            CheckingUpdate => "Checking update",
+            Updating => "Updating",
+            ConfirmingServiceHealth => "Confirming service health",
+            UpdateComplete => "Update complete",
+            PreviousVersionRestored => "Previous version restored",
+            _ => "Needs attention"
+        };
 
     internal static string Describe(string executionStatus, string? serverStatus, string? currentPhase)
     {
@@ -681,4 +693,7 @@ internal sealed record GitOpsExecutionResult(
     IReadOnlyList<string> Findings,
     IReadOnlyList<string> BlockingReasons,
     string? ActuatorReceiptId = null,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    // The server's last-observed phase text (e.g. an open observation window), which moves the
+    // rollout journey from Updating to Confirming service health.
+    string? CurrentPhase = null);
