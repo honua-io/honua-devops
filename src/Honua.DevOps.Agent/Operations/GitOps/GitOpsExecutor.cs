@@ -148,16 +148,17 @@ internal sealed class GitOpsExecutor(
         }
 
         // A revision rejected by a recorded recovery must not be resurrected by the next
-        // reconcile. Refuse before any backend call; the record step below re-checks under CAS.
+        // reconcile. Refuse before any mutating call; the record step below re-checks under CAS.
         if (_intentLedger is not null)
         {
-            DesiredIntentSnapshot intent = await _intentLedger.ReadLatestAsync(_runtime.DeployTargetId ?? string.Empty, cancellationToken);
-            if (!intent.Readable)
+            (DesiredIntentSnapshot intent, string? reconcileBlocker) = await ReadReconciledIntentAsync(
+                _runtime.DeployTargetId ?? string.Empty, steps, findings, cancellationToken);
+            if (!intent.Readable || reconcileBlocker is not null)
             {
                 findings.Add($"{intent.Detail}; nothing was submitted.");
                 return new GitOpsExecutionResult(
                     GitOpsExecutionStatus.ContractUnavailable, null, null, false, decision, steps, findings,
-                    ["desired-intent-write-failed"]);
+                    [reconcileBlocker ?? "desired-intent-write-failed"]);
             }
 
             string? quarantine = ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(intent.Latest, desiredRevision);
@@ -304,7 +305,7 @@ internal sealed class GitOpsExecutor(
                 BlockingReasons: createBlockers);
         }
 
-        GitOpsExecutionResult? intentRefusal = await RecordApprovedIntentAsync(
+        (GitOpsExecutionResult? intentRefusal, DesiredIntentRecord? approvedIntent) = await RecordApprovedIntentAsync(
             operationId, desiredRevision, approval.ReceiptId, correlationId, serverStatus, operationRecorded,
             decision, steps, findings, cancellationToken);
         if (intentRefusal is not null)
@@ -401,14 +402,16 @@ internal sealed class GitOpsExecutor(
             cancellationToken,
             desiredState is null ? null : ComputeDesiredStateDigest(desiredState),
             manifestAcknowledgementDigest,
-            approval.ReceiptId);
+            approval.ReceiptId,
+            approvedIntent);
     }
 
     // Records the approved desired revision before anything is submitted (issue #191), so a
     // later protected recovery compares-and-sets against it instead of restoring over an
     // approval it never saw. The quarantine is re-checked on the same snapshot the write is
     // conditioned on; a write failure or persistent conflict stops the submit explicitly.
-    private async Task<GitOpsExecutionResult?> RecordApprovedIntentAsync(
+    // Returns the recorded approval so the poll can fold a server recovery of it into intent.
+    private async Task<(GitOpsExecutionResult? Refusal, DesiredIntentRecord? Approved)> RecordApprovedIntentAsync(
         string operationId,
         string? desiredRevision,
         string? approvalReference,
@@ -422,14 +425,14 @@ internal sealed class GitOpsExecutor(
     {
         if (_intentLedger is null)
         {
-            return null;
+            return (null, null);
         }
 
         string target = _runtime.DeployTargetId ?? string.Empty;
         if (string.IsNullOrWhiteSpace(desiredRevision))
         {
-            return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-revision-unknown",
-                $"Operation `{operationId}` has no desired revision to record; nothing was submitted.");
+            return (Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-revision-unknown",
+                $"Operation `{operationId}` has no desired revision to record; nothing was submitted."), null);
         }
 
         string detail = string.Empty;
@@ -438,14 +441,14 @@ internal sealed class GitOpsExecutor(
             DesiredIntentSnapshot snapshot = await _intentLedger.ReadLatestAsync(target, cancellationToken);
             if (!snapshot.Readable)
             {
-                return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-write-failed",
-                    $"{snapshot.Detail}; nothing was submitted.");
+                return (Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-write-failed",
+                    $"{snapshot.Detail}; nothing was submitted."), null);
             }
 
             string? quarantine = ReleaseCapabilityGate.GetQuarantinedRevisionRefusal(snapshot.Latest, desiredRevision);
             if (quarantine is not null)
             {
-                return Refuse(GitOpsExecutionStatus.ApprovalRequired, "desired-revision-quarantined", quarantine);
+                return (Refuse(GitOpsExecutionStatus.ApprovalRequired, "desired-revision-quarantined", quarantine), null);
             }
 
             DesiredIntentCommitResult commit = await _intentLedger.TryCommitAsync(
@@ -465,19 +468,19 @@ internal sealed class GitOpsExecutor(
             if (commit.Recorded)
             {
                 findings.Add($"Approved desired intent `{desiredRevision}` recorded for `{target}` at version {commit.Latest!.Version}.");
-                return null;
+                return (null, commit.Latest);
             }
 
             detail = commit.Detail;
             if (commit.Status == DesiredIntentCommitStatus.WriteFailed)
             {
-                return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-write-failed",
-                    $"{detail}; nothing was submitted.");
+                return (Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-write-failed",
+                    $"{detail}; nothing was submitted."), null);
             }
         }
 
-        return Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-conflict",
-            $"{detail}; the desired intent kept changing, so nothing was submitted.");
+        return (Refuse(GitOpsExecutionStatus.ContractUnavailable, "desired-intent-conflict",
+            $"{detail}; the desired intent kept changing, so nothing was submitted."), null);
 
         GitOpsExecutionResult Refuse(string status, string blocker, string finding)
         {
@@ -485,6 +488,195 @@ internal sealed class GitOpsExecutor(
             return new GitOpsExecutionResult(status, operationId, serverStatus, mutated, decision, steps, findings, [blocker]);
         }
     }
+
+    // A server-owned recovery of the last approved candidate can settle while no DevOps process
+    // watches it: the reconciler fires its own rollback signal, or this process restarted
+    // mid-poll. Fold that server truth into desired intent before the next reconcile decides
+    // anything, so the rejected candidate is quarantined instead of resurrected. The server is
+    // only read; the one write is the ledger's compare-and-set.
+    private async Task<(DesiredIntentSnapshot Snapshot, string? Blocker)> ReadReconciledIntentAsync(
+        string target,
+        List<OperationBackendStep> steps,
+        List<string> findings,
+        CancellationToken cancellationToken)
+    {
+        DesiredIntentSnapshot snapshot = await _intentLedger!.ReadLatestAsync(target, cancellationToken);
+        if (!snapshot.Readable || snapshot.Latest is not { Kind: DesiredIntentKind.Approved } approved)
+        {
+            return (snapshot, null);
+        }
+
+        using BackendJsonResult observed = await _gateway.GetDeployOperationJsonAsync(approved.OperationId, cancellationToken);
+        steps.Add(OperationBackendStep.From("desired-intent-operation-read", observed.CallResult, mutatesState: false));
+        if (!observed.CallResult.IsSuccess || observed.Payload is null)
+        {
+            // Purged, or the server is unreachable (the create below then fails as well).
+            // There is no server outcome to fold in.
+            findings.Add($"Approved operation `{approved.OperationId}` could not be read ({observed.CallResult.Detail}); its server outcome was not folded into desired intent.");
+            return (snapshot, null);
+        }
+
+        JsonElement operation = observed.Payload.RootElement;
+        if (!DeployOperationReader.IsRolledBack(DeployOperationReader.ReadStatus(operation)))
+        {
+            return (snapshot, null);
+        }
+
+        ServerRecoveryFold fold = await FoldServerRecoveryAsync(
+            approved,
+            DeployOperationReader.ReadOperationId(operation),
+            DeployOperationReader.ReadTargetId(operation),
+            DeployOperationReader.ReadCandidateRevision(operation),
+            ReadProtectedPriorRevision(operation, approved.DesiredRevision),
+            DeployOperationReader.ReadMetadataReleaseCommitSha(operation),
+            DeployOperationReader.ReadBlockingReasons(operation),
+            findings,
+            cancellationToken);
+
+        // Restored, rejected, or quarantine carried into newer intent: the candidate is fenced
+        // either way. Anything else would leave it unfenced, so the reconcile stops.
+        return fold.Recorded is not null
+            ? (new DesiredIntentSnapshot(true, fold.Recorded, string.Empty), null)
+            : (snapshot with { Detail = "Desired intent could not be reconciled with the server's recovery" },
+                fold.Blocker ?? "server-recovery-unverified");
+    }
+
+    // Records the server's RolledBack for an approved candidate under compare-and-set against
+    // that approval. Only a prior revision the server exposed in the candidate's protection
+    // window is recorded as restored; otherwise the candidate is quarantined without claiming
+    // restoration. A mismatch, a blocked outcome, a conflict or a write failure is returned as a
+    // blocker; a conflict still carries the candidate's quarantine into the newer intent.
+    private async Task<ServerRecoveryFold> FoldServerRecoveryAsync(
+        DesiredIntentRecord approved,
+        string? operationId,
+        string? targetId,
+        string? candidateRevision,
+        string? restoredRevision,
+        string? commitSha,
+        IReadOnlyList<string> serverBlockers,
+        List<string> findings,
+        CancellationToken cancellationToken)
+    {
+        string? identityRefusal = ReleaseCapabilityGate.GetServerRecoveryIdentityRefusal(approved, operationId, targetId, candidateRevision);
+        if (identityRefusal is not null)
+        {
+            findings.Add(identityRefusal);
+            return new ServerRecoveryFold(null, "server-recovery-unverified");
+        }
+
+        // Same contradiction RecoveryExecutor refuses: a RolledBack that still carries blocking
+        // reasons is not a settled recovery, so nothing is recorded from it.
+        if (serverBlockers.Count > 0)
+        {
+            findings.Add(
+                $"The server reports RolledBack for `{approved.OperationId}` with blocking reasons [{string.Join(", ", serverBlockers)}]; " +
+                "desired intent was not changed.");
+            return new ServerRecoveryFold(null, "server-recovery-unverified");
+        }
+
+        DesiredIntentCommitResult commit = await DesiredIntentRecovery.RecordAsync(
+            _intentLedger!, approved, approved.DesiredRevision, restoredRevision, approved.Actor, commitSha,
+            _timeProvider.GetUtcNow(), cancellationToken);
+        if (commit.Status == DesiredIntentCommitStatus.Conflict)
+        {
+            // Newer intent landed after this approval. It is kept as the desired state, but it
+            // was recorded without knowing the server rejected this candidate, so the quarantine
+            // is carried into it; otherwise the next reconcile could resurrect the candidate.
+            DesiredIntentRecord? carried = await CarryQuarantineAsync(approved.Target, approved.DesiredRevision, cancellationToken);
+            findings.Add(carried is null
+                ? $"The server reports RolledBack for `{approved.OperationId}`, but desired intent kept changing and `{approved.DesiredRevision}` " +
+                  $"could not be quarantined in it: {commit.Detail}"
+                : $"The server reports RolledBack for `{approved.OperationId}`, but newer desired intent `{carried.DesiredRevision}` from operation " +
+                  $"`{carried.OperationId}` was recorded first. It was kept, and `{approved.DesiredRevision}` stays quarantined in it " +
+                  $"(version {carried.Version}); no restoration is claimed.");
+            return new ServerRecoveryFold(carried, "desired-intent-conflict");
+        }
+
+        if (!commit.Recorded)
+        {
+            findings.Add($"The server reports RolledBack for `{approved.OperationId}`, but candidate quarantine could not be recorded: {commit.Detail}");
+            return new ServerRecoveryFold(null, "desired-intent-write-failed");
+        }
+
+        DesiredIntentRecord recorded = commit.Latest!;
+        if (recorded.Kind == DesiredIntentKind.Restored)
+        {
+            findings.Add(
+                $"Desired intent version {recorded.Version} for `{recorded.Target}` restores `{recorded.DesiredRevision}` and quarantines " +
+                $"`{approved.DesiredRevision}` (operation `{recorded.OperationId}`, approval `{recorded.ApprovalReference ?? "unrecorded"}`, " +
+                $"commit `{recorded.CommitSha ?? "none reported"}`).");
+            return new ServerRecoveryFold(recorded, null);
+        }
+
+        findings.Add(
+            $"Desired intent version {recorded.Version} for `{recorded.Target}` quarantines `{approved.DesiredRevision}` (operation " +
+            $"`{recorded.OperationId}`, approval `{recorded.ApprovalReference ?? "unrecorded"}`). The server did not expose the revision it " +
+            "restored, so no restoration is claimed; confirm the running revision before proposing a corrected one.");
+        return new ServerRecoveryFold(recorded, "restored-revision-unverified");
+    }
+
+    // Adds a server-rejected revision to the latest intent's quarantine by compare-and-set,
+    // leaving its desired revision and lineage untouched. Null when the latest intent is
+    // unreadable, desires that same revision, keeps changing, or cannot be written.
+    private async Task<DesiredIntentRecord?> CarryQuarantineAsync(
+        string target, string rejectedRevision, CancellationToken cancellationToken)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            DesiredIntentSnapshot snapshot = await _intentLedger!.ReadLatestAsync(target, cancellationToken);
+            if (!snapshot.Readable
+                || snapshot.Latest is not { } latest
+                || string.Equals(latest.DesiredRevision, rejectedRevision, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (latest.IsQuarantined(rejectedRevision))
+            {
+                return latest;
+            }
+
+            DesiredIntentCommitResult commit = await _intentLedger.TryCommitAsync(
+                latest.Version,
+                latest with
+                {
+                    Version = 0,
+                    RejectedRevisions = [.. latest.RejectedRevisions.Union([rejectedRevision], StringComparer.Ordinal)],
+                    RecordedAtUtc = _timeProvider.GetUtcNow()
+                },
+                cancellationToken);
+            if (commit.Recorded)
+            {
+                return commit.Latest;
+            }
+
+            if (commit.Status == DesiredIntentCommitStatus.WriteFailed)
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    // The prior revision exists only inside the protection window of the same candidate; a
+    // settled RolledBack clears that window, so a missing value stays unknown, never inferred.
+    private static string? ReadProtectedPriorRevision(JsonElement operation, string? candidateRevision)
+    {
+        if (!operation.TryGetProperty("protection", out JsonElement protection)
+            || protection.ValueKind != JsonValueKind.Object
+            || !protection.TryGetProperty("candidateRevision", out JsonElement candidate)
+            || candidate.ValueKind != JsonValueKind.String
+            || !string.Equals(candidate.GetString(), candidateRevision, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string? prior = DeployOperationReader.ReadPriorRevision(operation);
+        return string.IsNullOrWhiteSpace(prior) || string.Equals(prior, candidateRevision, StringComparison.Ordinal) ? null : prior;
+    }
+
+    private sealed record ServerRecoveryFold(DesiredIntentRecord? Recorded, string? Blocker);
 
     private static IReadOnlyList<string> ReadEnvironments(IReadOnlyDictionary<string, string> parameters)
         => parameters.TryGetValue("environments", out string? environments) && !string.IsNullOrWhiteSpace(environments)
@@ -664,7 +856,19 @@ internal sealed class GitOpsExecutor(
                 ["submit-operation-target-mismatch"]);
         }
 
-        GitOpsExecutionResult? intentRefusal = await RecordApprovedIntentAsync(
+        if (_intentLedger is not null)
+        {
+            (DesiredIntentSnapshot _, string? reconcileBlocker) = await ReadReconciledIntentAsync(
+                _runtime.DeployTargetId ?? string.Empty, steps, findings, cancellationToken);
+            if (reconcileBlocker is not null)
+            {
+                return new GitOpsExecutionResult(
+                    GitOpsExecutionStatus.ContractUnavailable, operationId, serverStatus, false, decision, steps, findings,
+                    [reconcileBlocker]);
+            }
+        }
+
+        (GitOpsExecutionResult? intentRefusal, DesiredIntentRecord? approvedIntent) = await RecordApprovedIntentAsync(
             operationId, DeployOperationReader.ReadCandidateRevision(current.Payload.RootElement), approval.ReceiptId,
             "honua-devops:runbook:deploy-submit", serverStatus, false, decision, steps, findings, cancellationToken);
         if (intentRefusal is not null)
@@ -708,7 +912,8 @@ internal sealed class GitOpsExecutor(
                 cancellationToken,
                 recoveredDesiredStateDigest,
                 apply.AcknowledgementDigest,
-                approval.ReceiptId);
+                approval.ReceiptId,
+                approvedIntent);
         }
 
         return await SubmitAndPollAsync(
@@ -721,7 +926,8 @@ internal sealed class GitOpsExecutor(
             cancellationToken,
             null,
             null,
-            approval.ReceiptId);
+            approval.ReceiptId,
+            approvedIntent);
     }
 
     private static bool TryRecoverDesiredState(
@@ -862,9 +1068,20 @@ internal sealed class GitOpsExecutor(
         CancellationToken cancellationToken,
         string? desiredStateDigest = null,
         string? manifestAcknowledgementDigest = null,
-        string? approvalReference = null)
+        string? approvalReference = null,
+        DesiredIntentRecord? approvedIntent = null)
     {
         List<string> receiptBindingFailures = [];
+
+        // Identity of the latest server observation, and the prior revision the server exposed
+        // while this candidate's protection window was open (a settled RolledBack clears it).
+        string? observedOperationId = null;
+        string? observedTargetId = null;
+        string? observedCandidate = null;
+        string? observedPrior = null;
+        string? observedCommitSha = null;
+        IReadOnlyList<string> observedBlockers = [];
+        string? currentPhase = null;
         using BackendJsonResult submitted = await _gateway.SubmitDeployOperationJsonAsync(operationId, reason, grant, cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-operation-submit", submitted.CallResult, mutatesState: submitted.CallResult.IsSuccess));
 
@@ -884,6 +1101,11 @@ internal sealed class GitOpsExecutor(
                 BlockingReasons: submitted.Payload is null
                     ? ["submit-refused"]
                     : DeployOperationReader.ReadBlockingReasons(submitted.Payload.RootElement));
+        }
+
+        if (submitted.Payload is not null)
+        {
+            ObserveServerState(submitted.Payload.RootElement);
         }
 
         string? status = submitted.Payload is null ? null : DeployOperationReader.ReadStatus(submitted.Payload.RootElement);
@@ -932,6 +1154,7 @@ internal sealed class GitOpsExecutor(
             steps.Add(OperationBackendStep.From($"deploy-operation-poll-{attempt}", polled.CallResult, mutatesState: false));
             if (polled.CallResult.IsSuccess && polled.Payload is not null)
             {
+                ObserveServerState(polled.Payload.RootElement);
                 status = DeployOperationReader.ReadStatus(polled.Payload.RootElement);
                 receiptId = DeployOperationReader.ReadActuatorReceiptId(polled.Payload.RootElement) ?? receiptId;
                 receiptOperationId = DeployOperationReader.ReadActuatorReceiptOperationId(polled.Payload.RootElement) ?? receiptOperationId;
@@ -987,6 +1210,31 @@ internal sealed class GitOpsExecutor(
             findings.Add($"Terminal status for `{operationId}`: {status ?? "unknown"}.");
         }
 
+        // With protected recovery enabled, a server RolledBack of the candidate just approved
+        // is the server's own recovery: it becomes restored intent and candidate quarantine, or
+        // the result stays indeterminate. Never a restoration claim DevOps did not record.
+        if (resultStatus == GitOpsExecutionStatus.RolledBack && _intentLedger is not null && approvedIntent is not null)
+        {
+            ServerRecoveryFold fold = await FoldServerRecoveryAsync(
+                approvedIntent, observedOperationId, observedTargetId, observedCandidate, observedPrior, observedCommitSha,
+                observedBlockers, findings, cancellationToken);
+            if (fold.Blocker is not null)
+            {
+                return new GitOpsExecutionResult(
+                    Status: GitOpsExecutionStatus.Indeterminate,
+                    OperationId: operationId,
+                    ServerStatus: status,
+                    Mutated: true,
+                    Decision: decision,
+                    BackendSteps: steps,
+                    Findings: findings,
+                    BlockingReasons: [fold.Blocker, .. observedBlockers],
+                    ActuatorReceiptId: receiptId,
+                    IdempotencyKey: grant.IdempotencyKey,
+                    CurrentPhase: currentPhase);
+            }
+        }
+
         if (resultStatus == GitOpsExecutionStatus.Succeeded && receiptBindingFailures.Count > 0)
         {
             findings.Add(
@@ -999,7 +1247,8 @@ internal sealed class GitOpsExecutor(
                 Decision: decision,
                 BackendSteps: steps,
                 Findings: findings,
-                BlockingReasons: receiptBindingFailures);
+                BlockingReasons: receiptBindingFailures,
+                CurrentPhase: currentPhase);
         }
 
         if (resultStatus == GitOpsExecutionStatus.Succeeded &&
@@ -1027,7 +1276,8 @@ internal sealed class GitOpsExecutor(
                 Findings: findings,
                 BlockingReasons: ["actuator-receipt-missing-or-mismatched"],
                 ActuatorReceiptId: receiptId,
-                IdempotencyKey: grant.IdempotencyKey);
+                IdempotencyKey: grant.IdempotencyKey,
+                CurrentPhase: currentPhase);
         }
 
         if (resultStatus == GitOpsExecutionStatus.Succeeded)
@@ -1045,6 +1295,21 @@ internal sealed class GitOpsExecutor(
             Findings: findings,
             BlockingReasons: [],
             ActuatorReceiptId: receiptId,
-            IdempotencyKey: grant.IdempotencyKey);
+            IdempotencyKey: grant.IdempotencyKey,
+            CurrentPhase: currentPhase);
+
+        void ObserveServerState(JsonElement root)
+        {
+            observedOperationId = DeployOperationReader.ReadOperationId(root);
+            observedTargetId = DeployOperationReader.ReadTargetId(root);
+            observedCandidate = DeployOperationReader.ReadCandidateRevision(root);
+            observedCommitSha = DeployOperationReader.ReadMetadataReleaseCommitSha(root) ?? observedCommitSha;
+            observedBlockers = DeployOperationReader.ReadBlockingReasons(root);
+            currentPhase = DeployOperationReader.ReadCurrentPhase(root) ?? currentPhase;
+            if (approvedIntent is not null && ReadProtectedPriorRevision(root, approvedIntent.DesiredRevision) is { } prior)
+            {
+                observedPrior = prior;
+            }
+        }
     }
 }

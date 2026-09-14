@@ -141,6 +141,16 @@ internal static class ReleaseCapabilityGate
     internal static string? GetProtectedRecoveryObservationScopeRefusal(
         ActuationSpine.DeploymentRecoveryGrant grant, JsonElement operation)
     {
+        // A settled server RolledBack clears the protection window (both the reconciler and
+        // the manual rollback path call WithoutProtection), so its absence is server truth, not
+        // a missing scope. The caller has already matched operation, target and candidate, and
+        // this restart only observes: it never issues a compensation.
+        if (DeployOperationReader.IsRolledBack(DeployOperationReader.ReadStatus(operation))
+            && (!operation.TryGetProperty("protection", out JsonElement settled) || settled.ValueKind == JsonValueKind.Null))
+        {
+            return null;
+        }
+
         if (!string.Equals(DeployOperationReader.ReadPriorRevision(operation), grant.PriorRevision, StringComparison.Ordinal)
             || !string.Equals(DeployOperationReader.ReadProtectionPolicyDigest(operation), grant.SafetyPolicyDigest, StringComparison.Ordinal)
             || !operation.TryGetProperty("protection", out JsonElement protection)
@@ -160,6 +170,19 @@ internal static class ReleaseCapabilityGate
         => ledger is null
             ? "Protected recovery needs a durable desired-intent ledger: set `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///path/to/audit.jsonl` so restored intent and candidate quarantine survive a restart."
             : null;
+
+    // Server-owned recovery (the reconciler's own rollback signal, or a rollback that settled
+    // while no DevOps process watched) is folded into desired intent only for the exact
+    // operation, target and candidate that approval recorded.
+    internal static string? GetServerRecoveryIdentityRefusal(
+        DesiredIntentRecord approved, string? operationId, string? targetId, string? candidateRevision)
+        => string.Equals(operationId, approved.OperationId, StringComparison.Ordinal)
+            && string.Equals(targetId, approved.Target, StringComparison.Ordinal)
+            && string.Equals(candidateRevision, approved.DesiredRevision, StringComparison.Ordinal)
+                ? null
+                : $"The server reports RolledBack for `{operationId ?? "unknown"}` (target `{targetId ?? "unknown"}`, candidate " +
+                  $"`{candidateRevision ?? "unknown"}`), which does not match approved intent `{approved.DesiredRevision}` from " +
+                  $"operation `{approved.OperationId}` for `{approved.Target}`; desired intent was not changed.";
 
     // A revision rejected by a recorded recovery stays quarantined for its target; the operate
     // path is a corrected forward revision, never a reconcile back onto the rejected candidate.
@@ -183,8 +206,9 @@ internal static class ReleaseCapabilityGate
             Actions:
             [
                 "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
-                "Keep protected recovery disabled until the approval/trigger path and the server's atomic target-intent check are qualified (see docs/protected-deployment-recovery.md).",
-                "Protected recovery also requires a file-backed `HONUA_DEVOPS_AUDIT_HOOK_TARGET`: its desired-intent ledger records restored intent and candidate quarantine for the next reconcile."
+                "Keep protected recovery disabled until the server's scoped recovery request, atomic target-intent check and installed recovery are qualified (see docs/protected-deployment-recovery.md).",
+                "Protected recovery also requires a file-backed `HONUA_DEVOPS_AUDIT_HOOK_TARGET`: its desired-intent ledger records restored intent and candidate quarantine for the next reconcile.",
+                "When enabled, a deploy the server recovers on its own is recorded too: the candidate is quarantined, and `Previous version restored` is reported only when the server exposed the prior revision."
             ],
             ValidationChecks:
             [
