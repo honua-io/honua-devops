@@ -73,6 +73,33 @@ public sealed class ServerOwnedRecoveryTests : IDisposable
         Assert.Empty(next.CapturedRequests);
     }
 
+    // Live on nightly-2cc2213 (honua-server#4989) a settled RolledBack does not always clear the
+    // window: the reconciler's post-cutover recovery keeps `recovering`/`rollback-requested`, and a
+    // declared recovery keeps `recovering`/`rollback-requested-out-of-band` or a stale `observing`.
+    // The terminal status is authoritative; the retained phase must not turn it into Updating or
+    // Confirming service health, nor stop the restoration being recorded.
+    [Theory]
+    [InlineData("recovering", "rollback-requested")]
+    [InlineData("recovering", "rollback-requested-out-of-band")]
+    [InlineData("observing", null)]
+    public async Task ServerRecoversDuringPoll_WithRetainedWindow_RecordsRestoredIntent(string phase, string? reasonCode)
+    {
+        int reads = 0;
+        TestHttpMessageHandler handler = DeployHandler("op-7f3", Candidate, () => ++reads == 1
+            ? Observing("op-7f3", Candidate, Prior)
+            : SettledRetainingWindow("op-7f3", Candidate, phase, reasonCode));
+        using BackendGateway gateway = CreateGateway(handler);
+
+        GitOpsExecutionResult result = await SyncAsync(Executor(gateway), Candidate);
+
+        Assert.Equal(GitOpsExecutionStatus.RolledBack, result.Status);
+        Assert.Empty(result.BlockingReasons);
+        Assert.Equal(RolloutJourneyStatus.PreviousVersionRestored, RolloutJourneyStatus.From(result));
+        DesiredIntentRecord restored = await LatestAsync();
+        Assert.Equal((DesiredIntentKind.Restored, Prior), (restored.Kind, restored.DesiredRevision));
+        Assert.Equal([Candidate], restored.RejectedRevisions);
+    }
+
     [Fact]
     public async Task ServerRecoversBeforeExposingPrior_QuarantinesWithoutClaimingRestoration()
     {
@@ -346,7 +373,10 @@ public sealed class ServerOwnedRecoveryTests : IDisposable
                 previousRevision = prior,
                 candidateRevision = candidate,
                 policyDigest = "sha256:policy-digest",
-                observationDeadline = "2099-01-01T00:00:00Z"
+                observationDeadline = "2099-01-01T00:00:00Z",
+                grantId = "grant-7c01359bc42d2d0355015f2440cd8fd3",
+                actor = "admin",
+                permittedCompensation = "restore-previous-revision"
             }
         };
 
@@ -360,6 +390,29 @@ public sealed class ServerOwnedRecoveryTests : IDisposable
             currentPhase = "Deploy backend recommended rollback.",
             target = new { targetId, desiredRevision = candidate, currentRevision = candidate },
             protection = (object?)null,
+            actuatorReceipt = new { receiptId = $"rcpt-{operationId}", operationId }
+        };
+
+    private static object SettledRetainingWindow(string operationId, string candidate, string phase, string? reasonCode)
+        => new
+        {
+            operationId,
+            status = "RolledBack",
+            blockingReasons = Array.Empty<string>(),
+            currentPhase = "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+            target = new { targetId = Target, desiredRevision = candidate, currentRevision = Prior },
+            protection = new
+            {
+                phase,
+                reasonCode,
+                previousRevision = Prior,
+                candidateRevision = candidate,
+                policyDigest = "sha256:policy-digest",
+                observationDeadline = "2099-01-01T00:00:00Z",
+                grantId = "grant-8bcb8e05bbbe6beea5a09abd99aed45f",
+                actor = "admin",
+                permittedCompensation = "restore-previous-revision"
+            },
             actuatorReceipt = new { receiptId = $"rcpt-{operationId}", operationId }
         };
 

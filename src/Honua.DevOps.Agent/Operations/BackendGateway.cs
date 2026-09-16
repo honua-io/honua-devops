@@ -510,11 +510,14 @@ internal sealed partial class BackendGateway : IDisposable
     // JSON-returning rollback variant: the executor needs the server's resulting status
     // and, when the OperatorApprovalGate denies a data-affecting rollback, the structured
     // 403 body so it can surface the approval requirement instead of inventing one.
+    // A bounded recovery passes its RecoveryFence so the server re-checks the sealed grant;
+    // the generic rollback path sends no fence.
     internal async Task<BackendJsonResult> RollbackDeployOperationJsonAsync(
         string operationId,
         string reason,
         ActuationSpine.MutationGrant grant,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RecoveryFence? fence = null)
     {
         ArgumentNullException.ThrowIfNull(grant);
         grant.EnsureAuthorizes(BackendMutation.DeployOperationRollback);
@@ -528,7 +531,7 @@ internal sealed partial class BackendGateway : IDisposable
         }
         return await CaptureServerOperationAsync(PostJsonToHonuaAsync(
             $"{configuration.HonuaDeployOperationsPath}/{Uri.EscapeDataString(operationId)}/rollback",
-            new { reason },
+            fence is null ? new { reason } : fence.ToRequestBody(reason),
             cancellationToken), operationId, isMutation: true);
     }
 

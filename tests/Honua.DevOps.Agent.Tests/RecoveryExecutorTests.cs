@@ -326,6 +326,133 @@ public sealed class RecoveryExecutorTests : IDisposable
         Assert.Contains("recovery-refused", result.BlockingReasons);
     }
 
+    // honua-server#4958: the rollback body quotes the approved scope and the server's sealed
+    // grant, so the server re-checks the exact recovery at admission.
+    [Fact]
+    public async Task ExecuteRecoveryAsync_SendsFenceQuotingApprovedScopeAndSealedGrant()
+    {
+        TestHttpMessageHandler handler = new(request => TestHttpMessageHandler.JsonOk(
+            Operation(request.Method == HttpMethod.Post ? "RollbackRequested" : "Reconciling")));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
+
+        await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), spine, _ledger)
+            .ExecuteRecoveryAsync(grant, "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        CapturedRequest post = Assert.Single(handler.CapturedRequests, request => request.Method == "POST");
+        using System.Text.Json.JsonDocument body = System.Text.Json.JsonDocument.Parse(post.Body!);
+        System.Text.Json.JsonElement root = body.RootElement;
+        Assert.Equal(
+            ["actor", "compensation", "expectedCandidateRevision", "expectedPreviousRevision", "expectedProtectionPhase",
+                "grantId", "notAfter", "policyDigest", "reason", "targetId"],
+            root.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        Assert.Equal("prod-api", root.GetProperty("targetId").GetString());
+        Assert.Equal("release/2026.03", root.GetProperty("expectedCandidateRevision").GetString());
+        Assert.Equal("release/2026.02", root.GetProperty("expectedPreviousRevision").GetString());
+        Assert.Equal("observing", root.GetProperty("expectedProtectionPhase").GetString());
+        Assert.Equal(SealedGrantId, root.GetProperty("grantId").GetString());
+        Assert.Equal("sha256:policy-digest", root.GetProperty("policyDigest").GetString());
+        Assert.Equal(SealedActor, root.GetProperty("actor").GetString());
+        Assert.Equal(grant.ExpiresAtUtc, root.GetProperty("notAfter").GetDateTimeOffset());
+        Assert.Equal("restore-previous-revision", root.GetProperty("compensation").GetString());
+    }
+
+    [Fact]
+    public async Task ExecuteRecoveryAsync_SealedTenant_IsQuotedBack()
+    {
+        TestHttpMessageHandler handler = new(request =>
+        {
+            System.Text.Json.Nodes.JsonObject operation = System.Text.Json.JsonSerializer.SerializeToNode(
+                Operation(request.Method == HttpMethod.Post ? "RollbackRequested" : "Reconciling"))!.AsObject();
+            operation["protection"]!["tenantId"] = "tenant-a";
+            return TestHttpMessageHandler.JsonOk(operation);
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+
+        await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), spine, _ledger)
+            .ExecuteRecoveryAsync(IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        CapturedRequest post = Assert.Single(handler.CapturedRequests, request => request.Method == "POST");
+        using System.Text.Json.JsonDocument body = System.Text.Json.JsonDocument.Parse(post.Body!);
+        Assert.Equal("tenant-a", body.RootElement.GetProperty("tenantId").GetString());
+    }
+
+    // A window the server never sealed (the pre-#4963 shape), one that permits a different
+    // compensation, or one sealed for another tenant than the approval (the grant is issued for
+    // tenant-a) cannot be fenced, so nothing is requested and no in-process claim is spent.
+    [Theory]
+    [InlineData("grantId", null)]
+    [InlineData("actor", null)]
+    [InlineData("permittedCompensation", null)]
+    [InlineData("permittedCompensation", "delete-everything")]
+    [InlineData("tenantId", "tenant-b")]
+    public async Task ExecuteRecoveryAsync_UnsealedOrBroadenedServerGrant_IsRefusedWithoutRequest(string field, string? value)
+    {
+        TestHttpMessageHandler handler = new(_ =>
+        {
+            System.Text.Json.Nodes.JsonObject operation = System.Text.Json.JsonSerializer.SerializeToNode(Operation("Reconciling"))!.AsObject();
+            System.Text.Json.Nodes.JsonObject protection = operation["protection"]!.AsObject();
+            if (value is null)
+            {
+                protection.Remove(field);
+            }
+            else
+            {
+                protection[field] = value;
+            }
+
+            return TestHttpMessageHandler.JsonOk(operation);
+        });
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+        ActuationSpine.DeploymentRecoveryGrant grant = IssueGrant(spine);
+
+        GitOpsExecutionResult result = await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), spine, _ledger)
+            .ExecuteRecoveryAsync(grant, "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+        Assert.False(result.Mutated);
+        Assert.Equal(["recovery-grant-unsealed"], result.BlockingReasons);
+        Assert.DoesNotContain(handler.CapturedRequests, request => request.Method == "POST");
+        Assert.True(spine.TryAuthorizeRecovery(grant, "operator@honua.io", "prod-api", "release/2026.03",
+            ActuationSpine.PermittedCompensation.RestorePriorRevision, out _, out _));
+    }
+
+    // Refusal codes and statuses are the ones honua-server returned live on nightly-2cc2213.
+    [Theory]
+    [InlineData(HttpStatusCode.PreconditionFailed, "recovery_fence_expired")]
+    [InlineData(HttpStatusCode.Conflict, "recovery_fence_grant_mismatch")]
+    [InlineData(HttpStatusCode.Conflict, "recovery_fence_candidate_revision_mismatch")]
+    [InlineData(HttpStatusCode.Forbidden, "recovery_fence_actor_mismatch")]
+    [InlineData(HttpStatusCode.BadRequest, "recovery_fence_unknown_property")]
+    public async Task ExecuteRecoveryAsync_ServerFenceRefusal_IsDefiniteAndRecordsNothing(HttpStatusCode status, string code)
+    {
+        TestHttpMessageHandler handler = new(request => request.Method == HttpMethod.Post
+            ? new HttpResponseMessage(status)
+            {
+                Content = JsonContent.Create(new { status = (int)status, detail = "refused at admission", code })
+            }
+            : TestHttpMessageHandler.JsonOk(Operation("Reconciling")));
+        using BackendGateway gateway = CreateGateway(handler);
+        OperationRuntime runtime = ExecuteRuntime(true);
+        ActuationSpine spine = new(runtime, DirectAllowedPolicy());
+
+        GitOpsExecutionResult result = await new RecoveryExecutor(runtime, gateway, DirectAllowedPolicy(), spine, _ledger)
+            .ExecuteRecoveryAsync(IssueGrant(spine), "operator@honua.io", "prod-api", "health-regression", CancellationToken.None);
+
+        Assert.Equal(GitOpsExecutionStatus.ApprovalRequired, result.Status);
+        Assert.False(result.Mutated);
+        Assert.Equal(["recovery-fence-refused", code], result.BlockingReasons);
+        Assert.Equal(RolloutJourneyStatus.NeedsAttention, RolloutJourneyStatus.From(result));
+        DesiredIntentSnapshot intent = await _ledger.ReadLatestAsync("prod-api", CancellationToken.None);
+        Assert.Equal((1L, DesiredIntentKind.Approved), (intent.Latest!.Version, intent.Latest.Kind));
+    }
+
     [Theory]
     [InlineData("RolledBack", "recovering", "release/2026.01", "sha256:policy-digest", "release/2026.03", "release/2026.03")]
     [InlineData("RollbackRequested", "recovering", "release/2026.02", "sha256:other-policy", "release/2026.03", "release/2026.03")]
@@ -618,8 +745,22 @@ public sealed class RecoveryExecutorTests : IDisposable
             operationId,
             status,
             target = new { targetId, desiredRevision = candidate, currentRevision = prior },
-            protection = new { phase, previousRevision = prior, candidateRevision = protectedCandidate ?? candidate, policyDigest = policy, observationDeadline = "2099-01-01T00:00:00Z" }
+            protection = new
+            {
+                phase,
+                previousRevision = prior,
+                candidateRevision = protectedCandidate ?? candidate,
+                policyDigest = policy,
+                observationDeadline = "2099-01-01T00:00:00Z",
+                // The grant honua-server seals at exposure (#4958/#4963); shape observed live on nightly-2cc2213.
+                grantId = SealedGrantId,
+                actor = SealedActor,
+                permittedCompensation = "restore-previous-revision"
+            }
         };
+
+    private const string SealedGrantId = "grant-7c01359bc42d2d0355015f2440cd8fd3";
+    private const string SealedActor = "admin";
 
     // ---- helpers ----
 
