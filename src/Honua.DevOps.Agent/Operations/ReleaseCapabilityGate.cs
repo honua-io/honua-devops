@@ -211,7 +211,7 @@ internal static class ReleaseCapabilityGate
             Actions:
             [
                 "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
-                "Keep protected recovery disabled until the server's scoped recovery request, atomic target-intent check and installed recovery are qualified (see docs/protected-deployment-recovery.md).",
+                "Keep protected recovery disabled until the target's protected activation publishes a sealed recovery grant and the server fence binds it to its tenant (honua-server#4987; see docs/protected-deployment-recovery.md).",
                 "Protected recovery also requires a file-backed `HONUA_DEVOPS_AUDIT_HOOK_TARGET`: its desired-intent ledger records restored intent and candidate quarantine for the next reconcile.",
                 "When enabled, a deploy the server recovers on its own is recorded too: the candidate is quarantined, and `Previous version restored` is reported only when the server exposed the prior revision.",
                 "A recovery the server triggered and could not complete (retained protection window, phase `unavailable`) also quarantines the candidate, but never claims a restoration: the previous version is still not running."

@@ -15,6 +15,22 @@ It consumes the server's `target.desiredRevision` and `protection` response, and
 requires a matching operation, target, prior revision, candidate, policy and
 active observation deadline. Generic model rollback remains separately gated.
 
+The rollback request quotes a **recovery fence** the server enforces at admission
+(honua-server#4958, delivered by #4963). The target, prior/candidate revisions,
+policy digest and expiry (`notAfter`) come from the grant; the grant id, actor,
+tenant and permitted compensation are quoted from the grant the server sealed
+when the candidate was first exposed (`protection.grantId`, `actor`, `tenantId`,
+`permittedCompensation`). Nothing is invented. The executor refuses without any
+request (`recovery-grant-unsealed`) when:
+
+- the window publishes no sealed grant;
+- the window permits a compensation other than `restore-previous-revision`;
+- the grant was sealed for a tenant other than the approved one.
+
+A server refusal (`recovery_fence_*`, 400/403/409/412) is a definite answer, not a
+lost acknowledgement. It is reported as `recovery-fence-refused` plus the code, and
+the ledger is unchanged.
+
 A retry with a new executor and a new spine reads the surviving server operation.
 `RollbackRequested`, recovery in progress and terminal outcomes are observations;
 they do not issue another rollback POST. The server remains responsible for the
@@ -68,8 +84,11 @@ outcome into the ledger:
   the same operation, target and candidate, DevOps appends `restored` (prior
   revision, candidate quarantined) at the approval's version. The journey is
   **Previous version restored**.
-- **Prior revision never exposed.** A settled `RolledBack` clears `protection`
-  on the server. If DevOps never saw the prior revision (for example, recovery fired
+- **Prior revision never exposed.** A settled `RolledBack` normally clears
+  `protection` on the server. On `nightly-2cc2213`/`d1fc139` the self-hosted backend keeps a
+  stale window instead (`recovering`, or `observing`; honua-server#4989). The
+  terminal status is authoritative, and a retained window's `previousRevision`
+  counts as the exposed prior revision. If DevOps never saw the prior revision (for example, recovery fired
   before promotion), it appends `rejected`. That record quarantines the candidate
   with an empty desired revision. The result is `indeterminate`
   (`restored-revision-unverified`, **Needs attention**); no restoration is claimed.
@@ -173,64 +192,70 @@ The ordinary journey is change preview, scoped approval, Checking update /
 Updating / Confirming service health, then Update complete / Previous version
 restored / Needs attention. Git and telemetry details are optional diagnostics.
 
-## Remaining acceptance and blockers (2026-09-16, candidate 8862065)
+## Live proof and remaining acceptance (2026-09-16, `nightly-d1fc139`)
 
-Delivered so far: [#192](https://github.com/honua-io/honua-devops/pull/192)
-(grant + executor), [#193](https://github.com/honua-io/honua-devops/pull/193)
-(recovery scope validation), [#194](https://github.com/honua-io/honua-devops/pull/194)
-(durable compare-and-set intent ledger),
-[#195](https://github.com/honua-io/honua-devops/pull/195) (server-owned recovery
-folded into intent, rollout journey), and this change (recovery the server could
-not prove).
+Delivered so far:
 
-### Verified against the candidate
+- [#192](https://github.com/honua-io/honua-devops/pull/192): grant and executor.
+- [#193](https://github.com/honua-io/honua-devops/pull/193): recovery scope validation.
+- [#194](https://github.com/honua-io/honua-devops/pull/194): durable compare-and-set intent ledger.
+- [#195](https://github.com/honua-io/honua-devops/pull/195): server-owned recovery folded into intent, and the rollout journey.
+- [#196](https://github.com/honua-io/honua-devops/pull/196): recovery the server could not prove.
+- This change: the server-enforced recovery fence, plus the live journey below.
 
-Candidate `honua-server` `886206527cc97bad1bbaa5fa6358910ebc45e9c0`
-(honua-release#354; image `ghcr.io/honua-io/honua-server:nightly-8862065`, AOT
-index `sha256:0b16046533e5330ecdd48255c06b5397e869191299e1e5e8cc7b4b2ded60b388`).
+### Live journey
 
-honua-server#4842 closed via server PR #4943, which added `PlatformDeployAuthority`
-to the deploy control surface: with multi-tenancy enabled a tenant-bound principal
-must hold a platform-admin role. That closes the coarse authority hole. It does
-**not** fence the rollback surface, which was verified directly on the pinned
-image:
+Operator ruling A: proofs run on the newest imaged trunk nightly.
 
-- `RollbackDeployOperationRequest` still carries exactly one property, `reason`.
-- The rollback executor submits only `targetOperationId`, `reason`,
-  `approvedDataAffecting`, `approvedRequiresApproval`.
-- `DeployProtectionState` / `DeployProtectionResponse` carry no actor, tenant,
-  grant identity or permitted-compensation declaration.
-- Live: a rollback POST carrying a wrong `targetId`, a foreign `actor` and
-  `tenantId`, an unknown `grantId`, an already-past `expiresAt`, a mismatched
-  `policyDigest` and a broadened `compensation` returned **HTTP 200** and settled
-  the operation, with every one of those fields silently dropped by the binder —
-  on an operation that had no protection window at all.
+- **Image:** `ghcr.io/honua-io/honua-server:nightly-d1fc139`.
+- **Trunk:** `d1fc139a64ce33c817bd927bacb2103714221515`.
+- **Index:** `sha256:4bac230b40b0b07e396af54e2fc801420d2957bb31a6b6dafb3d402a8444d350`.
+- **Contains:** #4963.
+- **Developed on:** `nightly-2cc2213` (index `sha256:61e06ef3...`). No deploy-surface change separates the two.
 
-Filed as [honua-server#4958](https://github.com/honua-io/honua-server/issues/4958)
-with the exact request shapes and negative cases.
+`certification/protected-recovery/` boots that image against PostGIS and Redis. It has one `SelfHostedRolling` target on `honua-yarp-rolling`: a real protected activation where the server launches the workload replicas, swaps its embedded proxy at cutover, and retains the prior replica through the observation window. Faults are injected through a Prometheus query stub.
+
+The prior and candidate workloads are distinct immutable image ids. Traffic is read through the server's own proxy route. Receipts, with every request, response and phase transition:
+
+- `receipt-nightly-d1fc139.json` (server journey, `journey.py`);
+- `devops-live-nightly-d1fc139.jsonl` (DevOps code, `ProtectedRecoveryLiveJourneyTests`);
+- `RECEIPT.md` (summary).
+
+What that proves:
+
+- **Grant bound at approval and exposure.** The window seals `grantId`, `actor`, `tenantId` (tenant-bound principals), the revision pair, the policy digest and `permittedCompensation: restore-previous-revision`. DevOps records approved intent before submit, and mints a grant bound to actor, tenant, target, the revision pair, the server's policy digest, an expiry and the one compensation.
+- **Only the declared recovery is admitted.** Locally, a wrong actor, wrong target, broadened compensation or expired grant is refused with no request.
+  - The server refuses, with no transition:
+    - a foreign target;
+    - a wrong candidate or previous revision;
+    - an unknown grant;
+    - a mismatched digest;
+    - a wrong or unrecognized phase;
+    - a declared foreign actor or tenant;
+    - a broadened compensation;
+    - an expired `notAfter`, including a grant that expired in flight;
+    - an unknown property.
+  - An undeclared rollback by a principal that is not the sealed actor is refused.
+  - The DevOps fence is admitted and the prior revision serves again. A replay issues no second compensation.
+  - The generic rollback tool stays `experimental-disabled` with zero requests.
+- **Server-owned truth.** Every fault class is recovered by the server's reconciler with no DevOps rollback request:
+  - error-rate regression;
+  - p95 latency regression;
+  - missing telemetry;
+  - stale telemetry;
+  - wrong-body regression (golden-query marker; fails before activation);
+  - controller crash (server restarted mid-window; grant, deadline and digest preserved).
+- **Restored intent, quarantine and the next reconcile.** A watched server recovery, and a declared recovery observed after an executor restart, each record `restored` (prior desired, candidate quarantined, with operation, approval and actor lineage). The next reconcile of the candidate is refused with no mutation, and the prior revision keeps serving.
+- **Failed recovery.** The retained prior replica was replaced out of band (a concurrent service change). The server settles `ManualInterventionRequired` and retains `unavailable` / `rollback-failed`, and the rejected candidate still serves. DevOps records `rejected` (no restoration claimed, candidate quarantined, **Needs attention**), and a stale `observing`-phase fence is refused (`409`).
+- **Compare-and-set.** A concurrent approved change for the same target is recorded first, so the older grant's recovery is refused (`recovery-intent-superseded`) before any request, and the server window is untouched. A concurrent server-side deploy fails to start its replica and leaves the first window's grant and declared recovery intact.
 
 ### Still open
 
-- **Server-enforced recovery scope (honua-server#4958).** Until the rollback
-  surface accepts and enforces a target/expected-revision/actor/tenant/expiry
-  fence, `AuthorizeRecoveryGrant` and `RecoveryExecutor` still have no production
-  caller: minting a grant nothing on the server enforces would be theater. The
-  server's reconciler remains the deterministic trigger and DevOps consumes its
-  outcome.
-- **Client-side compare-and-set is not atomic against the server.** The
-  desired-intent ledger fences the next *DevOps* reconcile. A server-initiated
-  reconcile, or any other writer of the server's target intent, is fenced only
-  once honua-server#4958 lands.
-- **Git metadata-branch writer** is honua-devops#57 (2026.2). Nothing here writes
-  a restoration commit, and nothing claims one without a server-reported
-  `metadataRelease.commitSha`.
-- **Installed fault/recovery certification** is honua-release#321. honua-server#4619
-  closed on this pin via server PR #4904 (installed recovery proof, harness 5/5),
-  so the blocker that stood on 2026-09-13 is cleared; the joined installed
-  receipt for the advertised protected-change contract is still owned by
-  honua-release#321 and is not claimed here. Everything in this repo is HTTP
-  boundary evidence against the candidate's response shapes, not installed
-  provider qualification.
+- **Cross-tenant compensation ([honua-server#4987](https://github.com/honua-io/honua-server/issues/4987), must-fix).** A platform administrator of another tenant is admitted against a grant sealed for tenant-a. This happens both unfenced and with a complete fence declaring its own actor and tenant, because declared identity is checked only against the caller and platform roles skip the sealed binding. DevOps never quotes another tenant's grant (it refuses a sealed tenant that differs from the approval), but the server fence does not bind other callers. Keep `HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=false` in the default profile until it is fixed.
+- **Wrong-body gating on self-hosted targets ([honua-server#4988](https://github.com/honua-io/honua-server/issues/4988)).** The plan admits a golden-query or health URL on the replica, and the runtime SSRF guard then always refuses it, failing a correct candidate at the exposure deadline. The wrong-body class above was proven against a public HTTPS body for that reason.
+- **Stale window on settled `RolledBack` ([honua-server#4989](https://github.com/honua-io/honua-server/issues/4989)).** DevOps keys on the terminal status and is unaffected.
+- **Git metadata-branch writer** is honua-devops#57 (2026.2). Nothing here writes a restoration commit, and nothing claims one without a server-reported `metadataRelease.commitSha`.
+- **The trigger stays server-owned.** `RecoveryExecutor` has no model-facing or CLI entry point. The deterministic recovery is the server reconciler's, and the executor is the fenced, retained path for a declared recovery.
 
 ## Regression evidence
 
@@ -265,5 +290,14 @@ projection is asserted at unit level, including that an unproven recovery
 outranks a terminal `RolledBack` and that the structured `protection.phase`
 drives the journey with free text that contains none of the legacy tokens.
 
-Installed fault/recovery (honua-release#321), atomic server target intent and
-server-side next-reconcile preservation (honua-server#4958) remain unproven.
+`RecoveryExecutorTests` also covers the fence:
+
+- the exact body: approved scope plus the sealed grant id, actor and tenant, with nothing else;
+- refusal without a request when the window is unsealed, broadened, or sealed for another tenant;
+- a server `recovery_fence_*` refusal is definite and records nothing.
+
+`ServerOwnedRecoveryTests` covers the retained-window `RolledBack` shapes observed live.
+
+The live evidence is `ProtectedRecoveryLiveJourneyTests`. It is opt-in, via
+`HONUA_DEVOPS_LIVE_PROTECTED_RECOVERY=true` against `certification/protected-recovery/boot.sh`,
+and never runs in CI.

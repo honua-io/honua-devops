@@ -21,9 +21,10 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 //        ledger's latest intent to still be that approval, re-verifies the grant against the
 //        CURRENTLY OBSERVED operation -> ActuationSpine.TryAuthorizeRecovery binds the same
 //        in-process ledger every other mutation uses -> the existing deploy-control rollback
-//        endpoint reports recovery progress -> only a verified RolledBack outcome is recorded
-//        as restored intent + candidate quarantine, conditional on the intent version read
-//        before the request. The server must still fence its own target mutation atomically.
+//        endpoint, carrying a RecoveryFence that quotes the server's sealed grant, reports
+//        recovery progress -> only a verified RolledBack outcome is recorded as restored
+//        intent + candidate quarantine, conditional on the intent version read before the
+//        request. The server refuses a fence that does not match its sealed grant at admission.
 //
 // The server's own OperatorApprovalGate is still honored on the wire: a grant proves the
 // DECLARED scope was approved, it does not bypass the server's own data-affecting check.
@@ -192,6 +193,17 @@ internal sealed class RecoveryExecutor(
                 ["recovery-protection-unavailable"], protectionRefusal);
         }
 
+        // The server re-checks the sealed grant at admission (honua-server#4958). Build the fence
+        // before the in-process claim so a window the server never sealed consumes nothing.
+        RecoveryFence? fence = RecoveryFence.TryBuild(grant, current.Payload.RootElement, out string fenceRefusal);
+        if (fence is null)
+        {
+            return Result(GitOpsExecutionStatus.ApprovalRequired, serverStatus, false,
+                ["recovery-grant-unsealed"], fenceRefusal);
+        }
+
+        findings.Add($"Recovery fence quotes server grant `{fence.GrantId}` for actor `{fence.Actor}`, phase `{fence.ExpectedProtectionPhase}`, not after {fence.NotAfter:O}.");
+
         if (!_spine.TryAuthorizeRecovery(
                 grant,
                 requestedActor,
@@ -217,8 +229,18 @@ internal sealed class RecoveryExecutor(
             grant.OperationId,
             reason,
             mutationGrant!,
-            cancellationToken);
+            cancellationToken,
+            fence);
         steps.Add(OperationBackendStep.From("deploy-operation-recover", recovered.CallResult, mutatesState: recovered.CallResult.IsSuccess));
+
+        // A fence refusal is a definite answer, not a lost acknowledgement: the server refused
+        // at admission and the operation did not transition.
+        if (!recovered.CallResult.IsSuccess && RecoveryFence.ReadRefusalCode(recovered.Payload) is { } fenceCode)
+        {
+            return Result(GitOpsExecutionStatus.ApprovalRequired, serverStatus, false,
+                ["recovery-fence-refused", fenceCode],
+                $"The server refused the declared recovery for `{grant.OperationId}` ({recovered.CallResult.Detail}, `{fenceCode}`); nothing was rolled back.");
+        }
 
         if (!recovered.CallResult.IsSuccess)
         {
