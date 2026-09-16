@@ -517,13 +517,23 @@ internal sealed class GitOpsExecutor(
         }
 
         JsonElement operation = observed.Payload.RootElement;
-        if (!DeployOperationReader.IsRolledBack(DeployOperationReader.ReadStatus(operation)))
+        string? protectionPhase = DeployOperationReader.ReadProtectionPhase(operation);
+        string? protectionReasonCode = DeployOperationReader.ReadProtectionReasonCode(operation);
+        ServerRecoveryOutcome outcome = ClassifyServerRecovery(
+            DeployOperationReader.ReadStatus(operation), protectionPhase, protectionReasonCode);
+        if (outcome == ServerRecoveryOutcome.None)
         {
             return (snapshot, null);
         }
 
+        if (DeployProtectionReasonCodes.Describe(protectionPhase, protectionReasonCode) is { } protectionSummary)
+        {
+            findings.Add(protectionSummary);
+        }
+
         ServerRecoveryFold fold = await FoldServerRecoveryAsync(
             approved,
+            outcome,
             DeployOperationReader.ReadOperationId(operation),
             DeployOperationReader.ReadTargetId(operation),
             DeployOperationReader.ReadCandidateRevision(operation),
@@ -541,13 +551,23 @@ internal sealed class GitOpsExecutor(
                 fold.Blocker ?? "server-recovery-unverified");
     }
 
-    // Records the server's RolledBack for an approved candidate under compare-and-set against
-    // that approval. Only a prior revision the server exposed in the candidate's protection
-    // window is recorded as restored; otherwise the candidate is quarantined without claiming
-    // restoration. A mismatch, a blocked outcome, a conflict or a write failure is returned as a
-    // blocker; a conflict still carries the candidate's quarantine into the newer intent.
+    // Records a settled server recovery outcome for an approved candidate under compare-and-set
+    // against that approval.
+    //
+    //   * ServerRecoveryOutcome.Recovered (a settled RolledBack): only a prior revision the
+    //     server exposed in the candidate's protection window is recorded as restored;
+    //     otherwise the candidate is quarantined without claiming restoration.
+    //   * ServerRecoveryOutcome.Unproven (a retained `unavailable` protection window): recovery
+    //     ran and the server could not prove it. The prior revision was NOT restored -- the
+    //     candidate is typically still serving -- so restoration is never claimed, but the
+    //     candidate its safety policy rejected is still quarantined so the next reconcile
+    //     cannot converge straight back onto it.
+    //
+    // A mismatch, a blocked outcome, a conflict or a write failure is returned as a blocker;
+    // a conflict still carries the candidate's quarantine into the newer intent.
     private async Task<ServerRecoveryFold> FoldServerRecoveryAsync(
         DesiredIntentRecord approved,
+        ServerRecoveryOutcome outcome,
         string? operationId,
         string? targetId,
         string? candidateRevision,
@@ -557,7 +577,20 @@ internal sealed class GitOpsExecutor(
         List<string> findings,
         CancellationToken cancellationToken)
     {
-        string? identityRefusal = ReleaseCapabilityGate.GetServerRecoveryIdentityRefusal(approved, operationId, targetId, candidateRevision);
+        // Recovery that could not be proven restored nothing, whatever the protection record
+        // still carries. Forcing this here means no caller can hand in a prior revision that
+        // would turn an unproven recovery into a restoration claim.
+        if (outcome == ServerRecoveryOutcome.Unproven)
+        {
+            restoredRevision = null;
+        }
+
+        string outcomeText = outcome == ServerRecoveryOutcome.Unproven
+            ? "reports that recovery could not be completed"
+            : "reports RolledBack";
+
+        string? identityRefusal = ReleaseCapabilityGate.GetServerRecoveryIdentityRefusal(
+            approved, operationId, targetId, candidateRevision, outcomeText);
         if (identityRefusal is not null)
         {
             findings.Add(identityRefusal);
@@ -565,11 +598,13 @@ internal sealed class GitOpsExecutor(
         }
 
         // Same contradiction RecoveryExecutor refuses: a RolledBack that still carries blocking
-        // reasons is not a settled recovery, so nothing is recorded from it.
-        if (serverBlockers.Count > 0)
+        // reasons is not a settled recovery, so nothing is recorded from it. An unproven
+        // recovery is already a failure the server has settled and reported through its
+        // retained protection record, so its blocking reasons are evidence, not a contradiction.
+        if (outcome == ServerRecoveryOutcome.Recovered && serverBlockers.Count > 0)
         {
             findings.Add(
-                $"The server reports RolledBack for `{approved.OperationId}` with blocking reasons [{string.Join(", ", serverBlockers)}]; " +
+                $"The server {outcomeText} for `{approved.OperationId}` with blocking reasons [{string.Join(", ", serverBlockers)}]; " +
                 "desired intent was not changed.");
             return new ServerRecoveryFold(null, "server-recovery-unverified");
         }
@@ -584,9 +619,9 @@ internal sealed class GitOpsExecutor(
             // is carried into it; otherwise the next reconcile could resurrect the candidate.
             DesiredIntentRecord? carried = await CarryQuarantineAsync(approved.Target, approved.DesiredRevision, cancellationToken);
             findings.Add(carried is null
-                ? $"The server reports RolledBack for `{approved.OperationId}`, but desired intent kept changing and `{approved.DesiredRevision}` " +
+                ? $"The server {outcomeText} for `{approved.OperationId}`, but desired intent kept changing and `{approved.DesiredRevision}` " +
                   $"could not be quarantined in it: {commit.Detail}"
-                : $"The server reports RolledBack for `{approved.OperationId}`, but newer desired intent `{carried.DesiredRevision}` from operation " +
+                : $"The server {outcomeText} for `{approved.OperationId}`, but newer desired intent `{carried.DesiredRevision}` from operation " +
                   $"`{carried.OperationId}` was recorded first. It was kept, and `{approved.DesiredRevision}` stays quarantined in it " +
                   $"(version {carried.Version}); no restoration is claimed.");
             return new ServerRecoveryFold(carried, "desired-intent-conflict");
@@ -594,7 +629,7 @@ internal sealed class GitOpsExecutor(
 
         if (!commit.Recorded)
         {
-            findings.Add($"The server reports RolledBack for `{approved.OperationId}`, but candidate quarantine could not be recorded: {commit.Detail}");
+            findings.Add($"The server {outcomeText} for `{approved.OperationId}`, but candidate quarantine could not be recorded: {commit.Detail}");
             return new ServerRecoveryFold(null, "desired-intent-write-failed");
         }
 
@@ -610,9 +645,15 @@ internal sealed class GitOpsExecutor(
 
         findings.Add(
             $"Desired intent version {recorded.Version} for `{recorded.Target}` quarantines `{approved.DesiredRevision}` (operation " +
-            $"`{recorded.OperationId}`, approval `{recorded.ApprovalReference ?? "unrecorded"}`). The server did not expose the revision it " +
-            "restored, so no restoration is claimed; confirm the running revision before proposing a corrected one.");
-        return new ServerRecoveryFold(recorded, "restored-revision-unverified");
+            $"`{recorded.OperationId}`, approval `{recorded.ApprovalReference ?? "unrecorded"}`). " +
+            (outcome == ServerRecoveryOutcome.Unproven
+                ? "The server triggered recovery and could not complete it, so the previous revision was NOT restored; the rejected " +
+                  "revision is fenced for the next reconcile, but the running revision needs an operator."
+                : "The server did not expose the revision it restored, so no restoration is claimed; confirm the running revision " +
+                  "before proposing a corrected one."));
+        return new ServerRecoveryFold(
+            recorded,
+            outcome == ServerRecoveryOutcome.Unproven ? "protected-recovery-unproven" : "restored-revision-unverified");
     }
 
     // Adds a server-rejected revision to the latest intent's quarantine by compare-and-set,
@@ -677,6 +718,47 @@ internal sealed class GitOpsExecutor(
     }
 
     private sealed record ServerRecoveryFold(DesiredIntentRecord? Recorded, string? Blocker);
+
+    private enum ServerRecoveryOutcome
+    {
+        /// <summary>The server has not settled a recovery for this candidate.</summary>
+        None,
+
+        /// <summary>A settled server RolledBack: recovery ran and the server proved it.</summary>
+        Recovered,
+
+        /// <summary>Recovery was triggered and the server could not prove it completed.</summary>
+        Unproven
+    }
+
+    // Classifies what the server has settled for a protected candidate, from server truth only.
+    //
+    // A settled RolledBack clears the protection window, so it is read from the status. The
+    // failure case never reaches RolledBack: honua-server's deploy reconciler settles the
+    // operation ManualInterventionRequired and RETAINS the protection record as phase
+    // `unavailable` with reason `rollback-failed` or `rollback-retry-budget-exhausted`. That
+    // retained record is the only durable evidence the candidate was rejected, so without
+    // reading it a failed recovery leaves the candidate unfenced and the next reconcile
+    // converges straight back onto the revision the safety policy just rejected
+    // (honua-release#321 box 3: controller crash, failed rollback).
+    //
+    // `complete-protection-failed` shares the `unavailable` phase and is deliberately NOT an
+    // unproven recovery: there the candidate passed its window and only the retained prior
+    // replica could not be retired.
+    private static ServerRecoveryOutcome ClassifyServerRecovery(
+        string? status, string? protectionPhase, string? protectionReasonCode)
+    {
+        if (DeployOperationReader.IsRolledBack(status))
+        {
+            return ServerRecoveryOutcome.Recovered;
+        }
+
+        return DeployOperationReader.IsTerminal(status)
+            && string.Equals(protectionPhase, DeployProtectionPhases.Unavailable, StringComparison.Ordinal)
+            && DeployProtectionReasonCodes.IsUnprovenRecovery(protectionReasonCode)
+                ? ServerRecoveryOutcome.Unproven
+                : ServerRecoveryOutcome.None;
+    }
 
     private static IReadOnlyList<string> ReadEnvironments(IReadOnlyDictionary<string, string> parameters)
         => parameters.TryGetValue("environments", out string? environments) && !string.IsNullOrWhiteSpace(environments)
@@ -1082,6 +1164,8 @@ internal sealed class GitOpsExecutor(
         string? observedCommitSha = null;
         IReadOnlyList<string> observedBlockers = [];
         string? currentPhase = null;
+        string? protectionPhase = null;
+        string? protectionReasonCode = null;
         using BackendJsonResult submitted = await _gateway.SubmitDeployOperationJsonAsync(operationId, reason, grant, cancellationToken);
         steps.Add(OperationBackendStep.From("deploy-operation-submit", submitted.CallResult, mutatesState: submitted.CallResult.IsSuccess));
 
@@ -1210,14 +1294,53 @@ internal sealed class GitOpsExecutor(
             findings.Add($"Terminal status for `{operationId}`: {status ?? "unknown"}.");
         }
 
-        // With protected recovery enabled, a server RolledBack of the candidate just approved
-        // is the server's own recovery: it becomes restored intent and candidate quarantine, or
-        // the result stays indeterminate. Never a restoration claim DevOps did not record.
-        if (resultStatus == GitOpsExecutionStatus.RolledBack && _intentLedger is not null && approvedIntent is not null)
+        // Plain-language protection state, so an operator never has to read telemetry or Git
+        // mechanics to learn why a protected update is where it is.
+        if (DeployProtectionReasonCodes.Describe(protectionPhase, protectionReasonCode) is { } protectionSummary)
+        {
+            findings.Add(protectionSummary);
+        }
+
+        // With protected recovery enabled, the server's own recovery of the candidate just
+        // approved becomes durable desired intent. Two settled shapes matter, and a failed
+        // recovery is NOT a RolledBack:
+        //   * RolledBack -> restored intent + candidate quarantine, or indeterminate.
+        //   * terminal with a retained `unavailable` protection window (rollback-failed /
+        //     rollback-retry-budget-exhausted) -> recovery ran and the server could not prove
+        //     it. Nothing restored the prior revision, so nothing claims restoration, but the
+        //     rejected candidate is still quarantined -- otherwise the next reconcile submits
+        //     the very revision the safety policy rejected.
+        // Never a restoration claim DevOps did not record.
+        ServerRecoveryOutcome recoveryOutcome = _intentLedger is not null && approvedIntent is not null
+            ? ClassifyServerRecovery(status, protectionPhase, protectionReasonCode)
+            : ServerRecoveryOutcome.None;
+        if (recoveryOutcome != ServerRecoveryOutcome.None)
         {
             ServerRecoveryFold fold = await FoldServerRecoveryAsync(
-                approvedIntent, observedOperationId, observedTargetId, observedCandidate, observedPrior, observedCommitSha,
-                observedBlockers, findings, cancellationToken);
+                approvedIntent!, recoveryOutcome, observedOperationId, observedTargetId, observedCandidate,
+                observedPrior, observedCommitSha, observedBlockers, findings, cancellationToken);
+
+            // An unproven recovery is never reported as a completed deploy or a restoration.
+            // It is fail-closed whether or not the quarantine landed; the blocking reason
+            // distinguishes "fenced for the next reconcile" from "not fenced at all".
+            if (recoveryOutcome == ServerRecoveryOutcome.Unproven)
+            {
+                return new GitOpsExecutionResult(
+                    Status: GitOpsExecutionStatus.Indeterminate,
+                    OperationId: operationId,
+                    ServerStatus: status,
+                    Mutated: true,
+                    Decision: decision,
+                    BackendSteps: steps,
+                    Findings: findings,
+                    BlockingReasons: [fold.Blocker ?? "protected-recovery-unproven", .. observedBlockers],
+                    ActuatorReceiptId: receiptId,
+                    IdempotencyKey: grant.IdempotencyKey,
+                    CurrentPhase: currentPhase,
+                    ProtectionPhase: protectionPhase,
+                    ProtectionReasonCode: protectionReasonCode);
+            }
+
             if (fold.Blocker is not null)
             {
                 return new GitOpsExecutionResult(
@@ -1231,7 +1354,9 @@ internal sealed class GitOpsExecutor(
                     BlockingReasons: [fold.Blocker, .. observedBlockers],
                     ActuatorReceiptId: receiptId,
                     IdempotencyKey: grant.IdempotencyKey,
-                    CurrentPhase: currentPhase);
+                    CurrentPhase: currentPhase,
+                    ProtectionPhase: protectionPhase,
+                    ProtectionReasonCode: protectionReasonCode);
             }
         }
 
@@ -1248,7 +1373,9 @@ internal sealed class GitOpsExecutor(
                 BackendSteps: steps,
                 Findings: findings,
                 BlockingReasons: receiptBindingFailures,
-                CurrentPhase: currentPhase);
+                CurrentPhase: currentPhase,
+                ProtectionPhase: protectionPhase,
+                ProtectionReasonCode: protectionReasonCode);
         }
 
         if (resultStatus == GitOpsExecutionStatus.Succeeded &&
@@ -1277,7 +1404,9 @@ internal sealed class GitOpsExecutor(
                 BlockingReasons: ["actuator-receipt-missing-or-mismatched"],
                 ActuatorReceiptId: receiptId,
                 IdempotencyKey: grant.IdempotencyKey,
-                CurrentPhase: currentPhase);
+                CurrentPhase: currentPhase,
+                ProtectionPhase: protectionPhase,
+                ProtectionReasonCode: protectionReasonCode);
         }
 
         if (resultStatus == GitOpsExecutionStatus.Succeeded)
@@ -1296,7 +1425,9 @@ internal sealed class GitOpsExecutor(
             BlockingReasons: [],
             ActuatorReceiptId: receiptId,
             IdempotencyKey: grant.IdempotencyKey,
-            CurrentPhase: currentPhase);
+            CurrentPhase: currentPhase,
+            ProtectionPhase: protectionPhase,
+            ProtectionReasonCode: protectionReasonCode);
 
         void ObserveServerState(JsonElement root)
         {
@@ -1306,6 +1437,16 @@ internal sealed class GitOpsExecutor(
             observedCommitSha = DeployOperationReader.ReadMetadataReleaseCommitSha(root) ?? observedCommitSha;
             observedBlockers = DeployOperationReader.ReadBlockingReasons(root);
             currentPhase = DeployOperationReader.ReadCurrentPhase(root) ?? currentPhase;
+            // A settled RolledBack clears `protection`, so the last observation that carried a
+            // window is retained: it is the evidence of what the window was doing before it
+            // settled. Phase and reason code are retained together -- they are only meaningful
+            // as a pair, and pairing a stale reason code with a fresh phase would misread the
+            // one distinction that decides whether a candidate is quarantined.
+            if (DeployOperationReader.ReadProtectionPhase(root) is { } observedProtectionPhase)
+            {
+                protectionPhase = observedProtectionPhase;
+                protectionReasonCode = DeployOperationReader.ReadProtectionReasonCode(root);
+            }
             if (approvedIntent is not null && ReadProtectedPriorRevision(root, approvedIntent.DesiredRevision) is { } prior)
             {
                 observedPrior = prior;
