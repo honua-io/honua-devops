@@ -403,6 +403,12 @@ internal static class DeployOperationReader
     internal static string? ReadProtectionPolicyDigest(JsonElement root)
         => TryGetObject(root, "protection", out JsonElement protection) ? ReadString(protection, "policyDigest") : null;
 
+    // Bounded, server-owned reason code for the current protection phase. Together with the
+    // phase it is the only structured evidence DevOps has for WHY a protected candidate is in
+    // the state it is in, so it is read rather than inferred from the free-text currentPhase.
+    internal static string? ReadProtectionReasonCode(JsonElement root)
+        => TryGetObject(root, "protection", out JsonElement protection) ? ReadString(protection, "reasonCode") : null;
+
     // Git lineage the server attaches to a metadata release; absent for image-only deploys.
     internal static string? ReadMetadataReleaseCommitSha(JsonElement root)
         => TryGetObject(root, "metadataRelease", out JsonElement metadataRelease) ? ReadString(metadataRelease, "commitSha") : null;
@@ -583,6 +589,77 @@ internal static class DeployOperationReader
     }
 }
 
+// The server's durable post-activation protection vocabulary (honua-server#4618, read from
+// `protection.phase` / `protection.reasonCode` on a deploy operation). DevOps only ever READS
+// these; they are server-owned and are matched exactly rather than by substring, because the
+// difference between two of them decides whether a revision is quarantined.
+internal static class DeployProtectionPhases
+{
+    /// <summary>The candidate was just exposed and is being observed against the durable policy.</summary>
+    internal const string Observing = "observing";
+
+    /// <summary>The observation window is holding a healthy candidate open for the full window.</summary>
+    internal const string Protected = "protected";
+
+    /// <summary>An approved safety policy triggered rollback and recovery is executing.</summary>
+    internal const string Recovering = "recovering";
+
+    /// <summary>The observation window elapsed without a policy trigger; the prior revision was retired.</summary>
+    internal const string Expired = "expired";
+
+    /// <summary>Recovery was triggered but the prior revision or its controller could not be reached.</summary>
+    internal const string Unavailable = "unavailable";
+}
+
+internal static class DeployProtectionReasonCodes
+{
+    internal const string RollbackRequested = "rollback-requested";
+    internal const string RollbackRetryPending = "rollback-retry-pending";
+    internal const string RollbackFailed = "rollback-failed";
+    internal const string RollbackRetryBudgetExhausted = "rollback-retry-budget-exhausted";
+    internal const string CompleteProtectionFailed = "complete-protection-failed";
+    internal const string ObservationWindowElapsed = "observation-window-elapsed";
+    internal const string TelemetryEvidencePending = "telemetry-evidence-pending";
+
+    // `unavailable` alone does NOT mean the candidate was rejected. The server uses that phase
+    // for two opposite situations:
+    //   * rollback-failed / rollback-retry-budget-exhausted -- the safety policy rejected the
+    //     candidate, recovery ran and could not be proven. The candidate must be quarantined.
+    //   * complete-protection-failed -- the candidate is HEALTHY and its observation window
+    //     elapsed cleanly; only the retained prior replica could not be retired. Quarantining
+    //     here would fence a revision the server never rejected.
+    // Only the first pair is an unproven recovery.
+    internal static bool IsUnprovenRecovery(string? reasonCode)
+        => reasonCode is RollbackFailed or RollbackRetryBudgetExhausted;
+
+    // The plain-language sentence an ordinary operator reads for a protection state, so the
+    // release contract's "no required Git/PR/telemetry mechanics" holds for the fault classes
+    // honua-release#321 box 3 enumerates. Null when there is nothing worth saying.
+    internal static string? Describe(string? phase, string? reasonCode)
+        => reasonCode switch
+        {
+            TelemetryEvidencePending =>
+                "The update's health evidence has not arrived yet, so it is being held rather than confirmed on missing evidence.",
+            RollbackRequested =>
+                "A safety check did not pass, so the previous version is being restored.",
+            RollbackRetryPending =>
+                "A safety check did not pass; restoring the previous version did not take on the last attempt and is being retried.",
+            RollbackFailed or RollbackRetryBudgetExhausted =>
+                "A safety check did not pass and the previous version could NOT be restored automatically; the service needs attention.",
+            CompleteProtectionFailed =>
+                "The update itself is healthy, but the retained previous version could not be retired; no revision was rejected.",
+            ObservationWindowElapsed =>
+                "The update passed its post-activation health window and is fully committed.",
+            _ => phase switch
+            {
+                DeployProtectionPhases.Observing or DeployProtectionPhases.Protected =>
+                    "The update is live and its health is being confirmed before it is committed.",
+                DeployProtectionPhases.Recovering => "The previous version is being restored.",
+                _ => null
+            }
+        };
+}
+
 // Maps the executor's machine-readable GitOpsExecutionStatus (plus the server's own status/
 // phase) onto the simple, outcome-oriented rollout journey the release contract promises
 // (honua-devops#191): "change preview -> scoped approval -> Checking update / Updating /
@@ -607,7 +684,7 @@ internal static class RolloutJourneyStatus
         ["smoke", "verify", "observ", "health", "confirm"];
 
     internal static string From(GitOpsExecutionResult result)
-        => Describe(result.Status, result.ServerStatus, result.CurrentPhase);
+        => Describe(result.Status, result.ServerStatus, result.CurrentPhase, result.ProtectionPhase, result.ProtectionReasonCode);
 
     // The words an ordinary operator reads; the machine token stays available for automation.
     internal static string Label(string journeyStatus)
@@ -621,9 +698,24 @@ internal static class RolloutJourneyStatus
             _ => "Needs attention"
         };
 
-    internal static string Describe(string executionStatus, string? serverStatus, string? currentPhase)
+    internal static string Describe(
+        string executionStatus,
+        string? serverStatus,
+        string? currentPhase,
+        string? protectionPhase = null,
+        string? protectionReasonCode = null)
     {
         ArgumentNullException.ThrowIfNull(executionStatus);
+
+        // A retained `unavailable` protection window is the server stating that recovery was
+        // triggered and could NOT be proven. It outranks every other signal, including a
+        // terminal RolledBack status, because "Previous version restored" is the one claim this
+        // vocabulary must never make on the server's behalf.
+        if (string.Equals(protectionPhase, DeployProtectionPhases.Unavailable, StringComparison.Ordinal)
+            && DeployProtectionReasonCodes.IsUnprovenRecovery(protectionReasonCode))
+        {
+            return NeedsAttention;
+        }
 
         switch (executionStatus)
         {
@@ -650,6 +742,26 @@ internal static class RolloutJourneyStatus
                 if (DeployOperationReader.IsManualInterventionRequired(serverStatus))
                 {
                     return NeedsAttention;
+                }
+
+                // The server's structured protection phase is authoritative when it is present.
+                // The free-text match below is only the fallback for an operation that reports
+                // no protection window at all (an unprotected target, or an older server).
+                switch (protectionPhase)
+                {
+                    case DeployProtectionPhases.Observing:
+                    case DeployProtectionPhases.Protected:
+                        return ConfirmingServiceHealth;
+
+                    // Restoring the prior revision IS an update in flight, and it resolves to
+                    // Previous version restored or Needs attention once it settles. Reporting
+                    // "Confirming service health" here would claim the candidate is still being
+                    // verified when its safety policy has already rejected it.
+                    case DeployProtectionPhases.Recovering:
+                        return Updating;
+
+                    case DeployProtectionPhases.Unavailable:
+                        return NeedsAttention;
                 }
 
                 bool verifyingHealth = ContainsAnyToken(currentPhase, HealthVerificationPhaseTokens)
@@ -696,4 +808,9 @@ internal sealed record GitOpsExecutionResult(
     string? IdempotencyKey = null,
     // The server's last-observed phase text (e.g. an open observation window), which moves the
     // rollout journey from Updating to Confirming service health.
-    string? CurrentPhase = null);
+    string? CurrentPhase = null,
+    // The server's last-observed structured protection state (honua-server#4618). Preferred over
+    // CurrentPhase for the journey, and the only signal that distinguishes a recovery that was
+    // proven from one that was triggered and failed.
+    string? ProtectionPhase = null,
+    string? ProtectionReasonCode = null);

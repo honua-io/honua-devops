@@ -171,16 +171,21 @@ internal static class ReleaseCapabilityGate
             ? "Protected recovery needs a durable desired-intent ledger: set `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///path/to/audit.jsonl` so restored intent and candidate quarantine survive a restart."
             : null;
 
-    // Server-owned recovery (the reconciler's own rollback signal, or a rollback that settled
-    // while no DevOps process watched) is folded into desired intent only for the exact
-    // operation, target and candidate that approval recorded.
+    // Server-owned recovery (the reconciler's own rollback signal, a rollback that settled while
+    // no DevOps process watched, or a recovery the server triggered and could not complete) is
+    // folded into desired intent only for the exact operation, target and candidate that
+    // approval recorded.
     internal static string? GetServerRecoveryIdentityRefusal(
-        DesiredIntentRecord approved, string? operationId, string? targetId, string? candidateRevision)
+        DesiredIntentRecord approved,
+        string? operationId,
+        string? targetId,
+        string? candidateRevision,
+        string outcomeText = "reports RolledBack")
         => string.Equals(operationId, approved.OperationId, StringComparison.Ordinal)
             && string.Equals(targetId, approved.Target, StringComparison.Ordinal)
             && string.Equals(candidateRevision, approved.DesiredRevision, StringComparison.Ordinal)
                 ? null
-                : $"The server reports RolledBack for `{operationId ?? "unknown"}` (target `{targetId ?? "unknown"}`, candidate " +
+                : $"The server {outcomeText} for `{operationId ?? "unknown"}` (target `{targetId ?? "unknown"}`, candidate " +
                   $"`{candidateRevision ?? "unknown"}`), which does not match approved intent `{approved.DesiredRevision}` from " +
                   $"operation `{approved.OperationId}` for `{approved.Target}`; desired intent was not changed.";
 
@@ -208,7 +213,8 @@ internal static class ReleaseCapabilityGate
                 "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
                 "Keep protected recovery disabled until the server's scoped recovery request, atomic target-intent check and installed recovery are qualified (see docs/protected-deployment-recovery.md).",
                 "Protected recovery also requires a file-backed `HONUA_DEVOPS_AUDIT_HOOK_TARGET`: its desired-intent ledger records restored intent and candidate quarantine for the next reconcile.",
-                "When enabled, a deploy the server recovers on its own is recorded too: the candidate is quarantined, and `Previous version restored` is reported only when the server exposed the prior revision."
+                "When enabled, a deploy the server recovers on its own is recorded too: the candidate is quarantined, and `Previous version restored` is reported only when the server exposed the prior revision.",
+                "A recovery the server triggered and could not complete (retained protection window, phase `unavailable`) also quarantines the candidate, but never claims a restoration: the previous version is still not running."
             ],
             ValidationChecks:
             [
