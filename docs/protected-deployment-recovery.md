@@ -312,6 +312,11 @@ or candidate traffic. A same-name actor in another tenant must return
 authority must receive no sealed grant identity. The sealed principal must still
 restore `prior-a` through the proxy after those refusals.
 
+The [committed receipt](../certification/protected-recovery/RECEIPT.md) records
+**11/11 server cells and 5/5 live DevOps scenarios passed**, with zero skipped
+live tests. The original d1fc139 receipt retains the before-fix cross-tenant
+failures; the new receipt shows the required refusals and legitimate recovery.
+
 The receipt gate requires all eleven server recovery classes and matching passing
 results for the five live DevOps scenarios. It inspects the actual image identity
 for every server run part and refuses missing, duplicate or failed classes and
