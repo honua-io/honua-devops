@@ -2,9 +2,45 @@
 
 Issue #191 supports the **2026.1 safe rollout promise**: a scoped approved change
 must recover deterministically and subsequent reconciliation must preserve the
-restored service. That complete promise is **not qualified** by the retained
-DevOps recovery executor. Keep `HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=false` in
-the default profile. Turning it on alone does not provide protection.
+restored service. Qualification belongs to an installed target and server revision, not merely to
+the retained DevOps executor. The unconfigured default keeps
+`HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=false`; a qualified target enables it
+with the durable ledger and server policy below. Turning it on alone does not
+provide protection.
+
+## Qualified target configuration
+
+Use a server containing honua-server#5004: the sealed actor and tenant bind every
+caller, including platform administrators. Qualify the installed backend with
+`certification/protected-recovery/` before enabling this profile. The proof target
+is `SelfHostedRolling` / `honua-yarp-rolling`; it does not qualify another backend.
+
+Configure DevOps for that target with:
+
+```dotenv
+HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=true
+HONUA_DEVOPS_DEPLOY_TARGET_ID=<qualified-target-id>
+HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///var/lib/honua-devops/audit.jsonl
+HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=false
+HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION=false
+```
+
+Keep the normal deployment approval policy. Protected recovery neither widens
+that policy nor grants the model a recovery tool. The server must explicitly
+admit `control-plane.deploy.rollback` in its operation policy so the request
+reaches the sealed recovery fence. The fixture's isolated server config uses:
+
+```dotenv
+Operations__Policy__Rules__0__OperationId=control-plane.deploy.rollback
+Operations__Policy__Rules__0__Decision=Allow
+Operations__Policy__Rules__0__Reason=Admit declared recovery to the sealed-principal fence.
+```
+
+Merge that rule into the installed server's policy at an unused rule index;
+do not overwrite another rule. Admission still requires the server's ordinary
+authentication, deployment authority and matching recovery grant. Deterministic
+recovery remains server-owned; no new model response or CLI invocation is needed.
+The persisted audit and desired-intent files must survive DevOps restarts.
 
 ## What the retained executor verifies
 
@@ -201,7 +237,7 @@ Delivered so far:
 - [#194](https://github.com/honua-io/honua-devops/pull/194): durable compare-and-set intent ledger.
 - [#195](https://github.com/honua-io/honua-devops/pull/195): server-owned recovery folded into intent, and the rollout journey.
 - [#196](https://github.com/honua-io/honua-devops/pull/196): recovery the server could not prove.
-- This change: the server-enforced recovery fence, plus the live journey below.
+- [#197](https://github.com/honua-io/honua-devops/pull/197): the server-enforced recovery fence and initial live journey below.
 
 ### Live journey
 

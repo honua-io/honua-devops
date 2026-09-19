@@ -8,7 +8,8 @@ namespace Honua.DevOps.Agent.Operations;
 /// <summary>
 /// Release-posture capability gate for the MVP release. The operate model is a
 /// single-environment deploy with health-gated <em>fix-forward</em> convergence
-/// (roll-forward). Rollback / auto-rollback and cross-environment promotion are
+/// (roll-forward), with server-owned bounded recovery for qualified protected
+/// deployments. Arbitrary rollback and cross-environment promotion are
 /// retained in the codebase but treated as EXPERIMENTAL and OFF by default: they
 /// are neither advertised to the AI operator nor actuated unless explicitly
 /// enabled via their <c>HONUA_DEVOPS_EXPERIMENTAL_*</c> flags (see
@@ -47,7 +48,7 @@ internal static class ReleaseCapabilityGate
             Findings:
             [
                 "This release ships a single-environment deploy with health-gated fix-forward (roll-forward) convergence.",
-                "Rollback / auto-rollback is a post-release capability and is not advertised or actuated.",
+                "Arbitrary rollback is not advertised or actuated. Qualified protected deployments recover only within their approved, server-sealed scope.",
                 $"The rollback code is retained but gated; it stays off unless `{RollbackEnableVariable}` is explicitly enabled."
             ],
             Actions:
@@ -211,7 +212,7 @@ internal static class ReleaseCapabilityGate
             Actions:
             [
                 "Recover by rolling FORWARD through the governed create path until this target is qualified for bounded recovery.",
-                "Keep protected recovery disabled until the target's protected activation publishes a sealed recovery grant and the server fence binds it to its tenant (honua-server#4987; see docs/protected-deployment-recovery.md).",
+                "Enable protected recovery only for a qualified target whose server binds the sealed grant to its actor and tenant for every caller, including platform administrators (honua-server#5004; see docs/protected-deployment-recovery.md).",
                 "Protected recovery also requires a file-backed `HONUA_DEVOPS_AUDIT_HOOK_TARGET`: its desired-intent ledger records restored intent and candidate quarantine for the next reconcile.",
                 "When enabled, a deploy the server recovers on its own is recorded too: the candidate is quarantined, and `Previous version restored` is reported only when the server exposed the prior revision.",
                 "A recovery the server triggered and could not complete (retained protection window, phase `unavailable`) also quarantines the candidate, but never claims a restoration: the previous version is still not running."
