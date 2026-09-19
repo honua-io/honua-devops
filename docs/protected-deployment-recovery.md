@@ -293,6 +293,38 @@ What that proves:
 - **Git metadata-branch writer** is honua-devops#57 (2026.2). Nothing here writes a restoration commit, and nothing claims one without a server-reported `metadataRelease.commitSha`.
 - **The trigger stays server-owned.** `RecoveryExecutor` has no model-facing or CLI entry point. The deterministic recovery is the server reconciler's, and the executor is the fenced, retained path for a declared recovery.
 
+## Qualification after the sealed-principal fix
+
+The follow-up runs against the newest successfully imaged trunk nightly per
+operator ruling A and the handoff in server#5004:
+
+- Revision `80e23bedfe8ff7b43362c8d8ea22bfae1756df7d`, containing server#5004.
+- Image `ghcr.io/honua-io/honua-server:nightly-80e23be`, pinned for execution to
+  `sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176`.
+- Successful nightly build: [35333311726](https://github.com/honua-io/honua-server/actions/runs/35333311726).
+- Target: the isolated `SelfHostedRolling` / `honua-yarp-rolling` fixture,
+  with PostGIS, Redis, distinct immutable workload images and real proxy traffic.
+
+The original two cross-tenant exploits must now return 403
+`recovery_fence_actor_mismatch` without changing the operation, either replica,
+or candidate traffic. A same-name actor in another tenant must return
+`recovery_fence_tenant_mismatch`. List and detail readers without deployment
+authority must receive no sealed grant identity. The sealed principal must still
+restore `prior-a` through the proxy after those refusals.
+
+The receipt gate requires all eleven server recovery classes and matching passing
+results for the five live DevOps scenarios. It inspects the actual image identity
+for every server run part and refuses missing, duplicate or failed classes and
+incomplete live test transcripts. Transcripts alone are insufficient because
+scenario disposal writes them even when an assertion fails. Fast PR checks
+challenge the receipt gate with deliberately corrupted copies of the installed
+fixture.
+
+This qualification is bounded to the named nightly and backend. It is not a
+receipt for another backend or the future exact release candidate; final
+candidate requalification remains with the release program. Git metadata-branch
+writing remains #57 (2026.2), and a recovery trigger remains server-owned.
+
 ## Regression evidence
 
 `RecoveryExecutorTests` exercises the actual server response shape with declared
