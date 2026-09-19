@@ -27,6 +27,8 @@ PROOF_SERVER_IMAGE=ghcr.io/honua-io/honua-server@sha256:9869f044b1c5d0de15aef6c8
 # Server journey. Each cell takes 1-2 minutes; split the list across invocations as needed.
 python3 certification/protected-recovery/journey.py --work "$PROOF_WORK" --out part1.json \
   --cells platform-admin-cross-tenant,fenced-recovery,tenant-bound-recovery,error-rate-regression,latency-regression
+python3 certification/protected-recovery/journey.py --work "$PROOF_WORK" --out part2.json \
+  --cells missing-telemetry,stale-telemetry,controller-crash,failed-recovery,wrong-body-regression,newer-intent
 
 # DevOps code against the same server (opt-in; never runs in CI).
 HONUA_DEVOPS_LIVE_PROTECTED_RECOVERY=true \
@@ -36,6 +38,14 @@ HONUA_DEVOPS_HONUA_API_BASE_URL=http://127.0.0.1:19191 \
 HONUA_DEVOPS_HONUA_API_KEY="$(cat "$PROOF_WORK/admin-key")" \
 dotnet test tests/Honua.DevOps.Agent.Tests --filter "FullyQualifiedName~ProtectedRecoveryLiveJourneyTests" \
   --logger "trx;LogFileName=protected-recovery-live.trx"
+
+python3 certification/protected-recovery/summarize.py \
+  --image ghcr.io/honua-io/honua-server:nightly-80e23be \
+  --revision 80e23bedfe8ff7b43362c8d8ea22bfae1756df7d \
+  --index sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176 \
+  --parts part1.json,part2.json --devops devops-live.jsonl \
+  --devops-trx tests/Honua.DevOps.Agent.Tests/TestResults/protected-recovery-live.trx \
+  --out-dir certification/protected-recovery --tag nightly-80e23be
 
 certification/protected-recovery/boot.sh down
 ```

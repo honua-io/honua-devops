@@ -21,10 +21,10 @@ class ReceiptGateTests(unittest.TestCase):
         self.part = {"cells": copy.deepcopy(self.receipt["cells"]),
                      "server": self.receipt["observedServers"][0]}
 
-    def run_summary(self, part=None, failed_test=False, empty_transcript=False):
+    def run_summary(self, failed_test=False, empty_transcript=False):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
-            (work / "part.json").write_text(json.dumps(part or self.part))
+            (work / "part.json").write_text(json.dumps(self.part))
             transcript = (HERE / f"devops-live-{TAG}.jsonl").read_text()
             (work / "live.jsonl").write_text("" if empty_transcript else transcript)
             trx = ET.parse(HERE / f"devops-live-{TAG}.trx")
@@ -57,6 +57,11 @@ class ReceiptGateTests(unittest.TestCase):
     def test_duplicate_class_is_refused(self):
         self.part["cells"].append(copy.deepcopy(self.part["cells"][0]))
         with self.assertRaisesRegex(SystemExit, "every recovery class once"):
+            self.run_summary()
+
+    def test_missing_server_identity_is_refused(self):
+        del self.part["server"]
+        with self.assertRaisesRegex(SystemExit, "Every run part requires inspected server"):
             self.run_summary()
 
     def test_wrong_server_revision_is_refused(self):

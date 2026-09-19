@@ -1,0 +1,1821 @@
+{
+  "startedAt": "2026-09-19T09:03:00.697561Z",
+  "server": {
+    "imageReference": "ghcr.io/honua-io/honua-server@sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176",
+    "imageId": "sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176",
+    "repoDigests": [
+      "ghcr.io/honua-io/honua-server@sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176"
+    ],
+    "revision": "80e23bedfe8ff7b43362c8d8ea22bfae1756df7d"
+  },
+  "cells": [
+    {
+      "name": "error-rate-regression",
+      "startedAt": "2026-09-19T09:03:00.697631Z",
+      "events": [
+        {
+          "at": "2026-09-19T09:03:08.703760Z",
+          "kind": "telemetry-injected",
+          "label": "healthy evidence while the candidate activates",
+          "answers": {
+            "proof_error_rate": {
+              "mode": "value",
+              "value": "0.001"
+            },
+            "proof_latency_p95": {
+              "mode": "value",
+              "value": "40"
+            },
+            "proof_samples": {
+              "mode": "value",
+              "value": "500"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:03:09.587732Z",
+          "kind": "replicas",
+          "label": "before activation",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        },
+        {
+          "at": "2026-09-19T09:03:14.439852Z",
+          "kind": "http",
+          "caller": "admin-api-key",
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/admin/deploy/operations",
+            "body": {
+              "targetId": "proof-selfhosted",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "reason": "protected recovery proof: error-rate-regression",
+              "idempotencyKey": "proof-error-rate-1789808580",
+              "correlationId": "proof-error-rate-1789808580",
+              "submitImmediately": true,
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            }
+          },
+          "response": {
+            "status": 201,
+            "body": {
+              "operationId": "deploy-proof-error-rate-1789808580-e116cbc0f8ab",
+              "kind": "Deploy",
+              "status": "Submitted",
+              "priority": "Normal",
+              "target": {
+                "targetId": "proof-selfhosted",
+                "targetKind": "SelfHostedRolling",
+                "backend": "honua-yarp-rolling",
+                "environment": "proof",
+                "targetName": "proof-selfhosted",
+                "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+                "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+                "parameters": {
+                  "telemetry.connection": "proof-prometheus",
+                  "telemetry.error_rate.query": "proof_error_rate",
+                  "telemetry.error_rate.threshold": "0.05",
+                  "telemetry.latency_p95.query": "proof_latency_p95",
+                  "telemetry.latency_p95.threshold_ms": "500",
+                  "telemetry.sample_count.query": "proof_samples",
+                  "telemetry.sample_count.minimum": "10",
+                  "telemetry.warmup_seconds": "5",
+                  "telemetry.evidence_grace_seconds": "20",
+                  "telemetry.max_staleness_seconds": "60",
+                  "telemetry.rollback.consecutive_breaches": "1",
+                  "deployment.protection.observation_window_seconds": "900"
+                }
+              },
+              "providerOperationId": "770c20a455e571c58fd374995339e9e687ccafef674d002b43d5dd4b3ec574e1",
+              "currentPhase": "Started standby replica 'devops191-app-19182' (sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b) on port 19182; the active replica keeps serving until the new one is healthy.",
+              "warnings": [],
+              "blockingReasons": [],
+              "requestedBy": "admin",
+              "reason": "protected recovery proof: error-rate-regression",
+              "correlationId": "proof-error-rate-1789808580",
+              "createdAt": "2026-09-19T09:03:11.5814111+00:00",
+              "updatedAt": "2026-09-19T09:03:14.4036918+00:00"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:03:15.103477Z",
+          "kind": "transition",
+          "operation": "deploy-proof-error-rate-1789808580-e116cbc0f8ab",
+          "status": "Reconciling",
+          "protectionPhase": null,
+          "reasonCode": null,
+          "currentPhase": "Waiting for the staged candidate revision to pass the backend health gate before cutover (1797s remaining before the exposure deadline).",
+          "protection": null
+        },
+        {
+          "at": "2026-09-19T09:03:17.588132Z",
+          "kind": "transition",
+          "operation": "deploy-proof-error-rate-1789808580-e116cbc0f8ab",
+          "status": "Reconciling",
+          "protectionPhase": "observing",
+          "reasonCode": "telemetry-evidence-pending",
+          "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:03:16.6871755+00:00",
+            "observationDeadline": "2026-09-19T09:18:16.6871755+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "observing",
+            "reasonCode": "telemetry-evidence-pending",
+            "grantId": "grant-57999e833b27f0b0e7c78831453ca4f5",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:03:17.588190Z",
+          "kind": "reached",
+          "label": "candidate promoted and observation window open",
+          "operation": {
+            "operationId": "deploy-proof-error-rate-1789808580-e116cbc0f8ab",
+            "kind": "Deploy",
+            "status": "Reconciling",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "770c20a455e571c58fd374995339e9e687ccafef674d002b43d5dd4b3ec574e1",
+            "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+            "observedState": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: error-rate-regression",
+            "correlationId": "proof-error-rate-1789808580",
+            "createdAt": "2026-09-19T09:03:11.5814111+00:00",
+            "updatedAt": "2026-09-19T09:03:17.5601717+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:03:16.6871755+00:00",
+              "observationDeadline": "2026-09-19T09:18:16.6871755+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "observing",
+              "reasonCode": "telemetry-evidence-pending",
+              "grantId": "grant-57999e833b27f0b0e7c78831453ca4f5",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:04:10.008228Z",
+          "kind": "replicas",
+          "label": "candidate exposed, prior retained",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            },
+            {
+              "name": "devops191-app-19182",
+              "running": true,
+              "role": "standby",
+              "revision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "workload": null
+            }
+          ],
+          "proxyServes": "candidate-b"
+        },
+        {
+          "at": "2026-09-19T09:04:10.008846Z",
+          "kind": "telemetry-injected",
+          "label": "error-rate regression 0.42 > 0.05",
+          "answers": {
+            "proof_error_rate": {
+              "mode": "value",
+              "value": "0.42"
+            },
+            "proof_latency_p95": {
+              "mode": "value",
+              "value": "40"
+            },
+            "proof_samples": {
+              "mode": "value",
+              "value": "500"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:04:13.551746Z",
+          "kind": "transition",
+          "operation": "deploy-proof-error-rate-1789808580-e116cbc0f8ab",
+          "status": "RollbackRequested",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Automatic rollback requested because telemetry detected canary degradation: error rate 0.42 exceeded threshold 0.05.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:03:16.6871755+00:00",
+            "observationDeadline": "2026-09-19T09:18:16.6871755+00:00",
+            "recoveryDeadline": "2026-09-19T09:09:13.5311197+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-57999e833b27f0b0e7c78831453ca4f5",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:04:15.704123Z",
+          "kind": "transition",
+          "operation": "deploy-proof-error-rate-1789808580-e116cbc0f8ab",
+          "status": "RolledBack",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:03:16.6871755+00:00",
+            "observationDeadline": "2026-09-19T09:18:16.6871755+00:00",
+            "recoveryDeadline": "2026-09-19T09:09:13.5311197+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-57999e833b27f0b0e7c78831453ca4f5",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:04:15.704167Z",
+          "kind": "reached",
+          "label": "server reconciler recovered on error-rate regression 0.42 > 0.05",
+          "operation": {
+            "operationId": "deploy-proof-error-rate-1789808580-e116cbc0f8ab",
+            "kind": "Deploy",
+            "status": "RolledBack",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "770c20a455e571c58fd374995339e9e687ccafef674d002b43d5dd4b3ec574e1",
+            "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+            "observedState": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: error-rate-regression",
+            "correlationId": "proof-error-rate-1789808580",
+            "createdAt": "2026-09-19T09:03:11.5814111+00:00",
+            "updatedAt": "2026-09-19T09:04:15.6885+00:00",
+            "completedAt": "2026-09-19T09:04:15.6885007+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:03:16.6871755+00:00",
+              "observationDeadline": "2026-09-19T09:18:16.6871755+00:00",
+              "recoveryDeadline": "2026-09-19T09:09:13.5311197+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "recovering",
+              "reasonCode": "rollback-requested",
+              "grantId": "grant-57999e833b27f0b0e7c78831453ca4f5",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:04:15.704179Z",
+          "kind": "settled-protection",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:03:16.6871755+00:00",
+            "observationDeadline": "2026-09-19T09:18:16.6871755+00:00",
+            "recoveryDeadline": "2026-09-19T09:09:13.5311197+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-57999e833b27f0b0e7c78831453ca4f5",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:05:09.970551Z",
+          "kind": "replicas",
+          "label": "after recovery",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        }
+      ],
+      "assertions": [
+        {
+          "assertion": "deploy operation created and submitted",
+          "held": true
+        },
+        {
+          "assertion": "window observes the candidate revision",
+          "held": true
+        },
+        {
+          "assertion": "window retains the prior revision",
+          "held": true
+        },
+        {
+          "assertion": "server sealed a recovery grant at exposure",
+          "held": true
+        },
+        {
+          "assertion": "grant permits only restore-previous-revision",
+          "held": true
+        },
+        {
+          "assertion": "grant is bound to the requesting actor",
+          "held": true
+        },
+        {
+          "assertion": "settled RolledBack does not read as unavailable (phase recovering)",
+          "held": true
+        },
+        {
+          "assertion": "proxy serves the prior revision after recovery",
+          "held": true
+        },
+        {
+          "assertion": "driver issued no rollback request",
+          "held": true
+        }
+      ],
+      "result": "pass",
+      "finishedAt": "2026-09-19T09:05:10.019773Z"
+    },
+    {
+      "name": "latency-regression",
+      "startedAt": "2026-09-19T09:05:10.021832Z",
+      "events": [
+        {
+          "at": "2026-09-19T09:05:14.888189Z",
+          "kind": "telemetry-injected",
+          "label": "healthy evidence while the candidate activates",
+          "answers": {
+            "proof_error_rate": {
+              "mode": "value",
+              "value": "0.001"
+            },
+            "proof_latency_p95": {
+              "mode": "value",
+              "value": "40"
+            },
+            "proof_samples": {
+              "mode": "value",
+              "value": "500"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:05:15.058070Z",
+          "kind": "replicas",
+          "label": "before activation",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        },
+        {
+          "at": "2026-09-19T09:05:16.835739Z",
+          "kind": "http",
+          "caller": "admin-api-key",
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/admin/deploy/operations",
+            "body": {
+              "targetId": "proof-selfhosted",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "reason": "protected recovery proof: latency-regression",
+              "idempotencyKey": "proof-latency-1789808710",
+              "correlationId": "proof-latency-1789808710",
+              "submitImmediately": true,
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            }
+          },
+          "response": {
+            "status": 201,
+            "body": {
+              "operationId": "deploy-proof-latency-1789808710-79ea8a281d4f",
+              "kind": "Deploy",
+              "status": "Submitted",
+              "priority": "Normal",
+              "target": {
+                "targetId": "proof-selfhosted",
+                "targetKind": "SelfHostedRolling",
+                "backend": "honua-yarp-rolling",
+                "environment": "proof",
+                "targetName": "proof-selfhosted",
+                "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+                "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+                "parameters": {
+                  "telemetry.connection": "proof-prometheus",
+                  "telemetry.error_rate.query": "proof_error_rate",
+                  "telemetry.error_rate.threshold": "0.05",
+                  "telemetry.latency_p95.query": "proof_latency_p95",
+                  "telemetry.latency_p95.threshold_ms": "500",
+                  "telemetry.sample_count.query": "proof_samples",
+                  "telemetry.sample_count.minimum": "10",
+                  "telemetry.warmup_seconds": "5",
+                  "telemetry.evidence_grace_seconds": "20",
+                  "telemetry.max_staleness_seconds": "60",
+                  "telemetry.rollback.consecutive_breaches": "1",
+                  "deployment.protection.observation_window_seconds": "900"
+                }
+              },
+              "providerOperationId": "200f8c4e0f5fd6ae07ba684885c0ea5e7b31ca3a174a9e33c9183ef5e81f3703",
+              "currentPhase": "Started standby replica 'devops191-app-19182' (sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b) on port 19182; the active replica keeps serving until the new one is healthy.",
+              "warnings": [],
+              "blockingReasons": [],
+              "requestedBy": "admin",
+              "reason": "protected recovery proof: latency-regression",
+              "correlationId": "proof-latency-1789808710",
+              "createdAt": "2026-09-19T09:05:15.5111531+00:00",
+              "updatedAt": "2026-09-19T09:05:16.8240377+00:00"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:05:17.266806Z",
+          "kind": "transition",
+          "operation": "deploy-proof-latency-1789808710-79ea8a281d4f",
+          "status": "Reconciling",
+          "protectionPhase": null,
+          "reasonCode": null,
+          "currentPhase": "Waiting for the staged candidate revision to pass the backend health gate before cutover (1799s remaining before the exposure deadline).",
+          "protection": null
+        },
+        {
+          "at": "2026-09-19T09:05:19.628870Z",
+          "kind": "transition",
+          "operation": "deploy-proof-latency-1789808710-79ea8a281d4f",
+          "status": "Reconciling",
+          "protectionPhase": "observing",
+          "reasonCode": null,
+          "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:05:19.6168433+00:00",
+            "observationDeadline": "2026-09-19T09:20:19.6168433+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "observing",
+            "grantId": "grant-1b6ff9e46cd33ee483f72205b755fbe8",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:05:19.628922Z",
+          "kind": "reached",
+          "label": "candidate promoted and observation window open",
+          "operation": {
+            "operationId": "deploy-proof-latency-1789808710-79ea8a281d4f",
+            "kind": "Deploy",
+            "status": "Reconciling",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "200f8c4e0f5fd6ae07ba684885c0ea5e7b31ca3a174a9e33c9183ef5e81f3703",
+            "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+            "observedState": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: latency-regression",
+            "correlationId": "proof-latency-1789808710",
+            "createdAt": "2026-09-19T09:05:15.5111531+00:00",
+            "updatedAt": "2026-09-19T09:05:19.6168433+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:05:19.6168433+00:00",
+              "observationDeadline": "2026-09-19T09:20:19.6168433+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "observing",
+              "grantId": "grant-1b6ff9e46cd33ee483f72205b755fbe8",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:06:10.000553Z",
+          "kind": "replicas",
+          "label": "candidate exposed, prior retained",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            },
+            {
+              "name": "devops191-app-19182",
+              "running": true,
+              "role": "standby",
+              "revision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "workload": null
+            }
+          ],
+          "proxyServes": "candidate-b"
+        },
+        {
+          "at": "2026-09-19T09:06:10.001004Z",
+          "kind": "telemetry-injected",
+          "label": "p95 latency regression 2400 ms > 500 ms",
+          "answers": {
+            "proof_error_rate": {
+              "mode": "value",
+              "value": "0.001"
+            },
+            "proof_latency_p95": {
+              "mode": "value",
+              "value": "2400"
+            },
+            "proof_samples": {
+              "mode": "value",
+              "value": "500"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:06:13.367775Z",
+          "kind": "transition",
+          "operation": "deploy-proof-latency-1789808710-79ea8a281d4f",
+          "status": "RollbackRequested",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Automatic rollback requested because telemetry detected canary degradation: p95 latency 2400ms exceeded threshold 500ms.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:05:19.6168433+00:00",
+            "observationDeadline": "2026-09-19T09:20:19.6168433+00:00",
+            "recoveryDeadline": "2026-09-19T09:11:13.3366817+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-1b6ff9e46cd33ee483f72205b755fbe8",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:06:15.538371Z",
+          "kind": "transition",
+          "operation": "deploy-proof-latency-1789808710-79ea8a281d4f",
+          "status": "RolledBack",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:05:19.6168433+00:00",
+            "observationDeadline": "2026-09-19T09:20:19.6168433+00:00",
+            "recoveryDeadline": "2026-09-19T09:11:13.3366817+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-1b6ff9e46cd33ee483f72205b755fbe8",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:06:15.538412Z",
+          "kind": "reached",
+          "label": "server reconciler recovered on p95 latency regression 2400 ms > 500 ms",
+          "operation": {
+            "operationId": "deploy-proof-latency-1789808710-79ea8a281d4f",
+            "kind": "Deploy",
+            "status": "RolledBack",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "200f8c4e0f5fd6ae07ba684885c0ea5e7b31ca3a174a9e33c9183ef5e81f3703",
+            "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+            "observedState": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: latency-regression",
+            "correlationId": "proof-latency-1789808710",
+            "createdAt": "2026-09-19T09:05:15.5111531+00:00",
+            "updatedAt": "2026-09-19T09:06:15.5164747+00:00",
+            "completedAt": "2026-09-19T09:06:15.5164756+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:05:19.6168433+00:00",
+              "observationDeadline": "2026-09-19T09:20:19.6168433+00:00",
+              "recoveryDeadline": "2026-09-19T09:11:13.3366817+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "recovering",
+              "reasonCode": "rollback-requested",
+              "grantId": "grant-1b6ff9e46cd33ee483f72205b755fbe8",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:06:15.538424Z",
+          "kind": "settled-protection",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:05:19.6168433+00:00",
+            "observationDeadline": "2026-09-19T09:20:19.6168433+00:00",
+            "recoveryDeadline": "2026-09-19T09:11:13.3366817+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-1b6ff9e46cd33ee483f72205b755fbe8",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:07:10.486744Z",
+          "kind": "replicas",
+          "label": "after recovery",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        }
+      ],
+      "assertions": [
+        {
+          "assertion": "deploy operation created and submitted",
+          "held": true
+        },
+        {
+          "assertion": "window observes the candidate revision",
+          "held": true
+        },
+        {
+          "assertion": "window retains the prior revision",
+          "held": true
+        },
+        {
+          "assertion": "server sealed a recovery grant at exposure",
+          "held": true
+        },
+        {
+          "assertion": "grant permits only restore-previous-revision",
+          "held": true
+        },
+        {
+          "assertion": "grant is bound to the requesting actor",
+          "held": true
+        },
+        {
+          "assertion": "settled RolledBack does not read as unavailable (phase recovering)",
+          "held": true
+        },
+        {
+          "assertion": "proxy serves the prior revision after recovery",
+          "held": true
+        },
+        {
+          "assertion": "driver issued no rollback request",
+          "held": true
+        }
+      ],
+      "result": "pass",
+      "finishedAt": "2026-09-19T09:07:10.528922Z"
+    },
+    {
+      "name": "missing-telemetry",
+      "startedAt": "2026-09-19T09:07:10.531793Z",
+      "events": [
+        {
+          "at": "2026-09-19T09:07:15.793318Z",
+          "kind": "telemetry-injected",
+          "label": "healthy evidence while the candidate activates",
+          "answers": {
+            "proof_error_rate": {
+              "mode": "value",
+              "value": "0.001"
+            },
+            "proof_latency_p95": {
+              "mode": "value",
+              "value": "40"
+            },
+            "proof_samples": {
+              "mode": "value",
+              "value": "500"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:07:16.085943Z",
+          "kind": "replicas",
+          "label": "before activation",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        },
+        {
+          "at": "2026-09-19T09:07:18.151672Z",
+          "kind": "http",
+          "caller": "admin-api-key",
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/admin/deploy/operations",
+            "body": {
+              "targetId": "proof-selfhosted",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "reason": "protected recovery proof: missing-telemetry",
+              "idempotencyKey": "proof-missing-1789808830",
+              "correlationId": "proof-missing-1789808830",
+              "submitImmediately": true,
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            }
+          },
+          "response": {
+            "status": 201,
+            "body": {
+              "operationId": "deploy-proof-missing-1789808830-9111b4c6962b",
+              "kind": "Deploy",
+              "status": "Submitted",
+              "priority": "Normal",
+              "target": {
+                "targetId": "proof-selfhosted",
+                "targetKind": "SelfHostedRolling",
+                "backend": "honua-yarp-rolling",
+                "environment": "proof",
+                "targetName": "proof-selfhosted",
+                "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+                "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+                "parameters": {
+                  "telemetry.connection": "proof-prometheus",
+                  "telemetry.error_rate.query": "proof_error_rate",
+                  "telemetry.error_rate.threshold": "0.05",
+                  "telemetry.latency_p95.query": "proof_latency_p95",
+                  "telemetry.latency_p95.threshold_ms": "500",
+                  "telemetry.sample_count.query": "proof_samples",
+                  "telemetry.sample_count.minimum": "10",
+                  "telemetry.warmup_seconds": "5",
+                  "telemetry.evidence_grace_seconds": "20",
+                  "telemetry.max_staleness_seconds": "60",
+                  "telemetry.rollback.consecutive_breaches": "1",
+                  "deployment.protection.observation_window_seconds": "900"
+                }
+              },
+              "providerOperationId": "e5b808eb31b8cacc49ec31823fb6bfca15bd014765d117be22c8ac21aaee150b",
+              "currentPhase": "Started standby replica 'devops191-app-19182' (sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b) on port 19182; the active replica keeps serving until the new one is healthy.",
+              "warnings": [],
+              "blockingReasons": [],
+              "requestedBy": "admin",
+              "reason": "protected recovery proof: missing-telemetry",
+              "correlationId": "proof-missing-1789808830",
+              "createdAt": "2026-09-19T09:07:16.6510709+00:00",
+              "updatedAt": "2026-09-19T09:07:18.1091654+00:00"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:07:18.704174Z",
+          "kind": "transition",
+          "operation": "deploy-proof-missing-1789808830-9111b4c6962b",
+          "status": "Reconciling",
+          "protectionPhase": null,
+          "reasonCode": null,
+          "currentPhase": "Waiting for the staged candidate revision to pass the backend health gate before cutover (1798s remaining before the exposure deadline).",
+          "protection": null
+        },
+        {
+          "at": "2026-09-19T09:07:20.965031Z",
+          "kind": "transition",
+          "operation": "deploy-proof-missing-1789808830-9111b4c6962b",
+          "status": "Reconciling",
+          "protectionPhase": "observing",
+          "reasonCode": null,
+          "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+            "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "observing",
+            "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:07:20.965072Z",
+          "kind": "reached",
+          "label": "candidate promoted and observation window open",
+          "operation": {
+            "operationId": "deploy-proof-missing-1789808830-9111b4c6962b",
+            "kind": "Deploy",
+            "status": "Reconciling",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "e5b808eb31b8cacc49ec31823fb6bfca15bd014765d117be22c8ac21aaee150b",
+            "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+            "observedState": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: missing-telemetry",
+            "correlationId": "proof-missing-1789808830",
+            "createdAt": "2026-09-19T09:07:16.6510709+00:00",
+            "updatedAt": "2026-09-19T09:07:20.9526501+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+              "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "observing",
+              "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:08:10.364308Z",
+          "kind": "replicas",
+          "label": "candidate exposed, prior retained",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            },
+            {
+              "name": "devops191-app-19182",
+              "running": true,
+              "role": "standby",
+              "revision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "workload": null
+            }
+          ],
+          "proxyServes": "candidate-b"
+        },
+        {
+          "at": "2026-09-19T09:08:10.364772Z",
+          "kind": "telemetry-injected",
+          "label": "telemetry missing (empty vectors)",
+          "answers": {
+            "*": {
+              "mode": "empty"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:08:13.292132Z",
+          "kind": "transition",
+          "operation": "deploy-proof-missing-1789808830-9111b4c6962b",
+          "status": "RollbackRequested",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Automatic rollback requested because telemetry evidence remained unavailable beyond the configured evidence grace window: Waiting for telemetry confirmation because no sample-count signal is available yet.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+            "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+            "recoveryDeadline": "2026-09-19T09:13:13.2750722+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:08:15.410853Z",
+          "kind": "transition",
+          "operation": "deploy-proof-missing-1789808830-9111b4c6962b",
+          "status": "RolledBack",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+            "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+            "recoveryDeadline": "2026-09-19T09:13:13.2750722+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:08:15.410915Z",
+          "kind": "reached",
+          "label": "window held open on missing evidence",
+          "operation": {
+            "operationId": "deploy-proof-missing-1789808830-9111b4c6962b",
+            "kind": "Deploy",
+            "status": "RolledBack",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "e5b808eb31b8cacc49ec31823fb6bfca15bd014765d117be22c8ac21aaee150b",
+            "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+            "observedState": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: missing-telemetry",
+            "correlationId": "proof-missing-1789808830",
+            "createdAt": "2026-09-19T09:07:16.6510709+00:00",
+            "updatedAt": "2026-09-19T09:08:15.3982897+00:00",
+            "completedAt": "2026-09-19T09:08:15.3982905+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+              "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+              "recoveryDeadline": "2026-09-19T09:13:13.2750722+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "recovering",
+              "reasonCode": "rollback-requested",
+              "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:08:15.425361Z",
+          "kind": "transition",
+          "operation": "deploy-proof-missing-1789808830-9111b4c6962b",
+          "status": "RolledBack",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+            "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+            "recoveryDeadline": "2026-09-19T09:13:13.2750722+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:08:15.425403Z",
+          "kind": "reached",
+          "label": "server reconciler recovered on telemetry missing (empty vectors)",
+          "operation": {
+            "operationId": "deploy-proof-missing-1789808830-9111b4c6962b",
+            "kind": "Deploy",
+            "status": "RolledBack",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "e5b808eb31b8cacc49ec31823fb6bfca15bd014765d117be22c8ac21aaee150b",
+            "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+            "observedState": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: missing-telemetry",
+            "correlationId": "proof-missing-1789808830",
+            "createdAt": "2026-09-19T09:07:16.6510709+00:00",
+            "updatedAt": "2026-09-19T09:08:15.3982897+00:00",
+            "completedAt": "2026-09-19T09:08:15.3982905+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+              "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+              "recoveryDeadline": "2026-09-19T09:13:13.2750722+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "recovering",
+              "reasonCode": "rollback-requested",
+              "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:08:15.425413Z",
+          "kind": "settled-protection",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:07:20.9526501+00:00",
+            "observationDeadline": "2026-09-19T09:22:20.9526501+00:00",
+            "recoveryDeadline": "2026-09-19T09:13:13.2750722+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e539bf7e0fcc2b884962a0188f256e79",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:09:11.577235Z",
+          "kind": "replicas",
+          "label": "after recovery",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        }
+      ],
+      "assertions": [
+        {
+          "assertion": "deploy operation created and submitted",
+          "held": true
+        },
+        {
+          "assertion": "window observes the candidate revision",
+          "held": true
+        },
+        {
+          "assertion": "window retains the prior revision",
+          "held": true
+        },
+        {
+          "assertion": "server sealed a recovery grant at exposure",
+          "held": true
+        },
+        {
+          "assertion": "grant permits only restore-previous-revision",
+          "held": true
+        },
+        {
+          "assertion": "grant is bound to the requesting actor",
+          "held": true
+        },
+        {
+          "assertion": "settled RolledBack does not read as unavailable (phase recovering)",
+          "held": true
+        },
+        {
+          "assertion": "proxy serves the prior revision after recovery",
+          "held": true
+        },
+        {
+          "assertion": "driver issued no rollback request",
+          "held": true
+        }
+      ],
+      "result": "pass",
+      "finishedAt": "2026-09-19T09:09:11.619207Z"
+    },
+    {
+      "name": "stale-telemetry",
+      "startedAt": "2026-09-19T09:09:11.623348Z",
+      "events": [
+        {
+          "at": "2026-09-19T09:09:16.909213Z",
+          "kind": "telemetry-injected",
+          "label": "healthy evidence while the candidate activates",
+          "answers": {
+            "proof_error_rate": {
+              "mode": "value",
+              "value": "0.001"
+            },
+            "proof_latency_p95": {
+              "mode": "value",
+              "value": "40"
+            },
+            "proof_samples": {
+              "mode": "value",
+              "value": "500"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:09:17.092906Z",
+          "kind": "replicas",
+          "label": "before activation",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        },
+        {
+          "at": "2026-09-19T09:09:19.011966Z",
+          "kind": "http",
+          "caller": "admin-api-key",
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/admin/deploy/operations",
+            "body": {
+              "targetId": "proof-selfhosted",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "reason": "protected recovery proof: stale-telemetry",
+              "idempotencyKey": "proof-stale-1789808951",
+              "correlationId": "proof-stale-1789808951",
+              "submitImmediately": true,
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            }
+          },
+          "response": {
+            "status": 201,
+            "body": {
+              "operationId": "deploy-proof-stale-1789808951-60b35ca36146",
+              "kind": "Deploy",
+              "status": "Submitted",
+              "priority": "Normal",
+              "target": {
+                "targetId": "proof-selfhosted",
+                "targetKind": "SelfHostedRolling",
+                "backend": "honua-yarp-rolling",
+                "environment": "proof",
+                "targetName": "proof-selfhosted",
+                "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+                "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+                "parameters": {
+                  "telemetry.connection": "proof-prometheus",
+                  "telemetry.error_rate.query": "proof_error_rate",
+                  "telemetry.error_rate.threshold": "0.05",
+                  "telemetry.latency_p95.query": "proof_latency_p95",
+                  "telemetry.latency_p95.threshold_ms": "500",
+                  "telemetry.sample_count.query": "proof_samples",
+                  "telemetry.sample_count.minimum": "10",
+                  "telemetry.warmup_seconds": "5",
+                  "telemetry.evidence_grace_seconds": "20",
+                  "telemetry.max_staleness_seconds": "60",
+                  "telemetry.rollback.consecutive_breaches": "1",
+                  "deployment.protection.observation_window_seconds": "900"
+                }
+              },
+              "providerOperationId": "e556ea5e229f9d3c9f0c189b0838647bc3724f23d8f1e522406fdb6c6c056eae",
+              "currentPhase": "Started standby replica 'devops191-app-19182' (sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b) on port 19182; the active replica keeps serving until the new one is healthy.",
+              "warnings": [],
+              "blockingReasons": [],
+              "requestedBy": "admin",
+              "reason": "protected recovery proof: stale-telemetry",
+              "correlationId": "proof-stale-1789808951",
+              "createdAt": "2026-09-19T09:09:17.5247943+00:00",
+              "updatedAt": "2026-09-19T09:09:18.9903684+00:00"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:09:19.746441Z",
+          "kind": "transition",
+          "operation": "deploy-proof-stale-1789808951-60b35ca36146",
+          "status": "Reconciling",
+          "protectionPhase": null,
+          "reasonCode": null,
+          "currentPhase": "Waiting for the staged candidate revision to pass the backend health gate before cutover (1798s remaining before the exposure deadline).",
+          "protection": null
+        },
+        {
+          "at": "2026-09-19T09:09:22.139093Z",
+          "kind": "transition",
+          "operation": "deploy-proof-stale-1789808951-60b35ca36146",
+          "status": "Reconciling",
+          "protectionPhase": "observing",
+          "reasonCode": null,
+          "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+            "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "observing",
+            "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:09:22.139140Z",
+          "kind": "reached",
+          "label": "candidate promoted and observation window open",
+          "operation": {
+            "operationId": "deploy-proof-stale-1789808951-60b35ca36146",
+            "kind": "Deploy",
+            "status": "Reconciling",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "e556ea5e229f9d3c9f0c189b0838647bc3724f23d8f1e522406fdb6c6c056eae",
+            "currentPhase": "Observing candidate 'sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b' (900s remaining before the deploy is fully committed).",
+            "observedState": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: stale-telemetry",
+            "correlationId": "proof-stale-1789808951",
+            "createdAt": "2026-09-19T09:09:17.5247943+00:00",
+            "updatedAt": "2026-09-19T09:09:22.1252207+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+              "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "observing",
+              "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:10:12.656809Z",
+          "kind": "replicas",
+          "label": "candidate exposed, prior retained",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            },
+            {
+              "name": "devops191-app-19182",
+              "running": true,
+              "role": "standby",
+              "revision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "workload": null
+            }
+          ],
+          "proxyServes": "candidate-b"
+        },
+        {
+          "at": "2026-09-19T09:10:12.657691Z",
+          "kind": "telemetry-injected",
+          "label": "telemetry stale (samples 900 s old > 60 s bound)",
+          "answers": {
+            "proof_error_rate": {
+              "mode": "stale",
+              "value": "0.001",
+              "age_seconds": 900
+            },
+            "proof_latency_p95": {
+              "mode": "stale",
+              "value": "40",
+              "age_seconds": 900
+            },
+            "proof_samples": {
+              "mode": "stale",
+              "value": "500",
+              "age_seconds": 900
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:10:16.211838Z",
+          "kind": "transition",
+          "operation": "deploy-proof-stale-1789808951-60b35ca36146",
+          "status": "RollbackRequested",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Automatic rollback requested because telemetry evidence remained unavailable beyond the configured evidence grace window: Waiting for telemetry confirmation because no sample-count signal is available yet.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+            "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+            "recoveryDeadline": "2026-09-19T09:15:16.1724741+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:10:18.369438Z",
+          "kind": "transition",
+          "operation": "deploy-proof-stale-1789808951-60b35ca36146",
+          "status": "RolledBack",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+            "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+            "recoveryDeadline": "2026-09-19T09:15:16.1724741+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:10:18.369483Z",
+          "kind": "reached",
+          "label": "window held open on missing evidence",
+          "operation": {
+            "operationId": "deploy-proof-stale-1789808951-60b35ca36146",
+            "kind": "Deploy",
+            "status": "RolledBack",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "e556ea5e229f9d3c9f0c189b0838647bc3724f23d8f1e522406fdb6c6c056eae",
+            "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+            "observedState": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: stale-telemetry",
+            "correlationId": "proof-stale-1789808951",
+            "createdAt": "2026-09-19T09:09:17.5247943+00:00",
+            "updatedAt": "2026-09-19T09:10:18.352753+00:00",
+            "completedAt": "2026-09-19T09:10:18.3527537+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+              "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+              "recoveryDeadline": "2026-09-19T09:15:16.1724741+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "recovering",
+              "reasonCode": "rollback-requested",
+              "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:10:18.388270Z",
+          "kind": "transition",
+          "operation": "deploy-proof-stale-1789808951-60b35ca36146",
+          "status": "RolledBack",
+          "protectionPhase": "recovering",
+          "reasonCode": "rollback-requested",
+          "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+            "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+            "recoveryDeadline": "2026-09-19T09:15:16.1724741+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:10:18.388313Z",
+          "kind": "reached",
+          "label": "server reconciler recovered on telemetry stale (samples 900 s old > 60 s bound)",
+          "operation": {
+            "operationId": "deploy-proof-stale-1789808951-60b35ca36146",
+            "kind": "Deploy",
+            "status": "RolledBack",
+            "priority": "Normal",
+            "target": {
+              "targetId": "proof-selfhosted",
+              "targetKind": "SelfHostedRolling",
+              "backend": "honua-yarp-rolling",
+              "environment": "proof",
+              "targetName": "proof-selfhosted",
+              "currentRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "desiredRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "parameters": {
+                "telemetry.connection": "proof-prometheus",
+                "telemetry.error_rate.query": "proof_error_rate",
+                "telemetry.error_rate.threshold": "0.05",
+                "telemetry.latency_p95.query": "proof_latency_p95",
+                "telemetry.latency_p95.threshold_ms": "500",
+                "telemetry.sample_count.query": "proof_samples",
+                "telemetry.sample_count.minimum": "10",
+                "telemetry.warmup_seconds": "5",
+                "telemetry.evidence_grace_seconds": "20",
+                "telemetry.max_staleness_seconds": "60",
+                "telemetry.rollback.consecutive_breaches": "1",
+                "deployment.protection.observation_window_seconds": "900"
+              }
+            },
+            "providerOperationId": "e556ea5e229f9d3c9f0c189b0838647bc3724f23d8f1e522406fdb6c6c056eae",
+            "currentPhase": "Rolling deploy rolled back: the standby replica was stopped and the active replica is serving.",
+            "observedState": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "warnings": [],
+            "blockingReasons": [],
+            "requestedBy": "admin",
+            "reason": "protected recovery proof: stale-telemetry",
+            "correlationId": "proof-stale-1789808951",
+            "createdAt": "2026-09-19T09:09:17.5247943+00:00",
+            "updatedAt": "2026-09-19T09:10:18.352753+00:00",
+            "completedAt": "2026-09-19T09:10:18.3527537+00:00",
+            "protection": {
+              "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+              "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+              "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+              "recoveryDeadline": "2026-09-19T09:15:16.1724741+00:00",
+              "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+              "phase": "recovering",
+              "reasonCode": "rollback-requested",
+              "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+              "actor": "admin",
+              "permittedCompensation": "restore-previous-revision"
+            }
+          }
+        },
+        {
+          "at": "2026-09-19T09:10:18.388324Z",
+          "kind": "settled-protection",
+          "protection": {
+            "previousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+            "candidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
+            "firstExposureAt": "2026-09-19T09:09:22.1252207+00:00",
+            "observationDeadline": "2026-09-19T09:24:22.1252207+00:00",
+            "recoveryDeadline": "2026-09-19T09:15:16.1724741+00:00",
+            "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
+            "phase": "recovering",
+            "reasonCode": "rollback-requested",
+            "grantId": "grant-e8184007a514b6925a3343eddaa1a81a",
+            "actor": "admin",
+            "permittedCompensation": "restore-previous-revision"
+          }
+        },
+        {
+          "at": "2026-09-19T09:11:13.309848Z",
+          "kind": "replicas",
+          "label": "after recovery",
+          "replicas": [
+            {
+              "name": "devops191-app-19181",
+              "running": true,
+              "role": "active",
+              "revision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+              "workload": "prior-a"
+            }
+          ],
+          "proxyServes": "prior-a"
+        }
+      ],
+      "assertions": [
+        {
+          "assertion": "deploy operation created and submitted",
+          "held": true
+        },
+        {
+          "assertion": "window observes the candidate revision",
+          "held": true
+        },
+        {
+          "assertion": "window retains the prior revision",
+          "held": true
+        },
+        {
+          "assertion": "server sealed a recovery grant at exposure",
+          "held": true
+        },
+        {
+          "assertion": "grant permits only restore-previous-revision",
+          "held": true
+        },
+        {
+          "assertion": "grant is bound to the requesting actor",
+          "held": true
+        },
+        {
+          "assertion": "settled RolledBack does not read as unavailable (phase recovering)",
+          "held": true
+        },
+        {
+          "assertion": "proxy serves the prior revision after recovery",
+          "held": true
+        },
+        {
+          "assertion": "driver issued no rollback request",
+          "held": true
+        }
+      ],
+      "result": "pass",
+      "finishedAt": "2026-09-19T09:11:13.333905Z"
+    }
+  ]
+}

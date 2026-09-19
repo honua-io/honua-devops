@@ -61,12 +61,13 @@ def main():
         with open(part, encoding="utf-8") as handle:
             part_receipt = json.load(handle)
             cells.extend(part_receipt["cells"])
-            if "server" in part_receipt:
-                observed = part_receipt["server"]
-                if observed["revision"] != args.revision or not any(
-                        digest.endswith("@" + args.index) for digest in observed["repoDigests"]):
-                    raise SystemExit("Receipt candidate does not match the inspected server image.")
-                observed_servers.append(observed)
+            if "server" not in part_receipt:
+                raise SystemExit("Every run part requires inspected server image identity.")
+            observed = part_receipt["server"]
+            if observed["revision"] != args.revision or not any(
+                    digest.endswith("@" + args.index) for digest in observed["repoDigests"]):
+                raise SystemExit("Receipt candidate does not match the inspected server image.")
+            observed_servers.append(observed)
     by_name = {cell["name"]: cell for cell in cells}
 
     required = {name for name, _ in REQUIRED_RECOVERY_CLASSES}

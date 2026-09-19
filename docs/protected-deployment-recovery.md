@@ -228,7 +228,7 @@ The ordinary journey is change preview, scoped approval, Checking update /
 Updating / Confirming service health, then Update complete / Previous version
 restored / Needs attention. Git and telemetry details are optional diagnostics.
 
-## Live proof and remaining acceptance (2026-09-16, `nightly-d1fc139`)
+## Initial live proof (2026-09-16, `nightly-d1fc139`)
 
 Delivered so far:
 
@@ -285,9 +285,9 @@ What that proves:
 - **Failed recovery.** The retained prior replica was replaced out of band (a concurrent service change). The server settles `ManualInterventionRequired` and retains `unavailable` / `rollback-failed`, and the rejected candidate still serves. DevOps records `rejected` (no restoration claimed, candidate quarantined, **Needs attention**), and a stale `observing`-phase fence is refused (`409`).
 - **Compare-and-set.** A concurrent approved change for the same target is recorded first, so the older grant's recovery is refused (`recovery-intent-superseded`) before any request, and the server window is untouched. A concurrent server-side deploy fails to start its replica and leaves the first window's grant and declared recovery intact.
 
-### Still open
+### Findings from the initial run
 
-- **Cross-tenant compensation ([honua-server#4987](https://github.com/honua-io/honua-server/issues/4987), must-fix).** A platform administrator of another tenant is admitted against a grant sealed for tenant-a. This happens both unfenced and with a complete fence declaring its own actor and tenant, because declared identity is checked only against the caller and platform roles skip the sealed binding. DevOps never quotes another tenant's grant (it refuses a sealed tenant that differs from the approval), but the server fence does not bind other callers. Keep `HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=false` in the default profile until it is fixed.
+- **Cross-tenant compensation ([honua-server#4987](https://github.com/honua-io/honua-server/issues/4987)).** The initial image admitted another tenant's platform administrator against tenant-a's grant, both unfenced and with a complete fence declaring the foreign caller's identity. Server [#5004](https://github.com/honua-io/honua-server/pull/5004) removed the exemption and binds both the caller and declared identity to the sealed grant. The updated `platform-admin-cross-tenant` cell requires exact refusal, unchanged operation and replicas, redacted status reads, and successful recovery by the sealed principal. The original failing receipt is retained as before-fix evidence.
 - **Wrong-body gating on self-hosted targets ([honua-server#4988](https://github.com/honua-io/honua-server/issues/4988)).** The plan admits a golden-query or health URL on the replica, and the runtime SSRF guard then always refuses it, failing a correct candidate at the exposure deadline. The wrong-body class above was proven against a public HTTPS body for that reason.
 - **Stale window on settled `RolledBack` ([honua-server#4989](https://github.com/honua-io/honua-server/issues/4989)).** DevOps keys on the terminal status and is unaffected.
 - **Git metadata-branch writer** is honua-devops#57 (2026.2). Nothing here writes a restoration commit, and nothing claims one without a server-reported `metadataRelease.commitSha`.
