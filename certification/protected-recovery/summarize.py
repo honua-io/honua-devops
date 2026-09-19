@@ -14,6 +14,7 @@ import shutil
 
 REQUIRED_RECOVERY_CLASSES = [
     ("fenced-recovery", "Declared recovery: sealed grant, every fence refusal, satisfied fence, replay"),
+    ("platform-admin-cross-tenant", "Foreign platform administrators refused; grant identity redacted; sealed principal admitted"),
     ("tenant-bound-recovery", "Tenant-bound grant: undeclared binding, declared foreign tenant/actor, satisfied fence"),
     ("error-rate-regression", "Injected error-rate regression after activation"),
     ("latency-regression", "Injected p95 latency regression after activation"),
@@ -26,7 +27,6 @@ REQUIRED_RECOVERY_CLASSES = [
 ]
 FINDING_CELLS = [
     ("wrong-body-private-probe", "honua-server#4988"),
-    ("platform-admin-cross-tenant", "honua-server#4987"),
 ]
 
 

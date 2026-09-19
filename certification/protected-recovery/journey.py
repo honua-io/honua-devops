@@ -358,30 +358,46 @@ class Journey:
         self.restored(operation_id, "tenant-bound declared recovery settled RolledBack")
 
     def cell_platform_admin_cross_tenant(self):
-        # Records a server defect rather than asserting a pass. The declared actor/tenant terms are
-        # only cross-checked against the CALLER, and a platform administrator skips the sealed
-        # binding; PlatformDeployAuthority requires that role of every tenant-bound deploy caller.
-        # So another tenant's platform administrator is admitted against a grant sealed for tenant-a.
+        # #4987 must refuse both original exploits without changing the operation or traffic.
+        # Expectations come from the sealed-principal contract, not from observed responses.
         tenant_a = {"subject": "ops-a", "tenant": "tenant-a", "roles": ["admin", "platform_admin"]}
         tenant_b = {"subject": "ops-b", "tenant": "tenant-b", "roles": ["admin", "platform_admin"]}
-        defects = []
-        for label, body_for in (
-            ("complete fence quoting tenant-a's sealed grant, declaring tenant-b's own actor and tenant",
-             lambda op: self.fence(op, actor="ops-b", tenantId="tenant-b")),
-            ("unfenced rollback by tenant-b's platform administrator", lambda op: {"reason": "unfenced cross-tenant compensation"}),
+        same_actor_other_tenant = {**tenant_b, "subject": "ops-a"}
+        reader = {"subject": "ops-c", "tenant": "tenant-c", "roles": ["admin"]}
+        operation_id, op = self.activate("candidate-b", unique("cross-tenant"), principal=tenant_a)
+        self.check(op["protection"].get("actor") == "ops-a", "grant sealed to ops-a")
+        self.check(op["protection"].get("tenantId") == "tenant-a", "grant sealed to tenant-a")
+        before_replicas = self.replicas()
+        for label, body in (
+            ("complete fence quoting tenant-a's grant, declaring tenant-b's own identity",
+             self.fence(op, actor="ops-b", tenantId="tenant-b")),
+            ("unfenced rollback by tenant-b's platform administrator", {"reason": "unfenced cross-tenant compensation"}),
         ):
-            operation_id, op = self.activate("candidate-b", unique("cross-tenant"), principal=tenant_a)
-            self.check(op["protection"].get("tenantId") == "tenant-a", "grant sealed to tenant-a")
-            status, response = self.http("POST", f"/api/v1/admin/deploy/operations/{operation_id}/rollback", body_for(op), principal=tenant_b)
-            required = "403 (the grant is sealed to ops-a / tenant-a)"
-            self.note("defect-probe", label=label, required=required, observedStatus=status,
-                      observedCode=response.get("code") if isinstance(response, dict) else None)
-            if status == 200:
-                defects.append(label)
-                self.restored(operation_id, f"cross-tenant compensation settled: {label}")
-        self.cell["defectsObserved"] = defects
-        if defects:
-            raise Failure("server admitted cross-tenant compensation: " + "; ".join(defects))
+            self.refused(operation_id, body, 403, "recovery_fence_actor_mismatch", label, principal=tenant_b)
+        self.refused(operation_id, self.fence(op, tenantId="tenant-b"), 403, "recovery_fence_tenant_mismatch",
+                     "same actor name in another tenant", principal=same_actor_other_tenant)
+        self.check(self.replicas() == before_replicas, "refused callers did not replace or retire either replica")
+        self.check(self.served() == "candidate-b", "refused callers left the candidate serving")
+
+        # Unprivileged status readers retain useful operation truth without the sealed identity.
+        for path in (f"/api/v1/admin/deploy/operations/{operation_id}",
+                     "/api/v1/admin/deploy/operations"):
+            status, response = self.http("GET", path, principal=reader)
+            self.check(status == 200, "tenant-bound status reader can read operation status")
+            operations = response["items"] if "items" in response else [response]
+            matching = [item for item in operations if item.get("operationId") == operation_id]
+            self.check(len(matching) == 1, "status response includes the protected operation")
+            protection = matching[0].get("protection") or {}
+            for field in ("grantId", "actor", "tenantId"):
+                self.check(not protection.get(field), f"status reader cannot read sealed {field}")
+            self.check(protection.get("candidateRevision") == self.image("candidate-b"),
+                       "redacted status preserves the candidate revision")
+
+        current = self.operation(operation_id, record=True)
+        status, _ = self.http("POST", f"/api/v1/admin/deploy/operations/{operation_id}/rollback",
+                              self.fence(current), principal=tenant_a)
+        self.check(status == 200, "sealed principal can still recover after the foreign callers were refused")
+        self.restored(operation_id, "only the sealed principal restored the prior revision")
 
     def fault_cell(self, key, fault, label, expect_pending=False):
         operation_id, _ = self.activate("candidate-b", unique(key))
