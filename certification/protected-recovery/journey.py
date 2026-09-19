@@ -620,7 +620,14 @@ def main():
     with open(f"{args.work}/admin-key", encoding="utf-8") as handle:
         key = handle.read().strip()
     journey = Journey(args.base, key, args.work)
-    receipt = {"startedAt": now(), "cells": []}
+    image_ref = docker("inspect", "-f", "{{.Config.Image}}", f"{PREFIX}-server")
+    image_info = json.loads(docker("image", "inspect", image_ref))[0]
+    receipt = {"startedAt": now(), "server": {
+        "imageReference": image_ref,
+        "imageId": image_info["Id"],
+        "repoDigests": image_info.get("RepoDigests", []),
+        "revision": image_info["Config"]["Labels"]["org.opencontainers.image.revision"],
+    }, "cells": []}
     for name in args.cells.split(","):
         journey.cell = {"name": name, "startedAt": now(), "events": [], "assertions": []}
         try:
