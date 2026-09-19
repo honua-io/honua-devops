@@ -3,7 +3,7 @@
 
 Usage:
   summarize.py --image REF --revision SHA --index DIGEST --parts a.json,b.json \
-               --devops devops-live.jsonl --out-dir DIR --tag nightly-<sha7>
+               --devops devops-live.jsonl --devops-trx live.trx --out-dir DIR --tag nightly-<sha7>
 
 Writes DIR/receipt-<tag>.json (every cell with every request/response/transition),
 DIR/devops-live-<tag>.jsonl (copied transcript) and DIR/RECEIPT.md (derived summary).
@@ -11,9 +11,11 @@ DIR/devops-live-<tag>.jsonl (copied transcript) and DIR/RECEIPT.md (derived summ
 import argparse
 import json
 import shutil
+import xml.etree.ElementTree as ET
 
 REQUIRED_RECOVERY_CLASSES = [
     ("fenced-recovery", "Declared recovery: sealed grant, every fence refusal, satisfied fence, replay"),
+    ("platform-admin-cross-tenant", "Foreign platform administrators refused; grant identity redacted; sealed principal admitted"),
     ("tenant-bound-recovery", "Tenant-bound grant: undeclared binding, declared foreign tenant/actor, satisfied fence"),
     ("error-rate-regression", "Injected error-rate regression after activation"),
     ("latency-regression", "Injected p95 latency regression after activation"),
@@ -26,7 +28,6 @@ REQUIRED_RECOVERY_CLASSES = [
 ]
 FINDING_CELLS = [
     ("wrong-body-private-probe", "honua-server#4988"),
-    ("platform-admin-cross-tenant", "honua-server#4987"),
 ]
 
 
@@ -37,21 +38,52 @@ def main():
     parser.add_argument("--index", required=True)
     parser.add_argument("--parts", required=True)
     parser.add_argument("--devops", required=True)
+    parser.add_argument("--devops-trx", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--tag", required=True)
     args = parser.parse_args()
 
+    # Transcripts are written on disposal, including after failed assertions. Require the
+    # runner's independent verdict and all five executed scenarios before claiming a pass.
+    ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+    results = ET.parse(args.devops_trx).findall(".//t:UnitTestResult", ns)
+    with open(args.devops, encoding="utf-8") as handle:
+        scenarios = [json.loads(line) for line in handle if line.strip()]
+    expected = {scenario["scenario"] for scenario in scenarios}
+    actual = {result.attrib["testName"].rsplit(".", 1)[-1] for result in results}
+    if len(scenarios) != 5 or len(expected) != 5 or len(results) != 5 or actual != expected or any(
+            result.attrib.get("outcome") != "Passed" for result in results):
+        raise SystemExit("Receipt requires five distinct live transcripts and matching passed test results.")
+
     cells = []
+    observed_servers = []
     for part in args.parts.split(","):
         with open(part, encoding="utf-8") as handle:
-            cells.extend(json.load(handle)["cells"])
+            part_receipt = json.load(handle)
+            cells.extend(part_receipt["cells"])
+            if "server" not in part_receipt:
+                raise SystemExit("Every run part requires inspected server image identity.")
+            observed = part_receipt["server"]
+            if observed["revision"] != args.revision or not any(
+                    digest.endswith("@" + args.index) for digest in observed["repoDigests"]):
+                raise SystemExit("Receipt candidate does not match the inspected server image.")
+            observed_servers.append(observed)
     by_name = {cell["name"]: cell for cell in cells}
+
+    required = {name for name, _ in REQUIRED_RECOVERY_CLASSES}
+    if len(by_name) != len(cells) or not required.issubset(by_name) or any(
+            by_name[name]["result"] != "pass" or not by_name[name]["assertions"] or any(
+                not assertion["held"] for assertion in by_name[name]["assertions"]) for name in required):
+        raise SystemExit("Receipt requires every recovery class once, with passing assertions.")
+    if not observed_servers:
+        raise SystemExit("Receipt requires inspected server image identity.")
 
     receipt = {
         "schema": "honua-devops.protected-recovery-receipt.v1",
         "issue": "honua-io/honua-devops#191",
         "carries": "honua-io/honua-release#321 box 3",
         "candidate": {"image": args.image, "revision": args.revision, "indexDigest": args.index},
+        "observedServers": observed_servers,
         "target": {"targetId": "proof-selfhosted", "targetKind": "SelfHostedRolling", "backend": "honua-yarp-rolling"},
         "workloads": "distinct immutable local image ids (devops191-workload:prior-a / candidate-b / candidate-c)",
         "faultInjection": "Prometheus query stub (telemetry), out-of-band replica replacement, server container restart",
@@ -63,11 +95,7 @@ def main():
         json.dump(receipt, handle, indent=1)
     shutil.copyfile(args.devops, f"{args.out_dir}/devops-live-{args.tag}.jsonl")
 
-    scenarios = []
-    with open(args.devops, encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                scenarios.append(json.loads(line))
+    shutil.copyfile(args.devops_trx, f"{args.out_dir}/devops-live-{args.tag}.trx")
 
     lines = [
         f"# Protected recovery live receipt: `{args.tag}`",
@@ -135,7 +163,7 @@ def main():
                 record = event["payload"]
                 lines.append(f"| | | ledger | `{record['Kind']}` v{record['Version']} | desired `{(record['DesiredRevision'] or '(none)')[:19]}` | "
                              f"quarantined {len(record['RejectedRevisions'])}, operation `{record['OperationId']}` |")
-    lines += ["", "All five scenarios passed (`ProtectedRecoveryLiveJourneyTests`, run with `HONUA_DEVOPS_LIVE_PROTECTED_RECOVERY=true`).", ""]
+    lines += ["", f"All five scenarios passed (`ProtectedRecoveryLiveJourneyTests`, matching transcripts and `devops-live-{args.tag}.trx`).", ""]
 
     rollback = next((x for s in scenarios if s["scenario"].startswith("Live_DeclaredRecovery") for x in s["exchanges"]
                      if x["Method"] == "POST" and x["Path"].endswith("/rollback")), None)
