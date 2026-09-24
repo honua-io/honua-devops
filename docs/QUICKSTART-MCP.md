@@ -257,6 +257,7 @@ The explicitly non-evidentiary development mode `local-hmac-dev` instead uses
 `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS` (`issuer=base64-hmac-key`), with
 the key id derived from the decoded key bytes. Its verifier can sign receipts,
 so it cannot qualify the release approval boundary.
+A one-person shop puts their own provisioning key on that issuer allowlist so the same human signs the plan they reviewed.
 
 The base64 HMAC-SHA256 signature covers these newline-separated
 UTF-8 fields in order:
@@ -307,8 +308,9 @@ a scalar URL output, and an `unqualified` contract is refused outright.
 It returns `install-handoff-written`, never ready.
 `verify_install_handoff` then resolves the secret reference only into
 the child proxy environment, checks npm integrity, HTTPS readiness,
-authenticated candidate identity, MCP initialize, paged `tools/list`, the
-Admin/analysis/esri-gp roster, and `honua_admin_server_status`. Only complete
+authenticated candidate identity, MCP initialize, paged `tools/list` with
+`view` `full` (a bare list uses the 12-tool default view), the closed operator
+roster recorded in the handoff, and `honua_admin_server_status`. Only complete
 success writes `honua-install-verification.receipt.json` and the DevOps-owned
 `honua-devops-aws-ecs-provision-binding.json`; partial verification writes no
 ready binding. `secret://NAME`, AWS Secrets Manager references, and Azure Key

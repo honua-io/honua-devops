@@ -50,6 +50,29 @@ internal sealed partial class HonuaOperationsToolkit
         "tags"
     };
 
+    // Closed operator roster. Not the unshipped analysis profile or esri-gp
+    // tools, and not the opt-in 385-tool admin catalog. tools/list must use
+    // view=full; the server default view is only the 12-tool meta surface.
+    private static readonly string[] OperatorHandoffRoster =
+    [
+        "honua_admin_server_status",
+        "honua_admin_api_key_list",
+        "honua_admin_api_key_effective_permissions",
+        "honua_admin_connections_create",
+        "honua_admin_connections_test",
+        "honua_admin_import_upload_url",
+        "honua_admin_layer_publish",
+        "honua_admin_services_access_policy_set",
+        "honua_ingest_dataset",
+        "honua_publish_service",
+        "honua_studio_get_version",
+        "honua_validate_plan",
+        "honua_execute_plan",
+        "honua_list_layers",
+        "honua_describe_layer",
+        "honua_query_features"
+    ];
+
     private static readonly HashSet<string> SecretVariableNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "honua_admin_password",
@@ -624,44 +647,19 @@ internal sealed partial class HonuaOperationsToolkit
                     method = "MCP tools/list",
                     failClosed = true
                 },
+                // The server has no Mcp:Profiles switch, so those environment lines
+                // are not part of this contract. view=full is a tools/list parameter,
+                // not server configuration: one paged call sees the configure members
+                // and the analyze members. A bare tools/list would not.
                 required = new object[]
                 {
                     new
                     {
-                        name = "admin",
-                        activation = "default operation family",
+                        name = "operator",
+                        activation = $"MCP tools/list view={SystemInstallHandoffVerifier.FullCatalogView}",
                         serverConfiguration = Array.Empty<string>(),
-                        requiredToolPrefixes = new[] { "honua_admin_" },
-                        requiredTools = new[] { "honua_admin_server_status" }
-                    },
-                    new
-                    {
-                        name = "analysis",
-                        activation = "Mcp__Profiles__1=analysis",
-                        serverConfiguration = new[] { "Mcp__Profiles__1=analysis" },
                         requiredToolPrefixes = Array.Empty<string>(),
-                        requiredTools = new[]
-                        {
-                            "honua_buffer_features",
-                            "honua_overlay_features",
-                            "honua_summarize_statistics",
-                            "honua_reproject_features",
-                            "honua_join_features",
-                            "honua_export_dataset"
-                        }
-                    },
-                    new
-                    {
-                        name = "esri-gp",
-                        activation = "Mcp__Profiles__2=esri-gp",
-                        serverConfiguration = new[] { "Mcp__Profiles__2=esri-gp" },
-                        requiredToolPrefixes = Array.Empty<string>(),
-                        requiredTools = new[]
-                        {
-                            "honua_esri_gp_list_tasks",
-                            "honua_esri_gp_describe_task",
-                            "honua_esri_gp_execute_task"
-                        }
+                        requiredTools = OperatorHandoffRoster
                     }
                 }
             }
@@ -724,8 +722,10 @@ internal sealed partial class HonuaOperationsToolkit
                 + $"HONUA_MCP_REMOTE_URL={mcpUri.AbsoluteUri}" + Environment.NewLine
                 + $"# Resolve HONUA_ADMIN_KEY at launch from: {normalizedSecretRef}" + Environment.NewLine
                 + "# HONUA_ADMIN_KEY is intentionally absent; never paste it into this file." + Environment.NewLine
-                + "# Required server capabilities: admin (default-on), analysis (Mcp__Profiles__1=analysis), esri-gp (Mcp__Profiles__2=esri-gp)." + Environment.NewLine
-                + "# Fail closed unless MCP tools/list exposes the required tools recorded in honua-mcp-proxy.handoff.json." + Environment.NewLine,
+                + $"# Required server capabilities: the closed operator MCP roster, probed with tools/list view={SystemInstallHandoffVerifier.FullCatalogView}." + Environment.NewLine
+                + "# A bare tools/list uses the server default view \"default\" (12 tools) and would miss this roster." + Environment.NewLine
+                + "# The server has no Mcp:Profiles switch, so no profile environment lines are required." + Environment.NewLine
+                + "# Fail closed unless that tools/list exposes the required tools recorded in honua-mcp-proxy.handoff.json." + Environment.NewLine,
             cancellationToken);
         steps.Add(new OperationBackendStep(
             "write-install-handoff",
@@ -750,14 +750,14 @@ internal sealed partial class HonuaOperationsToolkit
                 $"Proxy handoff: {configPath}",
                 $"Proxy artifact: {proxyPackage} ({proxyIntegrity}).",
                 $"Root provisioning operation: {rootProvisioningOperationId}.",
-                "Required AI capability families: admin, analysis, and esri-gp.",
+                $"Required MCP roster: the closed operator tools, verified with tools/list view={SystemInstallHandoffVerifier.FullCatalogView}.",
                 "No admin-key material was read, returned, or written."
             ],
             Actions:
             [
                 "Resolve the secret reference into HONUA_ADMIN_KEY only in the client process environment.",
-                "Register honua-mcp-proxy with the command/args/env contract and run a readiness plus MCP tools/list probe.",
-                "Fail the installation check if the admin family, analysis tools, or Esri GP tools in capabilityContract are absent.",
+                $"Register honua-mcp-proxy with the command/args/env contract and run a readiness plus MCP tools/list view={SystemInstallHandoffVerifier.FullCatalogView} probe.",
+                "Fail the installation check if any closed operator roster tool in capabilityContract is absent.",
                 "Keep the secret-store access policy scoped to the operator identity and this one secret."
             ],
             ValidationChecks:
@@ -765,7 +765,7 @@ internal sealed partial class HonuaOperationsToolkit
                 "base URL is HTTPS or loopback HTTP",
                 "admin key input is a reference rather than material",
                 "proxy configuration contains HONUA_MCP_REMOTE_URL",
-                "proxy configuration names the required admin, analysis, and esri-gp tool contract",
+                $"proxy configuration names the closed operator roster and tools/list view={SystemInstallHandoffVerifier.FullCatalogView}",
                 "handoff files contain no HONUA_ADMIN_KEY value"
             ],
             Risks:

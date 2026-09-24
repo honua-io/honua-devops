@@ -37,6 +37,26 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
 {
     internal static SystemInstallHandoffVerifier Instance { get; } = new();
 
+    /// <summary>
+    /// Reserved tools/list view for the authenticated complete catalog.
+    /// A bare tools/list uses the server default view and hides this roster.
+    /// </summary>
+    internal const string FullCatalogView = "full";
+
+    internal static IReadOnlyDictionary<string, string> ToolsListParams(string? cursor)
+    {
+        Dictionary<string, string> parameters = new(StringComparer.Ordinal)
+        {
+            ["view"] = FullCatalogView
+        };
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            parameters["cursor"] = cursor;
+        }
+
+        return parameters;
+    }
+
     public async Task<InstallHandoffVerificationResult> VerifyAsync(
         InstallHandoffVerificationRequest request,
         CancellationToken cancellationToken = default)
@@ -130,10 +150,18 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             HashSet<string> tools = new(StringComparer.Ordinal);
             string? cursor = null;
             int requestId = 2;
+            // view=full is one parameter on this existing paged loop. It is the
+            // authenticated complete catalog, so it sees both the configure members
+            // (admin, ingest, publish, studio get-version, layers) and the analyze
+            // members (validate/execute plan). A bare tools/list applies
+            // Mcp:WorkflowViews:DefaultView ("default", 12 tools) and the roster
+            // would look missing. configure plus analyze would be a second loop,
+            // and neither view alone contains every required name. The admin key
+            // is already on the proxy, which view=full requires.
             do
             {
-                JsonElement response = await RpcAsync(proxy, requestId++, "tools/list",
-                    cursor is null ? new { } : new { cursor }, cancellationToken);
+                JsonElement response = await RpcAsync(
+                    proxy, requestId++, "tools/list", ToolsListParams(cursor), cancellationToken);
                 if (!response.TryGetProperty("result", out JsonElement result)
                     || !result.TryGetProperty("tools", out JsonElement roster)
                     || roster.ValueKind != JsonValueKind.Array)
@@ -154,7 +182,7 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
 
             string[] missing = request.RequiredTools.Where(tool => !tools.Contains(tool)).Order().ToArray();
             steps.Add(new OperationBackendStep(
-                "verify-mcp-roster", "mcp://tools/list", missing.Length == 0,
+                "verify-mcp-roster", $"mcp://tools/list?view={FullCatalogView}", missing.Length == 0,
                 missing.Length == 0 ? $"all {request.RequiredTools.Count} required tools present" : $"missing: {string.Join(", ", missing)}",
                 $"observed={tools.Count}", false));
             if (missing.Length > 0)
@@ -178,7 +206,7 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             return new InstallHandoffVerificationResult(
                 true,
                 "install-handoff-verified",
-                "Health, authentication, MCP initialization, paged roster, and Admin status call succeeded.",
+                $"Health, authentication, MCP initialization, paged tools/list view={FullCatalogView}, and Admin status call succeeded.",
                 ComputeSha256(Encoding.UTF8.GetBytes(identityBytes)),
                 tools.Order().ToArray(),
                 steps);

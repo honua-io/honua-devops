@@ -5,6 +5,41 @@ namespace Honua.DevOps.Agent.Tests;
 
 public sealed partial class TerraformProvisioningTests
 {
+    private static readonly string[] OperatorHandoffRoster =
+    [
+        "honua_admin_server_status",
+        "honua_admin_api_key_list",
+        "honua_admin_api_key_effective_permissions",
+        "honua_admin_connections_create",
+        "honua_admin_connections_test",
+        "honua_admin_import_upload_url",
+        "honua_admin_layer_publish",
+        "honua_admin_services_access_policy_set",
+        "honua_ingest_dataset",
+        "honua_publish_service",
+        "honua_studio_get_version",
+        "honua_validate_plan",
+        "honua_execute_plan",
+        "honua_list_layers",
+        "honua_describe_layer",
+        "honua_query_features"
+    ];
+
+    [Fact]
+    public void ToolsList_RequestsTheFullCatalogView()
+    {
+        Assert.Equal("full", SystemInstallHandoffVerifier.FullCatalogView);
+        string first = JsonSerializer.Serialize(SystemInstallHandoffVerifier.ToolsListParams(null));
+        string next = JsonSerializer.Serialize(SystemInstallHandoffVerifier.ToolsListParams("cursor-2"));
+        using JsonDocument firstPage = JsonDocument.Parse(first);
+        using JsonDocument nextPage = JsonDocument.Parse(next);
+
+        Assert.Equal("full", firstPage.RootElement.GetProperty("view").GetString());
+        Assert.False(firstPage.RootElement.TryGetProperty("cursor", out _));
+        Assert.Equal("full", nextPage.RootElement.GetProperty("view").GetString());
+        Assert.Equal("cursor-2", nextPage.RootElement.GetProperty("cursor").GetString());
+    }
+
     [Fact]
     public async Task Plan_RoutesThroughTheExactPlanWrapperAndNeverStartsApply()
     {
@@ -402,6 +437,28 @@ public sealed partial class TerraformProvisioningTests
             handoffRoot.GetProperty("secretRefs").GetProperty("HONUA_ADMIN_KEY").GetString());
         Assert.Equal("qualified", handoffRoot.GetProperty("operatorContract").GetProperty("status").GetString());
 
+        JsonElement family = Assert.Single(handoffRoot.GetProperty("capabilityContract").GetProperty("required").EnumerateArray());
+        Assert.Equal("operator", family.GetProperty("name").GetString());
+        Assert.Equal(
+            $"MCP tools/list view={SystemInstallHandoffVerifier.FullCatalogView}",
+            family.GetProperty("activation").GetString());
+        Assert.Empty(family.GetProperty("serverConfiguration").EnumerateArray());
+        Assert.Empty(family.GetProperty("requiredToolPrefixes").EnumerateArray());
+        Assert.Equal(
+            OperatorHandoffRoster,
+            family.GetProperty("requiredTools").EnumerateArray().Select(value => value.GetString()).ToArray());
+        Assert.DoesNotContain("Mcp__Profiles__1=analysis", proxyConfig, StringComparison.Ordinal);
+        Assert.DoesNotContain("Mcp__Profiles__2=esri-gp", proxyConfig, StringComparison.Ordinal);
+        Assert.DoesNotContain("honua_buffer_features", proxyConfig, StringComparison.Ordinal);
+        Assert.DoesNotContain("honua_esri_gp_", proxyConfig, StringComparison.Ordinal);
+        string envExample = await File.ReadAllTextAsync(Path.Combine(outputDirectory, "honua.env.example"));
+        Assert.DoesNotContain("Mcp__Profiles__", envExample, StringComparison.Ordinal);
+        Assert.Contains($"view={SystemInstallHandoffVerifier.FullCatalogView}", envExample, StringComparison.Ordinal);
+        Assert.Contains(
+            response.Findings,
+            finding => finding.Contains($"view={SystemInstallHandoffVerifier.FullCatalogView}", StringComparison.Ordinal));
+        Assert.DoesNotContain(response.Findings, finding => finding.Contains("esri-gp", StringComparison.Ordinal));
+
         // The old `honua_url` scrape is gone: the contract outputs are what is read.
         Assert.Contains(runner.Calls, call => call.Operation == "output");
         Assert.Contains(
@@ -488,6 +545,7 @@ public sealed partial class TerraformProvisioningTests
             Path.Combine(handoffDirectory, "honua-mcp-proxy.handoff.json"), false);
 
         Assert.Equal("install-handoff-verified", verified.Status);
+        Assert.Equal(OperatorHandoffRoster, verifier.Request!.RequiredTools);
         string bindingJson = await File.ReadAllTextAsync(
             Path.Combine(handoffDirectory, "honua-devops-aws-ecs-provision-binding.json"));
 
