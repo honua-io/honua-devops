@@ -2,9 +2,45 @@
 
 Issue #191 supports the **2026.1 safe rollout promise**: a scoped approved change
 must recover deterministically and subsequent reconciliation must preserve the
-restored service. That complete promise is **not qualified** by the retained
-DevOps recovery executor. Keep `HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=false` in
-the default profile. Turning it on alone does not provide protection.
+restored service. Qualification belongs to an installed target and server revision, not merely to
+the retained DevOps executor. The unconfigured default keeps
+`HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=false`; a qualified target enables it
+with the durable ledger and server policy below. Turning it on alone does not
+provide protection.
+
+## Qualified target configuration
+
+Use a server containing honua-server#5004: the sealed actor and tenant bind every
+caller, including platform administrators. Qualify the installed backend with
+`certification/protected-recovery/` before enabling this profile. The proof target
+is `SelfHostedRolling` / `honua-yarp-rolling`; it does not qualify another backend.
+
+Configure DevOps for that target with:
+
+```dotenv
+HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=true
+HONUA_DEVOPS_DEPLOY_TARGET_ID=<qualified-target-id>
+HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///var/lib/honua-devops/audit.jsonl
+HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=false
+HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION=false
+```
+
+Keep the normal deployment approval policy. Protected recovery neither widens
+that policy nor grants the model a recovery tool. The server must explicitly
+admit `control-plane.deploy.rollback` in its operation policy so the request
+reaches the sealed recovery fence. The fixture's isolated server config uses:
+
+```dotenv
+Operations__Policy__Rules__0__OperationId=control-plane.deploy.rollback
+Operations__Policy__Rules__0__Decision=Allow
+Operations__Policy__Rules__0__Reason=Admit declared recovery to the sealed-principal fence.
+```
+
+Merge that rule into the installed server's policy at an unused rule index;
+do not overwrite another rule. Admission still requires the server's ordinary
+authentication, deployment authority and matching recovery grant. Deterministic
+recovery remains server-owned; no new model response or CLI invocation is needed.
+The persisted audit and desired-intent files must survive DevOps restarts.
 
 ## What the retained executor verifies
 
@@ -192,7 +228,7 @@ The ordinary journey is change preview, scoped approval, Checking update /
 Updating / Confirming service health, then Update complete / Previous version
 restored / Needs attention. Git and telemetry details are optional diagnostics.
 
-## Live proof and remaining acceptance (2026-09-16, `nightly-d1fc139`)
+## Initial live proof (2026-09-16, `nightly-d1fc139`)
 
 Delivered so far:
 
@@ -201,7 +237,7 @@ Delivered so far:
 - [#194](https://github.com/honua-io/honua-devops/pull/194): durable compare-and-set intent ledger.
 - [#195](https://github.com/honua-io/honua-devops/pull/195): server-owned recovery folded into intent, and the rollout journey.
 - [#196](https://github.com/honua-io/honua-devops/pull/196): recovery the server could not prove.
-- This change: the server-enforced recovery fence, plus the live journey below.
+- [#197](https://github.com/honua-io/honua-devops/pull/197): the server-enforced recovery fence and initial live journey below.
 
 ### Live journey
 
@@ -249,13 +285,50 @@ What that proves:
 - **Failed recovery.** The retained prior replica was replaced out of band (a concurrent service change). The server settles `ManualInterventionRequired` and retains `unavailable` / `rollback-failed`, and the rejected candidate still serves. DevOps records `rejected` (no restoration claimed, candidate quarantined, **Needs attention**), and a stale `observing`-phase fence is refused (`409`).
 - **Compare-and-set.** A concurrent approved change for the same target is recorded first, so the older grant's recovery is refused (`recovery-intent-superseded`) before any request, and the server window is untouched. A concurrent server-side deploy fails to start its replica and leaves the first window's grant and declared recovery intact.
 
-### Still open
+### Findings from the initial run
 
-- **Cross-tenant compensation ([honua-server#4987](https://github.com/honua-io/honua-server/issues/4987), must-fix).** A platform administrator of another tenant is admitted against a grant sealed for tenant-a. This happens both unfenced and with a complete fence declaring its own actor and tenant, because declared identity is checked only against the caller and platform roles skip the sealed binding. DevOps never quotes another tenant's grant (it refuses a sealed tenant that differs from the approval), but the server fence does not bind other callers. Keep `HONUA_DEVOPS_PROTECTED_RECOVERY_ENABLED=false` in the default profile until it is fixed.
+- **Cross-tenant compensation ([honua-server#4987](https://github.com/honua-io/honua-server/issues/4987)).** The initial image admitted another tenant's platform administrator against tenant-a's grant, both unfenced and with a complete fence declaring the foreign caller's identity. Server [#5004](https://github.com/honua-io/honua-server/pull/5004) removed the exemption and binds both the caller and declared identity to the sealed grant. The updated `platform-admin-cross-tenant` cell requires exact refusal, unchanged operation and replicas, redacted status reads, and successful recovery by the sealed principal. The original failing receipt is retained as before-fix evidence.
 - **Wrong-body gating on self-hosted targets ([honua-server#4988](https://github.com/honua-io/honua-server/issues/4988)).** The plan admits a golden-query or health URL on the replica, and the runtime SSRF guard then always refuses it, failing a correct candidate at the exposure deadline. The wrong-body class above was proven against a public HTTPS body for that reason.
 - **Stale window on settled `RolledBack` ([honua-server#4989](https://github.com/honua-io/honua-server/issues/4989)).** DevOps keys on the terminal status and is unaffected.
 - **Git metadata-branch writer** is honua-devops#57 (2026.2). Nothing here writes a restoration commit, and nothing claims one without a server-reported `metadataRelease.commitSha`.
 - **The trigger stays server-owned.** `RecoveryExecutor` has no model-facing or CLI entry point. The deterministic recovery is the server reconciler's, and the executor is the fenced, retained path for a declared recovery.
+
+## Qualification after the sealed-principal fix
+
+The follow-up runs against the newest successfully imaged trunk nightly per
+operator ruling A and the handoff in server#5004:
+
+- Revision `80e23bedfe8ff7b43362c8d8ea22bfae1756df7d`, containing server#5004.
+- Image `ghcr.io/honua-io/honua-server:nightly-80e23be`, pinned for execution to
+  `sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176`.
+- Successful nightly build: [35333311726](https://github.com/honua-io/honua-server/actions/runs/35333311726).
+- Target: the isolated `SelfHostedRolling` / `honua-yarp-rolling` fixture,
+  with PostGIS, Redis, distinct immutable workload images and real proxy traffic.
+
+The original two cross-tenant exploits must now return 403
+`recovery_fence_actor_mismatch` without changing the operation, either replica,
+or candidate traffic. A same-name actor in another tenant must return
+`recovery_fence_tenant_mismatch`. List and detail readers without deployment
+authority must receive no sealed grant identity. The sealed principal must still
+restore `prior-a` through the proxy after those refusals.
+
+The [committed receipt](../certification/protected-recovery/RECEIPT.md) records
+**11/11 server cells and 5/5 live DevOps scenarios passed**, with zero skipped
+live tests. The original d1fc139 receipt retains the before-fix cross-tenant
+failures; the new receipt shows the required refusals and legitimate recovery.
+
+The receipt gate requires all eleven server recovery classes and matching passing
+results for the five live DevOps scenarios. It inspects the actual image identity
+for every server run part and refuses missing, duplicate or failed classes and
+incomplete live test transcripts. Transcripts alone are insufficient because
+scenario disposal writes them even when an assertion fails. Fast PR checks
+challenge the receipt gate with deliberately corrupted copies of the installed
+fixture.
+
+This qualification is bounded to the named nightly and backend. It is not a
+receipt for another backend or the future exact release candidate; final
+candidate requalification remains with the release program. Git metadata-branch
+writing remains #57 (2026.2), and a recovery trigger remains server-owned.
 
 ## Regression evidence
 
