@@ -215,7 +215,7 @@ internal static class CapabilityToolset
                 (string handoffConfigPath, bool overwrite)
                     => toolkit.VerifyInstallHandoffAsync(handoffConfigPath, overwrite),
                 "verify_install_handoff",
-                "Run the exact emitted pinned proxy command, resolve the admin secret reference only into its child environment, verify HTTPS health, Admin authentication, MCP initialize, the paged required Admin/analysis/esri-gp roster, and a harmless Admin status call. On complete success only, writes a content-addressed verification receipt and DevOps-produced aws-ecs provision binding joined to the stable provisioningOperationId."),
+                "Run the exact emitted pinned proxy command, resolve the admin secret reference only into its child environment, verify HTTPS health, Admin authentication, MCP initialize, a paged tools/list with view=full against the closed operator roster, and a harmless Admin status call. A bare tools/list uses the server default view and would miss that roster. On complete success only, writes a content-addressed verification receipt and DevOps-produced aws-ecs provision binding joined to the stable provisioningOperationId."),
             CreateTool(
                 (string releasePackageJson, string mode, string correlationId)
                     => releaseExplainer.ExplainReleasePackageAsync(releasePackageJson, mode, correlationId),
