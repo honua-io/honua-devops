@@ -1,44 +1,64 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<TestRun id="332dc206-0cc0-456d-809a-a82ce6a5a893" name="@HonuaAI 2026-09-18 23:24:33" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
-  <Times creation="2026-09-18T23:24:33.7617423-10:00" queuing="2026-09-18T23:24:33.7617426-10:00" start="2026-09-18T23:24:11.9746126-10:00" finish="2026-09-18T23:29:37.2956911-10:00" />
-  <TestSettings name="default" id="eb0e467e-f913-4aba-89a4-0464cb33873d">
-    <Deployment runDeploymentRoot="_HonuaAI_2026-09-18_23_24_33" />
+<TestRun id="aba83f53-6d94-419f-845f-9ff484853cd5" name="@HonuaAI 2026-09-26 12:57:46" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-09-26T12:57:46.1209736-10:00" queuing="2026-09-26T12:57:46.1209739-10:00" start="2026-09-26T12:57:12.8721531-10:00" finish="2026-09-26T13:03:41.1584354-10:00" />
+  <TestSettings name="default" id="c4b038e2-f984-481f-bfb6-8140a9c6ee41">
+    <Deployment runDeploymentRoot="_HonuaAI_2026-09-26_12_57_46" />
   </TestSettings>
   <Results>
-    <UnitTestResult executionId="2f9c76be-acc6-456e-b79e-c9be612bc0e5" testId="6f39cf51-38c7-64ae-4413-1eee8d9fffbb" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_NewerApprovedIntent_RefusesOlderRecoveryWithoutRequest" computerName="HonuaAI" duration="00:01:12.2582374" startTime="2026-09-18T23:24:33.6780791-10:00" endTime="2026-09-18T23:25:45.7921359-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2f9c76be-acc6-456e-b79e-c9be612bc0e5" />
-    <UnitTestResult executionId="d9b4236b-46c2-43a7-8da3-fb94a195b357" testId="a5c25cbb-4e1f-ac64-2bc0-4ee6e74e8702" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_ServerRecoveryOnInjectedRegression_IsFoldedIntoDesiredIntent" computerName="HonuaAI" duration="00:00:25.0822319" startTime="2026-09-18T23:25:45.7962647-10:00" endTime="2026-09-18T23:26:10.8307134-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d9b4236b-46c2-43a7-8da3-fb94a195b357" />
-    <UnitTestResult executionId="15e9a1c7-b314-43f8-9a38-2f8db1139437" testId="4a49c734-ea42-02a5-261d-cab8be805fc7" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_DeclaredRecovery_IsFencedRecordedAndHoldsOnNextReconcile" computerName="HonuaAI" duration="00:02:18.3245546" startTime="2026-09-18T23:26:10.8329027-10:00" endTime="2026-09-18T23:28:28.9901647-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="15e9a1c7-b314-43f8-9a38-2f8db1139437" />
-    <UnitTestResult executionId="bc3d35fe-2f44-4b7d-bc53-ad3beb577125" testId="fb291d93-9ee4-b452-fd5c-8feaff10390c" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_FailedServerRecovery_QuarantinesWithoutClaimingRestoration" computerName="HonuaAI" duration="00:00:19.2295312" startTime="2026-09-18T23:24:14.4672227-10:00" endTime="2026-09-18T23:24:33.6078324-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bc3d35fe-2f44-4b7d-bc53-ad3beb577125" />
-    <UnitTestResult executionId="a4a1d302-7437-4bc0-a920-239b7e02c7db" testId="fc136dea-1f40-8d96-b2f3-89cb8c53b979" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_GenericRollbackTool_StaysGated" computerName="HonuaAI" duration="00:01:08.1497695" startTime="2026-09-18T23:28:28.9911445-10:00" endTime="2026-09-18T23:29:37.0580885-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a4a1d302-7437-4bc0-a920-239b7e02c7db" />
+    <UnitTestResult executionId="e0c3c041-7cf7-4d98-acb4-75660e6f1ed3" testId="4a49c734-ea42-02a5-261d-cab8be805fc7" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_DeclaredRecovery_IsFencedRecordedAndHoldsOnNextReconcile" computerName="HonuaAI" duration="00:02:27.6464307" startTime="2026-09-26T12:59:53.6867140-10:00" endTime="2026-09-26T13:02:21.1943217-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e0c3c041-7cf7-4d98-acb4-75660e6f1ed3">
+      <Output>
+        <StdOut>protected-recovery-server revision=80e23bedfe8ff7b43362c8d8ea22bfae1756df7d index=sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="c974c8fb-124a-43a7-820c-ad26b88ca201" testId="fc136dea-1f40-8d96-b2f3-89cb8c53b979" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_GenericRollbackTool_StaysGated" computerName="HonuaAI" duration="00:01:17.2679227" startTime="2026-09-26T13:02:21.1960114-10:00" endTime="2026-09-26T13:03:38.4391778-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c974c8fb-124a-43a7-820c-ad26b88ca201">
+      <Output>
+        <StdOut>protected-recovery-server revision=80e23bedfe8ff7b43362c8d8ea22bfae1756df7d index=sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="d3323db5-de20-4374-ab9e-4fdb3769182f" testId="fb291d93-9ee4-b452-fd5c-8feaff10390c" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_FailedServerRecovery_QuarantinesWithoutClaimingRestoration" computerName="HonuaAI" duration="00:00:26.9833123" startTime="2026-09-26T12:57:18.8566000-10:00" endTime="2026-09-26T12:57:45.8109717-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d3323db5-de20-4374-ab9e-4fdb3769182f">
+      <Output>
+        <StdOut>protected-recovery-server revision=80e23bedfe8ff7b43362c8d8ea22bfae1756df7d index=sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5b5d6db6-c3e6-4ed4-abde-6504444a441c" testId="a5c25cbb-4e1f-ac64-2bc0-4ee6e74e8702" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_ServerRecoveryOnInjectedRegression_IsFoldedIntoDesiredIntent" computerName="HonuaAI" duration="00:00:42.8535984" startTime="2026-09-26T12:59:10.9510016-10:00" endTime="2026-09-26T12:59:53.6850205-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5b5d6db6-c3e6-4ed4-abde-6504444a441c">
+      <Output>
+        <StdOut>protected-recovery-server revision=80e23bedfe8ff7b43362c8d8ea22bfae1756df7d index=sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a0deba95-609c-4e23-b3b2-8f16152c31ab" testId="6f39cf51-38c7-64ae-4413-1eee8d9fffbb" testName="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_NewerApprovedIntent_RefusesOlderRecoveryWithoutRequest" computerName="HonuaAI" duration="00:01:25.1155764" startTime="2026-09-26T12:57:45.9553123-10:00" endTime="2026-09-26T12:59:10.9072784-10:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a0deba95-609c-4e23-b3b2-8f16152c31ab">
+      <Output>
+        <StdOut>protected-recovery-server revision=80e23bedfe8ff7b43362c8d8ea22bfae1756df7d index=sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176</StdOut>
+      </Output>
+    </UnitTestResult>
   </Results>
   <TestDefinitions>
     <UnitTest name="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_ServerRecoveryOnInjectedRegression_IsFoldedIntoDesiredIntent" storage="/home/mike/honua-io/honua-devops/tests/honua.devops.agent.tests/bin/debug/net10.0/honua.devops.agent.tests.dll" id="a5c25cbb-4e1f-ac64-2bc0-4ee6e74e8702">
-      <Execution id="d9b4236b-46c2-43a7-8da3-fb94a195b357" />
+      <Execution id="5b5d6db6-c3e6-4ed4-abde-6504444a441c" />
       <TestMethod codeBase="/home/mike/honua-io/honua-devops/tests/Honua.DevOps.Agent.Tests/bin/Debug/net10.0/Honua.DevOps.Agent.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests" name="Live_ServerRecoveryOnInjectedRegression_IsFoldedIntoDesiredIntent" />
     </UnitTest>
     <UnitTest name="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_DeclaredRecovery_IsFencedRecordedAndHoldsOnNextReconcile" storage="/home/mike/honua-io/honua-devops/tests/honua.devops.agent.tests/bin/debug/net10.0/honua.devops.agent.tests.dll" id="4a49c734-ea42-02a5-261d-cab8be805fc7">
-      <Execution id="15e9a1c7-b314-43f8-9a38-2f8db1139437" />
+      <Execution id="e0c3c041-7cf7-4d98-acb4-75660e6f1ed3" />
       <TestMethod codeBase="/home/mike/honua-io/honua-devops/tests/Honua.DevOps.Agent.Tests/bin/Debug/net10.0/Honua.DevOps.Agent.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests" name="Live_DeclaredRecovery_IsFencedRecordedAndHoldsOnNextReconcile" />
     </UnitTest>
     <UnitTest name="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_GenericRollbackTool_StaysGated" storage="/home/mike/honua-io/honua-devops/tests/honua.devops.agent.tests/bin/debug/net10.0/honua.devops.agent.tests.dll" id="fc136dea-1f40-8d96-b2f3-89cb8c53b979">
-      <Execution id="a4a1d302-7437-4bc0-a920-239b7e02c7db" />
+      <Execution id="c974c8fb-124a-43a7-820c-ad26b88ca201" />
       <TestMethod codeBase="/home/mike/honua-io/honua-devops/tests/Honua.DevOps.Agent.Tests/bin/Debug/net10.0/Honua.DevOps.Agent.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests" name="Live_GenericRollbackTool_StaysGated" />
     </UnitTest>
     <UnitTest name="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_NewerApprovedIntent_RefusesOlderRecoveryWithoutRequest" storage="/home/mike/honua-io/honua-devops/tests/honua.devops.agent.tests/bin/debug/net10.0/honua.devops.agent.tests.dll" id="6f39cf51-38c7-64ae-4413-1eee8d9fffbb">
-      <Execution id="2f9c76be-acc6-456e-b79e-c9be612bc0e5" />
+      <Execution id="a0deba95-609c-4e23-b3b2-8f16152c31ab" />
       <TestMethod codeBase="/home/mike/honua-io/honua-devops/tests/Honua.DevOps.Agent.Tests/bin/Debug/net10.0/Honua.DevOps.Agent.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests" name="Live_NewerApprovedIntent_RefusesOlderRecoveryWithoutRequest" />
     </UnitTest>
     <UnitTest name="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests.Live_FailedServerRecovery_QuarantinesWithoutClaimingRestoration" storage="/home/mike/honua-io/honua-devops/tests/honua.devops.agent.tests/bin/debug/net10.0/honua.devops.agent.tests.dll" id="fb291d93-9ee4-b452-fd5c-8feaff10390c">
-      <Execution id="bc3d35fe-2f44-4b7d-bc53-ad3beb577125" />
+      <Execution id="d3323db5-de20-4374-ab9e-4fdb3769182f" />
       <TestMethod codeBase="/home/mike/honua-io/honua-devops/tests/Honua.DevOps.Agent.Tests/bin/Debug/net10.0/Honua.DevOps.Agent.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Honua.DevOps.Agent.Tests.ProtectedRecoveryLiveJourneyTests" name="Live_FailedServerRecovery_QuarantinesWithoutClaimingRestoration" />
     </UnitTest>
   </TestDefinitions>
   <TestEntries>
-    <TestEntry testId="6f39cf51-38c7-64ae-4413-1eee8d9fffbb" executionId="2f9c76be-acc6-456e-b79e-c9be612bc0e5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
-    <TestEntry testId="a5c25cbb-4e1f-ac64-2bc0-4ee6e74e8702" executionId="d9b4236b-46c2-43a7-8da3-fb94a195b357" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
-    <TestEntry testId="4a49c734-ea42-02a5-261d-cab8be805fc7" executionId="15e9a1c7-b314-43f8-9a38-2f8db1139437" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
-    <TestEntry testId="fb291d93-9ee4-b452-fd5c-8feaff10390c" executionId="bc3d35fe-2f44-4b7d-bc53-ad3beb577125" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
-    <TestEntry testId="fc136dea-1f40-8d96-b2f3-89cb8c53b979" executionId="a4a1d302-7437-4bc0-a920-239b7e02c7db" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4a49c734-ea42-02a5-261d-cab8be805fc7" executionId="e0c3c041-7cf7-4d98-acb4-75660e6f1ed3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fc136dea-1f40-8d96-b2f3-89cb8c53b979" executionId="c974c8fb-124a-43a7-820c-ad26b88ca201" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fb291d93-9ee4-b452-fd5c-8feaff10390c" executionId="d3323db5-de20-4374-ab9e-4fdb3769182f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a5c25cbb-4e1f-ac64-2bc0-4ee6e74e8702" executionId="5b5d6db6-c3e6-4ed4-abde-6504444a441c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6f39cf51-38c7-64ae-4413-1eee8d9fffbb" executionId="a0deba95-609c-4e23-b3b2-8f16152c31ab" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
   </TestEntries>
   <TestLists>
     <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
@@ -47,11 +67,11 @@
   <ResultSummary outcome="Completed">
     <Counters total="5" executed="5" passed="5" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
     <Output>
-      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.11)
-[xUnit.net 00:00:00.30]   Discovering: Honua.DevOps.Agent.Tests
-[xUnit.net 00:00:01.03]   Discovered:  Honua.DevOps.Agent.Tests
-[xUnit.net 00:00:01.22]   Starting:    Honua.DevOps.Agent.Tests
-[xUnit.net 00:05:24.45]   Finished:    Honua.DevOps.Agent.Tests
+      <StdOut>[xUnit.net 00:00:00.03] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.11)
+[xUnit.net 00:00:00.73]   Discovering: Honua.DevOps.Agent.Tests
+[xUnit.net 00:00:02.80]   Discovered:  Honua.DevOps.Agent.Tests
+[xUnit.net 00:00:02.97]   Starting:    Honua.DevOps.Agent.Tests
+[xUnit.net 00:06:23.39]   Finished:    Honua.DevOps.Agent.Tests
 </StdOut>
     </Output>
   </ResultSummary>

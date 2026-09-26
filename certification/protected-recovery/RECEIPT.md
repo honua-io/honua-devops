@@ -62,43 +62,43 @@ Full evidence: `receipt-nightly-80e23be.json` (server journey) and `devops-live-
 | --- | --- | --- | --- | --- | --- |
 | Live_FailedServerRecovery_QuarantinesWithoutClaimingRestoration | | watched-sync | `indeterminate` | Needs attention | `protected-recovery-unproven` |
 |  | | next-reconcile-of-quarantined-candidate | `approval-required` | Needs attention | `desired-revision-quarantined` |
-| | | ledger | `rejected` v2 | desired `(none)` | quarantined 1, operation `deploy-honua-devops-live-recovery-6a1310f1302140bc9fc69-4ff3aa21aab1` |
+| | | ledger | `rejected` v2 | desired `(none)` | quarantined 1, operation `deploy-honua-devops-live-recovery-e93ebb40cff34cbeb703d-bd450f2dc3af` |
 | Live_NewerApprovedIntent_RefusesOlderRecoveryWithoutRequest | | approved-sync | `in-progress` | Confirming service health | - |
 |  | | concurrent-approved-change | `failed` | Needs attention | - |
 |  | | older-recovery | `approval-required` | Needs attention | `recovery-intent-superseded` |
-| | | ledger | `approved` v2 | desired `sha256:860061857f9e` | quarantined 0, operation `deploy-honua-devops-live-recovery-f92aba42ad2f43e4855e2-0cce22b38fe1` |
+| | | ledger | `approved` v2 | desired `sha256:39c6af419b04` | quarantined 0, operation `deploy-honua-devops-live-recovery-1bdbbefccaf14929b4ada-02ed8572e13d` |
 | Live_ServerRecoveryOnInjectedRegression_IsFoldedIntoDesiredIntent | | watched-sync | `rolled-back` | Previous version restored | - |
 |  | | next-reconcile-of-quarantined-candidate | `approval-required` | Needs attention | `desired-revision-quarantined` |
-| | | ledger | `restored` v2 | desired `sha256:2c7b1d6d21eb` | quarantined 1, operation `deploy-honua-devops-live-recovery-c3ae4de4465440d8be0f8-25cdd8533763` |
+| | | ledger | `restored` v2 | desired `sha256:4ed4a2c84d13` | quarantined 1, operation `deploy-honua-devops-live-recovery-4267732c95644295bba6c-3ac868cc0b51` |
 | Live_DeclaredRecovery_IsFencedRecordedAndHoldsOnNextReconcile | | approved-sync | `in-progress` | Confirming service health | - |
 |  | | wrong-actor | `approval-required` | Needs attention | `recovery-scope-mismatch` |
 |  | | wrong-target | `approval-required` | Needs attention | `recovery-scope-mismatch` |
 |  | | broadened-compensation | `approval-required` | Needs attention | `recovery-scope-mismatch` |
 |  | | expired-grant | `approval-required` | Needs attention | `recovery-scope-mismatch` |
-|  | | declared-recovery | `in-progress` | Updating | - |
+|  | | declared-recovery | `rolled-back` | Previous version restored | - |
 |  | | restart-observes-recovery | `rolled-back` | Previous version restored | - |
 |  | | replay | `rolled-back` | Previous version restored | - |
 |  | | next-reconcile-of-quarantined-candidate | `approval-required` | Needs attention | `desired-revision-quarantined` |
-| | | ledger | `restored` v2 | desired `sha256:2c7b1d6d21eb` | quarantined 1, operation `deploy-honua-devops-live-recovery-8b7ddcec7ac14457b1508-366ee2cf3324` |
+| | | ledger | `restored` v2 | desired `sha256:4ed4a2c84d13` | quarantined 1, operation `deploy-honua-devops-live-recovery-fbcdb6e29e514ca295261-8196d73a9ff1` |
 | Live_GenericRollbackTool_StaysGated | | generic-rollback-tool | `experimental-disabled` | Checking update | `rollback-experimental-disabled` |
 
-All five scenarios passed (`ProtectedRecoveryLiveJourneyTests`, matching transcripts and `devops-live-nightly-80e23be.trx`).
+All five named `ProtectedRecoveryLiveJourneyTests` scenarios passed. Each transcript and `devops-live-nightly-80e23be.trx` records server revision `80e23bedfe8ff7b43362c8d8ea22bfae1756df7d` and index `sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176`.
 
 ## The declared recovery DevOps sent
 
-`POST /api/v1/admin/deploy/operations/deploy-honua-devops-live-recovery-8b7ddcec7ac14457b1508-366ee2cf3324/rollback` -> HTTP 200
+`POST /api/v1/admin/deploy/operations/deploy-honua-devops-live-recovery-fbcdb6e29e514ca295261-8196d73a9ff1/rollback` -> HTTP 200
 
 ```json
 {
   "reason": "declared recovery: live journey",
   "targetId": "proof-selfhosted",
-  "expectedCandidateRevision": "sha256:bd23f02e2ba64247720709672b482485cd6e916be49594060889d3fc17d6ee1b",
-  "expectedPreviousRevision": "sha256:2c7b1d6d21ebcfa2012402b1f13e07548e3da4f926a20700de93c0f53b083e2c",
+  "expectedCandidateRevision": "sha256:2953dddf27849582f2277bd84f3370cfb10ecaa5d700fbaaf3e495869f4e88df",
+  "expectedPreviousRevision": "sha256:4ed4a2c84d13271dedad3f229839728202366c843f52c8fd1d8674539cb7a773",
   "expectedProtectionPhase": "observing",
-  "grantId": "grant-da87092bf4dbdc397312eb5fd40258a3",
+  "grantId": "grant-6b72dc1488687f90b8a603b5d8eb7f70",
   "policyDigest": "40F265FF6E39CB44F5EC660B5874553F53D5B27337D0DDAE638CFEA37494A032",
   "actor": "admin",
-  "notAfter": "2026-09-19T09:37:19.3166518+00:00",
+  "notAfter": "2026-09-26T23:11:15.2241365+00:00",
   "compensation": "restore-previous-revision"
 }
 ```

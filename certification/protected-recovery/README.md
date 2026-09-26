@@ -58,12 +58,13 @@ and detail reads, then proves the sealed principal can still restore the prior
 revision through the real proxy. `wrong-body-private-probe` remains a separate
 diagnostic for honua-server#4988, not a recovery qualification cell.
 
-Run all eleven required cells and all five live .NET scenarios on the same pinned
-image. `summarize.py` requires `--devops-trx` as well as `--devops`: transcripts
-alone are written even after failed assertions. It rejects missing, duplicate or
-failed recovery classes, a wrong inspected image identity, and missing or failed
-live test results. The live flag must be set; a default no-op test run has no
-matching transcripts and cannot produce a qualified receipt.
+Run all eleven required cells and all five named `ProtectedRecoveryLiveJourneyTests`
+scenarios on the same pinned image. `summarize.py` requires `--devops-trx` as well
+as `--devops`: transcripts alone are written even after failed assertions. It
+rejects missing, duplicate or failed recovery classes, a substituted live scenario,
+a wrong inspected image identity, and live transcripts or test results that do not
+record that same revision and index digest. The live flag must be set; a default
+no-op test run has no matching transcripts and cannot produce a qualified receipt.
 
 ## Environment notes
 

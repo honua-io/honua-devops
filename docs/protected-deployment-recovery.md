@@ -317,13 +317,14 @@ The [committed receipt](../certification/protected-recovery/RECEIPT.md) records
 live tests. The original d1fc139 receipt retains the before-fix cross-tenant
 failures; the new receipt shows the required refusals and legitimate recovery.
 
-The receipt gate requires all eleven server recovery classes and matching passing
-results for the five live DevOps scenarios. It inspects the actual image identity
-for every server run part and refuses missing, duplicate or failed classes and
-incomplete live test transcripts. Transcripts alone are insufficient because
-scenario disposal writes them even when an assertion fails. Fast PR checks
-challenge the receipt gate with deliberately corrupted copies of the installed
-fixture.
+The receipt gate requires all eleven server recovery classes and the five named
+`ProtectedRecoveryLiveJourneyTests` scenarios, each with a passing result. It
+inspects the actual image identity for every server run part and for the live
+transcript and test-runner results, and refuses missing, duplicate or failed
+classes, a substituted scenario, and evidence recorded against a different
+revision or index digest. Transcripts alone are insufficient because scenario
+disposal writes them even when an assertion fails. Fast PR checks challenge the
+receipt gate with deliberately corrupted copies of the installed fixture.
 
 This qualification is bounded to the named nightly and backend. It is not a
 receipt for another backend or the future exact release candidate; final

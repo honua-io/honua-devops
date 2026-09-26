@@ -21,16 +21,41 @@ class ReceiptGateTests(unittest.TestCase):
         self.part = {"cells": copy.deepcopy(self.receipt["cells"]),
                      "server": self.receipt["observedServers"][0]}
 
-    def run_summary(self, failed_test=False, empty_transcript=False):
+    def run_summary(self, failed_test=False, empty_transcript=False, rename=False,
+                    stamp_server=False, transcript_revision=None, unbind_trx=False):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / "part.json").write_text(json.dumps(self.part))
-            transcript = (HERE / f"devops-live-{TAG}.jsonl").read_text()
-            (work / "live.jsonl").write_text("" if empty_transcript else transcript)
+            transcript = "" if empty_transcript else (HERE / f"devops-live-{TAG}.jsonl").read_text()
+            if transcript and (rename or stamp_server or transcript_revision is not None):
+                rewritten = []
+                for line in transcript.splitlines():
+                    if not line.strip():
+                        continue
+                    item = json.loads(line)
+                    if rename and item["scenario"].endswith("StaysGated"):
+                        item["scenario"] = "Live_UnrelatedScenario_Passes"
+                    if stamp_server or transcript_revision is not None:
+                        server = dict(item.get("server") or self.part["server"])
+                        if transcript_revision is not None:
+                            server["revision"] = transcript_revision
+                        item["server"] = server
+                    rewritten.append(json.dumps(item))
+                transcript = "\n".join(rewritten) + "\n"
+            (work / "live.jsonl").write_text(transcript)
             trx = ET.parse(HERE / f"devops-live-{TAG}.trx")
             if failed_test:
                 trx.find(".//{http://microsoft.com/schemas/VisualStudio/TeamTest/2010}UnitTestResult").set("outcome", "Failed")
             trx.write(work / "live.trx")
+            if rename or unbind_trx:
+                trx_text = (work / "live.trx").read_text()
+                if rename:
+                    trx_text = trx_text.replace(
+                        "Live_GenericRollbackTool_StaysGated", "Live_UnrelatedScenario_Passes")
+                if unbind_trx:
+                    trx_text = trx_text.replace(
+                        "protected-recovery-server revision=", "protected-recovery-server revision=wrong-")
+                (work / "live.trx").write_text(trx_text)
             candidate = self.receipt["candidate"]
             args = ["summarize.py", "--image", candidate["image"], "--revision", candidate["revision"],
                     "--index", candidate["indexDigest"], "--parts", str(work / "part.json"),
@@ -66,7 +91,7 @@ class ReceiptGateTests(unittest.TestCase):
 
     def test_wrong_server_revision_is_refused(self):
         self.part["server"]["revision"] = "wrong-server-revision"
-        with self.assertRaisesRegex(SystemExit, "inspected server image"):
+        with self.assertRaisesRegex(SystemExit, "does not match the inspected server image"):
             self.run_summary()
 
     def test_failed_live_test_cannot_be_hidden_by_disposal_transcript(self):
@@ -76,6 +101,18 @@ class ReceiptGateTests(unittest.TestCase):
     def test_disabled_live_tests_do_not_qualify(self):
         with self.assertRaisesRegex(SystemExit, "five distinct live transcripts"):
             self.run_summary(empty_transcript=True)
+
+    def test_substituted_live_scenario_is_refused(self):
+        with self.assertRaisesRegex(SystemExit, "five named live scenarios"):
+            self.run_summary(rename=True)
+
+    def test_live_transcript_must_record_inspected_image(self):
+        with self.assertRaisesRegex(SystemExit, "Live transcript is not bound"):
+            self.run_summary(stamp_server=True, transcript_revision="wrong-server-revision")
+
+    def test_live_results_must_record_inspected_image(self):
+        with self.assertRaisesRegex(SystemExit, "Live test results are not bound"):
+            self.run_summary(stamp_server=True, unbind_trx=True)
 
 
 if __name__ == "__main__":
