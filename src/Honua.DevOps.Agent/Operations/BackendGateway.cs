@@ -54,14 +54,23 @@ internal sealed partial class BackendGateway : IDisposable
         }
 
         string path = $"{configuration.HonuaOpsFindingsPath.TrimEnd('/')}/{Uri.EscapeDataString(findingId.Trim())}/propose";
-        return SendJsonAsync(
+        object? payload = null;
+        if (!string.IsNullOrWhiteSpace(configuration.RootProvisioningOperationId))
+        {
+            HonuaOperationsToolkit.LoadVerifiedLineage(configuration.RootProvisioningOperationId, configuration.HonuaApiBaseUri);
+            payload = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["rootProvisioningOperationId"] = configuration.RootProvisioningOperationId
+            };
+        }
+        return CaptureServerOperationAsync(SendJsonAsync(
             configuration.HonuaApiBaseUri,
             HttpMethod.Post,
             path,
-            payload: null,
+            payload,
             configuration.HonuaApiKey,
             ApiKeyTransport.XApiKey,
-            cancellationToken);
+            cancellationToken), isMutation: true, shape: ServerReceiptShape.FindingProposal);
     }
 
     internal Task<BackendCallResult> QueryLogsAsync(
@@ -559,21 +568,27 @@ internal sealed partial class BackendGateway : IDisposable
         ArgumentNullException.ThrowIfNull(grant);
         grant.EnsureAuthorizes(BackendMutation.MetadataReleaseCreate);
 
-        return PostJsonToHonuaAsync(
+        Dictionary<string, object?> body = new(StringComparer.Ordinal)
+        {
+            ["packageId"] = packageId,
+            ["targetEnvironment"] = targetEnvironment,
+            ["resourceSemanticId"] = resourceSemanticId,
+            ["newFieldName"] = newFieldName,
+            ["newFieldType"] = newFieldType,
+            ["dataPopulateWorkloadId"] = dataPopulateWorkloadId,
+            ["reason"] = reason,
+            ["idempotencyKey"] = idempotencyKey,
+            ["correlationId"] = correlationId
+        };
+        if (!string.IsNullOrWhiteSpace(configuration.RootProvisioningOperationId))
+        {
+            HonuaOperationsToolkit.LoadVerifiedLineage(configuration.RootProvisioningOperationId, configuration.HonuaApiBaseUri);
+            body["rootProvisioningOperationId"] = configuration.RootProvisioningOperationId;
+        }
+        return CaptureServerOperationAsync(PostJsonToHonuaAsync(
             configuration.HonuaMetadataReleaseOperationsPath,
-            new
-            {
-                packageId,
-                targetEnvironment,
-                resourceSemanticId,
-                newFieldName,
-                newFieldType,
-                dataPopulateWorkloadId,
-                reason,
-                idempotencyKey,
-                correlationId
-            },
-            cancellationToken);
+            body,
+            cancellationToken), isMutation: true);
     }
 
     // Detect seam: read the most recent metadata-release operation for a package. The server
@@ -584,9 +599,9 @@ internal sealed partial class BackendGateway : IDisposable
         string packageId,
         CancellationToken cancellationToken)
     {
-        return GetJsonFromHonuaAsync(
+        return CaptureServerOperationAsync(GetJsonFromHonuaAsync(
             $"{configuration.HonuaMetadataReleaseByPackagePath}/{Uri.EscapeDataString(packageId)}/operation",
-            cancellationToken);
+            cancellationToken));
     }
 
     internal Task<BackendCallResult> RequestManifestDriftAsync(bool verbose, CancellationToken cancellationToken)

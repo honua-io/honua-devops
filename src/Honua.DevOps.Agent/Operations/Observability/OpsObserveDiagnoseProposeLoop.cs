@@ -247,14 +247,17 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         List<OpsLoopFindingReport> findings = parsedFindings.Findings.ToList();
 
         string status = evidence.Status == "complete-fresh" ? "diagnosed" : "evidence-incomplete";
+        ServerOperationLineage? serverLineage = null;
         if (proposeRecommendedAction && evidence.Status == "complete-fresh")
         {
-            status = await TryProposeOneAsync(
+            ProposalAttempt attempt = await TryProposeOneAsync(
                     findings,
                     supportedKinds,
                     limitations,
                     cancellationToken)
                 .ConfigureAwait(false);
+            status = attempt.Status;
+            serverLineage = attempt.ServerLineage;
         }
 
         if (parsedFindings.Truncated)
@@ -294,7 +297,9 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
                 MaxEvidenceRefsPerFinding,
                 MaxTextCharacters,
                 parsedFindings.Truncated),
-            Limitations: limitations);
+            Limitations: limitations,
+            ServerOperations: serverLineage is null ? null : [serverLineage],
+            ProvisioningLineage: serverLineage?.ProvisioningLineage);
     }
 
     private static EvidenceEvaluation EvaluateEvidence(
@@ -430,7 +435,9 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             SuppressionReason);
     }
 
-    private async Task<string> TryProposeOneAsync(
+    private readonly record struct ProposalAttempt(string Status, ServerOperationLineage? ServerLineage);
+
+    private async Task<ProposalAttempt> TryProposeOneAsync(
         List<OpsLoopFindingReport> findings,
         SupportedKindsResult supportedKinds,
         List<string> limitations,
@@ -439,20 +446,20 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         if (runtime.ExecutionTier < ExecutionTier.Propose)
         {
             limitations.Add("Proposal creation requires execution tier `propose` or higher; this run remained read-only.");
-            return "proposal-not-authorized";
+            return new("proposal-not-authorized", null);
         }
 
         if (!supportedKinds.Verified)
         {
             limitations.Add("The live executor catalog could not be verified; proposal creation failed closed.");
-            return "proposal-support-unverified";
+            return new("proposal-support-unverified", null);
         }
 
         OpsLoopFindingReport? candidate = findings.FirstOrDefault(finding => finding.RecommendedAction?.Supported == true);
         if (candidate is null)
         {
             bool hasRecommendation = findings.Any(finding => finding.RecommendedAction is not null);
-            return hasRecommendation ? "no-supported-action" : "no-actionable-finding";
+            return new(hasRecommendation ? "no-supported-action" : "no-actionable-finding", null);
         }
 
         int additionalCandidates = findings.Count(finding => finding.RecommendedAction?.Supported == true) - 1;
@@ -481,27 +488,47 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         if (!authorization.IsGranted)
         {
             limitations.Add($"Finding proposal failed closed: {authorization.Reason}");
-            return "proposal-failed";
+            return new("proposal-failed", null);
         }
 
         using BackendJsonResult result = await gateway
             .ProposeOpsFindingAsync(candidate.FindingId, authorization.Grant!, cancellationToken)
             .ConfigureAwait(false);
-        if (!result.CallResult.IsSuccess || result.Payload is null)
-        {
-            limitations.Add(
-                $"Finding proposal failed closed: {result.CallResult.Detail}. The server gateway did not confirm an outcome.");
-            return "proposal-failed";
-        }
-
-        OpsLoopProposal proposal = ParseProposal(candidate.FindingId, result.Payload.RootElement);
         int index = findings.FindIndex(finding => string.Equals(
             finding.FindingId,
             candidate.FindingId,
             StringComparison.Ordinal));
-        findings[index] = candidate with { Proposal = proposal };
+        if (result.Payload is null)
+        {
+            limitations.Add(
+                $"Finding proposal failed closed: {result.CallResult.Detail}. The server gateway did not confirm an outcome.");
+            return new("proposal-failed", null);
+        }
 
-        return proposal.GatewayStatus switch
+        OpsLoopProposal proposal;
+        try
+        {
+            proposal = ParseProposal(candidate.FindingId, result.Payload.RootElement);
+        }
+        catch (HonuaMcpContractException exception)
+        {
+            limitations.Add($"Finding proposal failed closed: {Redaction.Scrub(exception.Message)}");
+            return new("proposal-failed", null);
+        }
+
+        findings[index] = candidate with { Proposal = proposal };
+        if (!result.CallResult.IsSuccess)
+        {
+            limitations.Add(
+                $"Finding proposal failed closed: {result.CallResult.Detail}. The server gateway did not confirm an outcome.");
+            string failure = result.CallResult.Detail.Contains("lineage-evidence-invalid", StringComparison.Ordinal)
+                ? "lineage-evidence-invalid"
+                : "proposal-failed";
+            // Server ids stay visible for reconciliation. The unproven join is not attached.
+            return new(failure, null);
+        }
+
+        return new(proposal.GatewayStatus switch
         {
             "ProposalCreated" => "proposal-created",
             "Executed" => "executed-by-server-policy",
@@ -511,7 +538,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             "Canceled" => "execution-canceled",
             "Blocked" or "NotSupported" => "proposal-blocked",
             _ => "proposal-routed"
-        };
+        }, result.CallResult.ServerLineage);
     }
 
     private static async Task<JsonElement> CallRequiredAsync(

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Honua.DevOps.Agent.Operations.Observability;
 
 internal sealed record OpsLoopBounds(
@@ -101,4 +103,6 @@ internal sealed record OpsLoopReport(
     IReadOnlyList<string> McpToolsUsed,
     OpsLoopEvidencePosture EvidencePosture,
     OpsLoopBounds Bounds,
-    IReadOnlyList<string> Limitations);
+    IReadOnlyList<string> Limitations,
+    [property: JsonPropertyName("serverOperations")] IReadOnlyList<ServerOperationLineage>? ServerOperations = null,
+    [property: JsonPropertyName("provisioningLineage")] ProvisioningLineage? ProvisioningLineage = null);

@@ -11,6 +11,7 @@ internal sealed record ServerOperationLineage(
     [property: JsonPropertyName("correlationId")] string? CorrelationId,
     [property: JsonPropertyName("auditId")] string? AuditId,
     [property: JsonPropertyName("executionId")] string? ExecutionId,
+    [property: JsonPropertyName("executionOperationId")] string? ExecutionOperationId,
     [property: JsonPropertyName("jobId")] string? JobId,
     [property: JsonPropertyName("providerOperationId")] string? ProviderOperationId,
     [property: JsonPropertyName("rootProvisioningOperationId")] string? RootProvisioningOperationId,
@@ -32,19 +33,30 @@ internal sealed record ServerOperationLineage(
             : null;
         JsonElement? Copy(string name) => root.TryGetProperty(name, out JsonElement value) ? value.Clone() : null;
         string? provisioningRoot = Text("rootProvisioningOperationId");
-        JsonElement parametersRoot = root.TryGetProperty("target", out JsonElement target) ? target : root;
-        if (parametersRoot.TryGetProperty("parameters", out JsonElement parameters)
-            && parameters.TryGetProperty("rootProvisioningOperationId", out JsonElement parameter))
+        void TakeRoot(JsonElement container)
         {
-            string? storedRoot = parameter.GetString();
-            if (string.IsNullOrWhiteSpace(storedRoot) || (provisioningRoot is not null && provisioningRoot != storedRoot))
+            if (container.ValueKind != JsonValueKind.Object
+                || !container.TryGetProperty("rootProvisioningOperationId", out JsonElement parameter))
+                return;
+            if (parameter.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(parameter.GetString()))
+                throw new InvalidDataException("Conflicting server provisioning roots.");
+            string storedRoot = parameter.GetString()!;
+            if (provisioningRoot is not null && provisioningRoot != storedRoot)
                 throw new InvalidDataException("Conflicting server provisioning roots.");
             provisioningRoot = storedRoot;
         }
+        JsonElement parametersRoot = root.TryGetProperty("target", out JsonElement target) ? target : root;
+        if (parametersRoot.TryGetProperty("parameters", out JsonElement parameters))
+            TakeRoot(parameters);
+        if (root.TryGetProperty("metadataRelease", out JsonElement metadataRelease))
+            TakeRoot(metadataRelease);
+        // executionOperationId is the finding-proposal actuator id. It is not operationId.
         return new(Text("operationId"), Text("operationInstanceId"), Text("proposalId"), Text("correlationId"),
-            Text("auditId"), Text("executionId"), Text("jobId"), Text("providerOperationId"), provisioningRoot,
-            Copy("evidenceRefs"), Copy("decisionAudit") ?? Copy("audit"), receipt);
+            Text("auditId"), Text("executionId"), Text("executionOperationId"), Text("jobId"), Text("providerOperationId"),
+            provisioningRoot, Copy("evidenceRefs"), Copy("decisionAudit") ?? Copy("audit"), receipt);
     }
+
+    internal static void RejectDuplicateFields(JsonElement element) => RejectDuplicates(element);
 
     private static void RejectDuplicates(JsonElement element)
     {

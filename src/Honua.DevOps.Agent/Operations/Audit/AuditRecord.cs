@@ -18,4 +18,10 @@ internal sealed record AuditRecord(
     IReadOnlyList<OperationBackendStep>? BackendSteps,
     OperationEvidence? Evidence,
     ProvisioningLineage? ProvisioningLineage = null,
-    [property: JsonPropertyName("serverOperations")] IReadOnlyList<ServerOperationLineage>? ServerOperations = null);
+    [property: JsonPropertyName("serverOperations")] IReadOnlyList<ServerOperationLineage>? ServerOperations = null)
+{
+    // JSONL is a diagnostic replica. This flag is always false; deleting the file does not
+    // delete provisioning evidence or a server operation.
+    [JsonPropertyName("authoritative")]
+    public bool Authoritative => false;
+}

@@ -119,4 +119,59 @@ internal sealed class ProvisioningEvidenceStore(string directory)
             Match(verification.RootElement, "handoffSha256", lineage.HandoffReceiptSha256);
         }
     }
+
+    /// <summary>
+    /// Joins a release-authority candidate receipt to retained provisioning and server bytes.
+    /// A missing receipt fails the claim. This method does not invent a receipt identity.
+    /// </summary>
+    internal void ValidateCandidateJoin(ProvisioningLineage lineage, ServerOperationLineage server, byte[]? candidateReceiptBytes)
+    {
+        ValidateAppliedLineage(lineage);
+        if (server.Receipt.Kind != "server-operation")
+            throw new InvalidDataException("Server receipt kind is not server-operation.");
+        _ = Read(server.Receipt);
+        if (server.RootProvisioningOperationId != lineage.ProvisioningOperationId)
+            throw new InvalidDataException("Server operation does not join the provisioning root.");
+        if (candidateReceiptBytes is null || candidateReceiptBytes.Length == 0)
+            throw new InvalidDataException("Release candidate receipt is absent; no receipt identity was invented.");
+        string digest = Convert.ToHexStringLower(SHA256.HashData(candidateReceiptBytes));
+        if (!string.Equals(lineage.ReleaseReceiptSha256, digest, StringComparison.Ordinal)
+            || lineage.ReleaseReceiptReference != $"urn:sha256:{digest}")
+            throw new InvalidDataException("Release receipt reference does not identify the candidate bytes.");
+        byte[] stored = Read(new ProvisioningEvidenceReference(
+            "release-receipt", lineage.ReleaseReceiptReference, digest, candidateReceiptBytes.LongLength));
+        if (!stored.AsSpan().SequenceEqual(candidateReceiptBytes))
+            throw new InvalidDataException("Retained release receipt bytes were substituted.");
+        using JsonDocument receipt = JsonDocument.Parse(candidateReceiptBytes);
+        ServerOperationLineage.RejectDuplicateFields(receipt.RootElement);
+        void MatchReceipt(string field, string? expected)
+        {
+            bool present = receipt.RootElement.TryGetProperty(field, out JsonElement value)
+                && value.ValueKind != JsonValueKind.Null;
+            if (expected is null)
+            {
+                if (present)
+                    throw new InvalidDataException($"Candidate receipt invents {field}.");
+                return;
+            }
+            if (!present || value.ValueKind != JsonValueKind.String || value.GetString() != expected)
+                throw new InvalidDataException($"Candidate receipt identity mismatch: {field}.");
+        }
+        MatchReceipt("provisioningOperationId", lineage.ProvisioningOperationId);
+        MatchReceipt("planSha256", lineage.PlanSha256);
+        MatchReceipt("approvalReceiptId", lineage.ApprovalReceiptId);
+        MatchReceipt("approvalReceiptSha256", lineage.ApprovalReceiptSha256);
+        MatchReceipt("applyAuditEventId", lineage.ApplyAuditEventId);
+        MatchReceipt("actuatorReceiptReference", lineage.ActuatorReceiptReference);
+        MatchReceipt("handoffReceiptSha256", lineage.HandoffReceiptSha256);
+        MatchReceipt("handoffVerificationReceiptId", lineage.HandoffVerificationReceiptId);
+        MatchReceipt("rootProvisioningOperationId", lineage.ProvisioningOperationId);
+        MatchReceipt("serverOperationId", server.OperationId);
+        MatchReceipt("serverOperationInstanceId", server.OperationInstanceId);
+        MatchReceipt("serverProposalId", server.ProposalId);
+        MatchReceipt("serverAuditId", server.AuditId);
+        MatchReceipt("serverCorrelationId", server.CorrelationId);
+        MatchReceipt("serverExecutionId", server.ExecutionId);
+        MatchReceipt("serverExecutionOperationId", server.ExecutionOperationId);
+    }
 }

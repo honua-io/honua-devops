@@ -1,3 +1,4 @@
+using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.Observability;
 
@@ -92,6 +93,60 @@ public sealed class OpsLoopAuditTests
         Assert.Equal("proposal-created", record.Status);
         Assert.True(record.Mutated);
         Assert.Equal("Honua MCP ops loop: health=Degraded, evidence=complete-fresh, findings=1, proposals=1.", record.Summary);
+        Assert.False(record.Authoritative);
+    }
+
+    [Fact]
+    public async Task EmitAsync_CopiesFindingServerLineageWithoutTreatingTheReplicaAsAuthority()
+    {
+        CapturingAuditSink sink = new();
+        string provisioningId = "urn:honua:provisioning:" + new string('a', 32);
+        ServerOperationLineage server = new(
+            OperationId: null,
+            OperationInstanceId: null,
+            ProposalId: "proposal-4",
+            CorrelationId: null,
+            AuditId: null,
+            ExecutionId: null,
+            ExecutionOperationId: "exec-4",
+            JobId: null,
+            ProviderOperationId: null,
+            RootProvisioningOperationId: provisioningId,
+            EvidenceRefs: null,
+            DecisionAudit: null,
+            Receipt: new("server-operation", "urn:sha256:" + new string('b', 64), new string('b', 64), 3));
+        OpsLoopReport report = new(
+            Status: "proposal-created",
+            ObservabilitySource: "honua-server-mcp",
+            OverallHealth: "Degraded",
+            PlatformReleaseVersion: null,
+            PlatformReleaseCoVersioned: null,
+            PlatformReleaseSkewedIds: [],
+            SupportedKindsVerified: true,
+            SupportedKinds: ["Deploy"],
+            Findings: [],
+            AlertHistory: [],
+            OperateTimeline: [],
+            DeployOperations: [],
+            McpToolsUsed: [],
+            EvidencePosture: new OpsLoopEvidencePosture("complete-fresh", "2026-07-10T00:00:00.0000000+00:00", [], null),
+            Bounds: new OpsLoopBounds(25, 24, 50, 12, 2048, false),
+            Limitations: [],
+            ServerOperations: [server],
+            ProvisioningLineage: new(provisioningId));
+
+        await ToolCallAuditor.EmitAsync(
+            new AuditContext("session", "plan", "propose", "pr-first", "mcp", sink),
+            new ToolCallRecord("honua_observe_diagnose_propose", null),
+            report,
+            CancellationToken.None);
+
+        AuditRecord record = Assert.Single(sink.Records);
+        Assert.False(record.Authoritative);
+        Assert.Equal("proposal-4", Assert.Single(record.ServerOperations!).ProposalId);
+        Assert.Equal("exec-4", record.ServerOperations![0].ExecutionOperationId);
+        Assert.Null(record.ServerOperations[0].OperationId);
+        Assert.Equal(provisioningId, record.ProvisioningLineage!.ProvisioningOperationId);
     }
 
     private sealed class CapturingAuditSink : IAuditSink
