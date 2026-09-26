@@ -968,7 +968,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 detectStatus,
                 result.CallResult.PayloadPreview,
                 result.CallResult.Endpoint,
-                result.CallResult.Detail));
+                result.CallResult.Detail),
+            BackendSteps: [OperationBackendStep.From("read-metadata-release", result.CallResult, mutatesState: false)]);
     }
 
     [Description("Plan the internal honua-gitops engine state transitions, diff, and drift without applying desired state.")]

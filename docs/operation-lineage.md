@@ -9,8 +9,9 @@ receipts, without using log summaries or substituting local IDs.
 
 `auditEventId` identifies one tool response/audit emission. A replay gets a new
 audit event but retains the original `applyAuditEventId`. Neither is a runtime
-operation ID. JSONL is a searchable, non-authoritative diagnostic replica.
-Deleting it does not delete the provisioning identity or evidence.
+operation ID. JSONL is a searchable diagnostic replica. Every record serializes
+`authoritative: false`. Deleting it does not delete the provisioning identity
+or evidence.
 
 Pass a stable `idempotencyKey` to `provision_infrastructure` when planning. DevOps
 reserves its provisioning ID on disk before starting the plan. Concurrent calls
@@ -37,6 +38,15 @@ The gateway validates the retained verification/binding bytes and endpoint,
 then places the root in the existing deploy request's `parameters`. The server
 owns the persisted operation and idempotency behavior. Submit/rollback read and
 validate the root before issuing the mutation when federation is configured.
+
+Metadata-release create sends the same configured root on the request body and requires
+the workflow response to echo it (top-level, `target.parameters`, or
+`metadataRelease`). Finding propose sends it only when federation is configured.
+A created or executed finding joins by the server's `proposalId` and
+`executionOperationId`. Those values are not copied onto `operationId`. A blocked
+finding with no server identity is not a lineage claim. A missing or conflicting
+root after the server has acknowledged a create fails the claim and stays
+reconcile-only; no second provisioning or proposal identity is minted.
 
 Create, read, submit and rollback responses preserve the server's `operationId`,
 `operationInstanceId`, `proposalId`, `auditId`, `correlationId`, `executionId`,
@@ -73,8 +83,11 @@ inside the approval/handoff/verification and the plan hashes in metadata/apply;
 valid hashes for substituted documents are insufficient.
 
 The release-owned verifier can retain these references in its candidate receipt
-and independently resolve, hash and compare the named bytes. A candidate receipt
-reference/digest is absent until that authority actually produces one. Sensitive
+and independently resolve, hash and compare the named bytes.
+`ProvisioningEvidenceStore.ValidateCandidateJoin` checks that supplied candidate
+against the retained plan, approval, apply, handoff, verification and server
+receipt bytes. A missing candidate fails the claim. No candidate reference is
+invented. Sensitive
 Terraform plans and signed approvals must remain in the protected evidence
 volume; publish only the references and an appropriately restricted evidence
 bundle.
@@ -103,15 +116,16 @@ The resulting metadata/approval binding digest is
 
 Outstanding #150 acceptance work:
 
-- Server trunk inspected at `2ee4eb4eca` has no dedicated
-  `rootProvisioningOperationId` on the canonical admin operation/proposal
-  envelope. Persisted deploy parameters provide a bounded correlation join;
-  they are not an independently attested root on every server mutation.
-  Canonical admin/MCP, metadata-release and finding/proposal propagation still
-  require server-owned integration. This is **not released** or proven here.
+- Server trunk still has no `rootProvisioningOperationId` on
+  `OperationHandle`, the metadata-release workflow record, or
+  `OpsFindingProposeResponse` (honua-server #3411 closed without that field).
+  DevOps now sends the verified root on metadata-release create and finding
+  propose and refuses the lineage claim unless the response echoes it. Deploy
+  parameters remain the only live echo the current server persists. That is a
+  correlation join, not server attestation on the canonical envelope. This
+  criterion is **not released**.
 - Live bootstrap → server approval/replay and OAuth actor/tenant/scope proof
   remain unproven by these test doubles. No live qualification claim is made.
-- The final release#129 candidate receipt/digest and exact-candidate end-to-end
-  reconstruction cannot be produced before the candidate exists. That criterion
-  is released to candidate qualification for this PR; #150 remains open for the
-  other incomplete integration criteria.
+- The final release#129 candidate receipt still has to be produced by that
+  authority. The join checker covers a supplied receipt, including missing,
+  mismatched, substituted and duplicate cases. It does not create one.

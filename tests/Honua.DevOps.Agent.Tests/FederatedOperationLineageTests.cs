@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
 
@@ -170,6 +171,177 @@ public sealed partial class TerraformProvisioningTests
             lineage = lineage with { ApprovalReceiptSha256 = replacement.Sha256 };
         }
         Assert.Throws<InvalidDataException>(() => store.ValidateAppliedLineage(lineage with { EvidenceRefs = references }));
+    }
+
+    [Fact]
+    public async Task Federation_MetadataReleaseAndFindingReceiptsKeepServerIdsAndRequireTheVerifiedRoot()
+    {
+        using TerraformTestRoot root = new();
+        (string provisioningId, BackendConfiguration configuration) = await VerifiedFederationAsync(root);
+        string metadataBytes = "{"
+            + "\"operationId\":\"metadata-op-7\",\"operationInstanceId\":\"metadata-instance-7\","
+            + "\"proposalId\":\"metadata-proposal-7\",\"executionId\":\"metadata-exec-7\","
+            + "\"rootProvisioningOperationId\":\"" + provisioningId + "\","
+            + "\"metadataRelease\":{\"rootProvisioningOperationId\":\"" + provisioningId + "\"}}\n";
+        string findingBytes = "{"
+            + "\"findingId\":\"deploy-stuck-abc\",\"status\":\"ProposalCreated\","
+            + "\"proposalId\":\"finding-proposal-4\",\"executionOperationId\":\"finding-exec-4\","
+            + "\"rootProvisioningOperationId\":\"" + provisioningId + "\"}\n";
+        TestHttpMessageHandler handler = new(request =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("/metadata/releases", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(metadataBytes, Encoding.UTF8, "application/json") };
+            if (path.EndsWith("/propose", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(findingBytes, Encoding.UTF8, "application/json") };
+            return TestHttpMessageHandler.JsonOk(new { status = "ok" });
+        });
+        using HttpClient client = new(handler);
+        using BackendGateway gateway = new(configuration, client);
+        ActuationSpine spine = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Propose) with { DeployTargetId = "pkg-1" }, ProvisioningSubstrateFixtures.DirectAllowedPolicy());
+        ActuationSpine.OperationGrant metadataGrant = spine.Authorize(new ActuationRequest(
+            "honua.metadata-release.create", "create", "pkg-1", [], "field=name",
+            "honua-devops:metadata-release:pkg-1", "proposal-required", true, "operator",
+            BackendMutation.MetadataReleaseCreate)).Grant!;
+        using BackendJsonResult created = await gateway.CreateMetadataReleaseOperationJsonAsync(
+            "pkg-1", "dev", "roads", "name", "String", null, "add field", metadataGrant.IdempotencyKey, "corr-1", metadataGrant, CancellationToken.None);
+        Assert.True(created.CallResult.IsSuccess);
+        ServerOperationLineage metadata = created.CallResult.ServerLineage!;
+        Assert.Equal("metadata-op-7", metadata.OperationId);
+        Assert.Equal("metadata-instance-7", metadata.OperationInstanceId);
+        Assert.Equal("metadata-proposal-7", metadata.ProposalId);
+        Assert.Equal("metadata-exec-7", metadata.ExecutionId);
+        Assert.Null(metadata.ExecutionOperationId);
+        Assert.Equal(provisioningId, metadata.RootProvisioningOperationId);
+        Assert.NotEqual(provisioningId, metadata.OperationId);
+
+        using BackendGateway restarted = new(configuration, client);
+        ActuationSpine.OperationGrant metadataRetry = spine.Authorize(new ActuationRequest(
+            "honua.metadata-release.create", "create", "pkg-1", [], "field=name",
+            "honua-devops:metadata-release:pkg-1", "proposal-required", true, "operator",
+            BackendMutation.MetadataReleaseCreate)).Grant!;
+        using BackendJsonResult replay = await restarted.CreateMetadataReleaseOperationJsonAsync(
+            "pkg-1", "dev", "roads", "name", "String", null, "add field", metadataRetry.IdempotencyKey, "corr-1", metadataRetry, CancellationToken.None);
+        Assert.Equal(metadata.OperationId, replay.CallResult.ServerLineage!.OperationId);
+        Assert.Equal(metadata.ProposalId, replay.CallResult.ServerLineage.ProposalId);
+        string[] metadataBodies = handler.CapturedRequests.Where(r => r.Method == "POST" && r.Uri.Contains("/metadata/releases/operations", StringComparison.Ordinal)).Select(r => r.Body!).ToArray();
+        Assert.Equal(2, metadataBodies.Length);
+        Assert.All(metadataBodies, body => Assert.Equal(provisioningId, JsonDocument.Parse(body).RootElement.GetProperty("rootProvisioningOperationId").GetString()));
+        Assert.Equal(metadataBodies[0], metadataBodies[1]);
+
+        HonuaOperationsToolkit toolkit = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan), gateway);
+        OperationResponse inspected = await toolkit.InspectMetadataReleaseAsync("pkg-1");
+        Assert.Equal("in-progress", inspected.Status);
+        ServerOperationLineage inspectedLineage = Assert.Single(JsonSerializer.Deserialize<OperationResponse>(JsonSerializer.Serialize(inspected))!.ServerOperations);
+        Assert.Equal("metadata-op-7", inspectedLineage.OperationId);
+        Assert.Equal(provisioningId, inspectedLineage.RootProvisioningOperationId);
+
+        ActuationSpine.OperationGrant findingGrant = spine.Authorize(new ActuationRequest(
+            "honua.ops-finding.propose", "propose", "deploy-stuck-abc", [], "finding=deploy-stuck-abc",
+            "honua-devops:ops-finding:deploy-stuck-abc", "proposal-required", true, "operator",
+            BackendMutation.OpsFindingPropose)).Grant!;
+        using BackendJsonResult proposed = await gateway.ProposeOpsFindingAsync("deploy-stuck-abc", findingGrant, CancellationToken.None);
+        using BackendJsonResult proposedAgain = await restarted.ProposeOpsFindingAsync("deploy-stuck-abc", findingGrant, CancellationToken.None);
+        foreach (BackendJsonResult response in new[] { proposed, proposedAgain })
+        {
+            Assert.True(response.CallResult.IsSuccess);
+            ServerOperationLineage finding = response.CallResult.ServerLineage!;
+            Assert.Null(finding.OperationId);
+            Assert.Equal("finding-proposal-4", finding.ProposalId);
+            Assert.Equal("finding-exec-4", finding.ExecutionOperationId);
+            Assert.NotEqual(finding.ExecutionOperationId, finding.OperationId);
+            Assert.Equal(provisioningId, finding.RootProvisioningOperationId);
+            Assert.Equal(provisioningId, finding.ProvisioningLineage!.ProvisioningOperationId);
+        }
+        string[] proposeBodies = handler.CapturedRequests.Where(r => r.Method == "POST" && r.Uri.EndsWith("/propose", StringComparison.Ordinal)).Select(r => r.Body!).ToArray();
+        Assert.Equal(2, proposeBodies.Length);
+        Assert.All(proposeBodies, body => Assert.Equal(provisioningId, JsonDocument.Parse(body).RootElement.GetProperty("rootProvisioningOperationId").GetString()));
+
+        TestHttpMessageHandler missingRoot = new(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"status\":\"ProposalCreated\",\"proposalId\":\"proposal-x\",\"operationId\":\"" + provisioningId + "\"}\n", Encoding.UTF8, "application/json")
+        });
+        using HttpClient missingClient = new(missingRoot);
+        using BackendGateway missingGateway = new(configuration, missingClient);
+        using BackendJsonResult unproven = await missingGateway.ProposeOpsFindingAsync("deploy-stuck-abc", findingGrant, CancellationToken.None);
+        Assert.False(unproven.CallResult.IsSuccess);
+        Assert.True(unproven.CallResult.MutationAcknowledged);
+        Assert.Null(unproven.CallResult.ServerLineage);
+        Assert.Contains("lineage-evidence-invalid", unproven.CallResult.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("operationId", missingRoot.CapturedRequests[0].Body!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Federation_CandidateReceiptJoinRejectsMissingMismatchedSubstitutedAndDuplicateBytes()
+    {
+        using TerraformTestRoot root = new();
+        (string provisioningId, BackendConfiguration configuration) = await VerifiedFederationAsync(root);
+        ProvisioningLineage lineage = HonuaOperationsToolkit.LoadVerifiedLineage(provisioningId, configuration.HonuaApiBaseUri);
+        Assert.Null(lineage.ReleaseReceiptReference);
+        Assert.Null(lineage.ReleaseReceiptSha256);
+        string serverJson = "{\"operationId\":\"server-op-9\",\"operationInstanceId\":\"instance-9\",\"proposalId\":\"proposal-9\",\"auditId\":\"audit-9\",\"correlationId\":\"corr-9\",\"executionId\":\"exec-9\",\"rootProvisioningOperationId\":\"" + provisioningId + "\"}";
+        byte[] serverBytes = Encoding.UTF8.GetBytes(serverJson);
+        ProvisioningEvidenceStore store = RetainedEvidence();
+        ProvisioningEvidenceReference serverReceipt = store.Put("server-operation", serverBytes);
+        ServerOperationLineage server = ServerOperationLineage.Read(JsonDocument.Parse(serverJson).RootElement, serverReceipt);
+        server = server with { ProvisioningLineage = lineage };
+        Assert.Throws<InvalidDataException>(() => store.ValidateCandidateJoin(lineage, server, null));
+        Assert.Null(lineage.ReleaseReceiptReference);
+
+        string receiptJson = "{"
+            + "\"provisioningOperationId\":\"" + lineage.ProvisioningOperationId + "\","
+            + "\"planSha256\":\"" + lineage.PlanSha256 + "\","
+            + "\"approvalReceiptId\":\"" + lineage.ApprovalReceiptId + "\","
+            + "\"approvalReceiptSha256\":\"" + lineage.ApprovalReceiptSha256 + "\","
+            + "\"applyAuditEventId\":\"" + lineage.ApplyAuditEventId + "\","
+            + "\"actuatorReceiptReference\":\"" + lineage.ActuatorReceiptReference + "\","
+            + "\"handoffReceiptSha256\":\"" + lineage.HandoffReceiptSha256 + "\","
+            + "\"handoffVerificationReceiptId\":\"" + lineage.HandoffVerificationReceiptId + "\","
+            + "\"rootProvisioningOperationId\":\"" + provisioningId + "\","
+            + "\"serverOperationId\":\"server-op-9\","
+            + "\"serverOperationInstanceId\":\"instance-9\","
+            + "\"serverProposalId\":\"proposal-9\","
+            + "\"serverAuditId\":\"audit-9\","
+            + "\"serverCorrelationId\":\"corr-9\","
+            + "\"serverExecutionId\":\"exec-9\""
+            + "}";
+        byte[] receiptBytes = Encoding.UTF8.GetBytes(receiptJson);
+        ProvisioningEvidenceReference releaseReceipt = store.Put("release-receipt", receiptBytes);
+        ProvisioningLineage joined = lineage with
+        {
+            ReleaseReceiptReference = releaseReceipt.Reference,
+            ReleaseReceiptSha256 = releaseReceipt.Sha256
+        };
+        store.ValidateCandidateJoin(joined, server, receiptBytes);
+
+        byte[] substituted = Encoding.UTF8.GetBytes(receiptJson.Replace("server-op-9", "server-op-other", StringComparison.Ordinal));
+        ProvisioningEvidenceReference substitutedReceipt = store.Put("release-receipt", substituted);
+        Assert.Throws<InvalidDataException>(() => store.ValidateCandidateJoin(
+            joined with { ReleaseReceiptReference = substitutedReceipt.Reference, ReleaseReceiptSha256 = substitutedReceipt.Sha256 },
+            server, substituted));
+        Assert.Throws<InvalidDataException>(() => store.ValidateCandidateJoin(
+            joined with { ReleaseReceiptSha256 = new string('0', 64) }, server, receiptBytes));
+        byte[] duplicate = Encoding.UTF8.GetBytes(receiptJson.Replace("\"serverOperationId\"", "\"serverOperationId\":\"server-op-9\",\"serverOperationId\"", StringComparison.Ordinal));
+        ProvisioningEvidenceReference duplicateReceipt = store.Put("release-receipt", duplicate);
+        Assert.Throws<InvalidDataException>(() => store.ValidateCandidateJoin(
+            joined with { ReleaseReceiptReference = duplicateReceipt.Reference, ReleaseReceiptSha256 = duplicateReceipt.Sha256 },
+            server, duplicate));
+    }
+
+    private static async Task<(string ProvisioningId, BackendConfiguration Configuration)> VerifiedFederationAsync(TerraformTestRoot root)
+    {
+        using BackendGateway bootstrapGateway = ProvisioningSubstrateFixtures.CreateGateway();
+        (HonuaOperationsToolkit toolkit, OperationResponse apply) = await ApplyAsync(root, new(), bootstrapGateway, new FakeInstallHandoffVerifier(true));
+        string provisioningId = apply.ProvisioningLineage!.ProvisioningOperationId;
+        string directory = Path.Combine(root.Path, "federated-" + Guid.NewGuid().ToString("n"));
+        await toolkit.InstallHandoffAsync("aws-ecs", "", "", directory, false, provisioningId);
+        Assert.Equal("install-handoff-verified", (await toolkit.VerifyInstallHandoffAsync(Path.Combine(directory, "honua-mcp-proxy.handoff.json"), false)).Status);
+        BackendConfiguration configuration = bootstrapGateway.Configuration with
+        {
+            HonuaApiBaseUri = new Uri(ProvisioningSubstrateFixtures.ContractEndpoint),
+            RootProvisioningOperationId = provisioningId
+        };
+        return (provisioningId, configuration);
     }
 }
 

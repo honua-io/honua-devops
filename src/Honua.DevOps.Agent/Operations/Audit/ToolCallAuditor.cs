@@ -98,6 +98,8 @@ internal static class ToolCallAuditor
                     "RolledBack" or
                     "Indeterminate" or
                     "Canceled");
+            serverOperations = opsLoop.ServerOperations;
+            provisioningLineage = opsLoop.ProvisioningLineage;
         }
         else if (toolResult is not null)
         {
