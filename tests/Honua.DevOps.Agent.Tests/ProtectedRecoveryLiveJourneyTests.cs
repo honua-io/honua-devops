@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+using Xunit.Abstractions;
+
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.GitOps;
@@ -20,7 +22,9 @@ namespace Honua.DevOps.Agent.Tests;
 // the file-backed desired-intent ledger) against the real server, and asserts only what the
 // server, the replicas and the ledger report. Each scenario appends its transcript (every
 // request DevOps sent and the response it got, results and ledger records) to the receipt at
-// HONUA_DEVOPS_LIVE_PROTECTED_RECOVERY_RECEIPT.
+// HONUA_DEVOPS_LIVE_PROTECTED_RECOVERY_RECEIPT. The transcript records the inspected server
+// image, and the same revision and index are written to the test output so the trx is bound
+// to that image.
 [Collection(ProtectedRecoveryLiveJourneyTests.CollectionName)]
 public sealed class ProtectedRecoveryLiveJourneyTests : IDisposable
 {
@@ -41,11 +45,13 @@ public sealed class ProtectedRecoveryLiveJourneyTests : IDisposable
         ["proof_samples"] = "500"
     };
 
+    private readonly ITestOutputHelper _output;
     private readonly string _ledgerDirectory = Directory.CreateTempSubdirectory("honua-devops-live-recovery-").FullName;
     private readonly FileDesiredIntentLedger _ledger;
 
-    public ProtectedRecoveryLiveJourneyTests()
+    public ProtectedRecoveryLiveJourneyTests(ITestOutputHelper output)
     {
+        _output = output;
         _ledger = new FileDesiredIntentLedger(Path.Combine(_ledgerDirectory, "audit.jsonl.desired-intent.jsonl"));
     }
 
@@ -301,6 +307,29 @@ public sealed class ProtectedRecoveryLiveJourneyTests : IDisposable
         await live.AssertServesAsync("candidate-b");
     }
 
+    private void BindServerEvidence(Live live)
+    {
+        string revision = live.ServerIdentity["revision"]!.GetValue<string>();
+        bool recorded = false;
+        foreach (JsonNode? digest in live.ServerIdentity["repoDigests"]!.AsArray())
+        {
+            string value = digest!.GetValue<string>();
+            int at = value.LastIndexOf('@');
+            if (at < 0)
+            {
+                continue;
+            }
+
+            _output.WriteLine($"protected-recovery-server revision={revision} index={value[(at + 1)..]}");
+            recorded = true;
+        }
+
+        if (!recorded)
+        {
+            throw new InvalidOperationException("inspected server image has no repo digest");
+        }
+    }
+
     private async Task<DesiredIntentRecord> LatestAsync()
     {
         DesiredIntentSnapshot snapshot = await _ledger.ReadLatestAsync(Target, CancellationToken.None);
@@ -331,6 +360,8 @@ public sealed class ProtectedRecoveryLiveJourneyTests : IDisposable
         internal BackendConfiguration Configuration { get; } = BackendConfiguration.Load();
 
         internal string? ReceiptPath { get; } = receiptPath;
+
+        internal JsonObject ServerIdentity { get; } = InspectServer();
 
         internal string Image(string revision)
         {
@@ -433,6 +464,27 @@ public sealed class ProtectedRecoveryLiveJourneyTests : IDisposable
                 "--label", $"honua.revision={image}", "--label", $"io.honua.devops.proof.workload={revision}", image);
         }
 
+        private static JsonObject InspectServer()
+        {
+            string imageRef = Docker("inspect", "-f", "{{.Config.Image}}", $"{Prefix}-server");
+            JsonNode? image = JsonNode.Parse(Docker("image", "inspect", imageRef))?[0];
+            string? imageId = image?["Id"]?.GetValue<string>();
+            string? revision = image?["Config"]?["Labels"]?["org.opencontainers.image.revision"]?.GetValue<string>();
+            JsonArray? parsedDigests = image?["RepoDigests"]?.AsArray();
+            if (string.IsNullOrWhiteSpace(imageId) || string.IsNullOrWhiteSpace(revision) || parsedDigests is not { Count: > 0 } digests)
+            {
+                throw new InvalidOperationException("inspected server image has no revision or repo digest");
+            }
+
+            return new JsonObject
+            {
+                ["imageReference"] = imageRef,
+                ["imageId"] = imageId,
+                ["repoDigests"] = digests.DeepClone(),
+                ["revision"] = revision
+            };
+        }
+
         private static string Docker(params string[] arguments) => Run("docker", arguments, null);
 
         private static string Run(string fileName, string[] arguments, IReadOnlyDictionary<string, string>? environment)
@@ -486,7 +538,13 @@ public sealed class ProtectedRecoveryLiveJourneyTests : IDisposable
         {
             _owner = owner;
             _live = live;
-            _entry = new JsonObject { ["scenario"] = name, ["startedAt"] = DateTimeOffset.UtcNow, ["events"] = new JsonArray() };
+            _entry = new JsonObject
+            {
+                ["scenario"] = name,
+                ["startedAt"] = DateTimeOffset.UtcNow,
+                ["server"] = live.ServerIdentity.DeepClone(),
+                ["events"] = new JsonArray()
+            };
             Runtime = OperationRuntime.SafeDefault with
             {
                 ExecutionMode = ExecutionMode.Execute,
@@ -515,6 +573,7 @@ public sealed class ProtectedRecoveryLiveJourneyTests : IDisposable
 
         internal static async Task<Scenario> StartAsync(ProtectedRecoveryLiveJourneyTests owner, Live live, string name)
         {
+            owner.BindServerEvidence(live);
             Scenario scenario = new(owner, live, name);
             await live.SettleLeftoverOperationsAsync(scenario);
             live.ResetReplicas();

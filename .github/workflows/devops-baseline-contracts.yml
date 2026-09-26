@@ -40,3 +40,6 @@ jobs:
       # published. Needs no .NET, network or credentials.
       - name: Provisioning contract smoke
         run: ./scripts/smoke-provisioning-contracts.sh
+
+      - name: Protected recovery receipt gate regressions
+        run: python3 -m unittest discover -s certification/protected-recovery -p 'test_*.py'

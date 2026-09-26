@@ -17,7 +17,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="${PROOF_WORK:?set PROOF_WORK to a private directory outside the repository}"
 # `up` records the image so a `restart` (the controller-crash fault) boots the same candidate.
-image="${PROOF_SERVER_IMAGE:-$(cat "$work/image" 2>/dev/null || echo ghcr.io/honua-io/honua-server:nightly-d1fc139)}"
+image="${PROOF_SERVER_IMAGE:-$(cat "$work/image" 2>/dev/null || echo ghcr.io/honua-io/honua-server@sha256:9869f044b1c5d0de15aef6c87cc3d60383037ee9a4346d08bb9c83f2c56cc176)}"
 prefix="${PROOF_PREFIX:-devops191}"
 port="${PROOF_SERVER_PORT:-19191}"
 active_port="${PROOF_ACTIVE_PORT:-19181}"
