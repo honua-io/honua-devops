@@ -513,7 +513,10 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         catch (HonuaMcpContractException exception)
         {
             limitations.Add($"Finding proposal failed closed: {Redaction.Scrub(exception.Message)}");
-            return new("proposal-failed", null);
+            // The server already acknowledged the lifecycle-entry write. Preserve its
+            // canonical receipt for reconciliation even when the presentation projection
+            // cannot parse the gateway status.
+            return new("proposal-failed", result.CallResult.ServerLineage);
         }
 
         findings[index] = candidate with { Proposal = proposal };
