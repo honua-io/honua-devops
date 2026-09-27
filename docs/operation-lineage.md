@@ -46,7 +46,8 @@ A created or executed finding joins by the server's `proposalId` and
 `executionOperationId`. Those values are not copied onto `operationId`. A blocked
 finding with no server identity is not a lineage claim. A missing or conflicting
 root after the server has acknowledged a create fails the claim and stays
-reconcile-only; no second provisioning or proposal identity is minted.
+reconcile-only; a root supplied only by an unconfigured server response is also
+rejected. No second provisioning or proposal identity is minted.
 
 Create, read, submit and rollback responses preserve the server's `operationId`,
 `operationInstanceId`, `proposalId`, `auditId`, `correlationId`, `executionId`,
@@ -86,8 +87,9 @@ The release-owned verifier can retain these references in its candidate receipt
 and independently resolve, hash and compare the named bytes.
 `ProvisioningEvidenceStore.ValidateCandidateJoin` checks that supplied candidate
 against the retained plan, approval, apply, handoff, verification and server
-receipt bytes. A missing candidate fails the claim. No candidate reference is
-invented. Sensitive
+receipt bytes; the server identity is re-read from its retained receipt rather
+than trusted from a caller-supplied projection. A missing candidate fails the
+claim. No candidate reference is invented. Sensitive
 Terraform plans and signed approvals must remain in the protected evidence
 volume; publish only the references and an appropriately restricted evidence
 bundle.

@@ -129,8 +129,12 @@ internal sealed class ProvisioningEvidenceStore(string directory)
         ValidateAppliedLineage(lineage);
         if (server.Receipt.Kind != "server-operation")
             throw new InvalidDataException("Server receipt kind is not server-operation.");
-        _ = Read(server.Receipt);
-        if (server.RootProvisioningOperationId != lineage.ProvisioningOperationId)
+        byte[] serverBytes = Read(server.Receipt);
+        using JsonDocument serverDocument = JsonDocument.Parse(serverBytes);
+        ServerOperationLineage retainedServer = ServerOperationLineage.Read(serverDocument.RootElement, server.Receipt);
+        if (!SameServerIdentity(server, retainedServer))
+            throw new InvalidDataException("Server operation identity does not match its retained receipt.");
+        if (retainedServer.RootProvisioningOperationId != lineage.ProvisioningOperationId)
             throw new InvalidDataException("Server operation does not join the provisioning root.");
         if (candidateReceiptBytes is null || candidateReceiptBytes.Length == 0)
             throw new InvalidDataException("Release candidate receipt is absent; no receipt identity was invented.");
@@ -166,12 +170,25 @@ internal sealed class ProvisioningEvidenceStore(string directory)
         MatchReceipt("handoffReceiptSha256", lineage.HandoffReceiptSha256);
         MatchReceipt("handoffVerificationReceiptId", lineage.HandoffVerificationReceiptId);
         MatchReceipt("rootProvisioningOperationId", lineage.ProvisioningOperationId);
-        MatchReceipt("serverOperationId", server.OperationId);
-        MatchReceipt("serverOperationInstanceId", server.OperationInstanceId);
-        MatchReceipt("serverProposalId", server.ProposalId);
-        MatchReceipt("serverAuditId", server.AuditId);
-        MatchReceipt("serverCorrelationId", server.CorrelationId);
-        MatchReceipt("serverExecutionId", server.ExecutionId);
-        MatchReceipt("serverExecutionOperationId", server.ExecutionOperationId);
+        MatchReceipt("serverOperationId", retainedServer.OperationId);
+        MatchReceipt("serverOperationInstanceId", retainedServer.OperationInstanceId);
+        MatchReceipt("serverProposalId", retainedServer.ProposalId);
+        MatchReceipt("serverAuditId", retainedServer.AuditId);
+        MatchReceipt("serverCorrelationId", retainedServer.CorrelationId);
+        MatchReceipt("serverExecutionId", retainedServer.ExecutionId);
+        MatchReceipt("serverExecutionOperationId", retainedServer.ExecutionOperationId);
     }
+
+    private static bool SameServerIdentity(ServerOperationLineage left, ServerOperationLineage right) =>
+        left.OperationId == right.OperationId
+        && left.OperationInstanceId == right.OperationInstanceId
+        && left.ProposalId == right.ProposalId
+        && left.CorrelationId == right.CorrelationId
+        && left.AuditId == right.AuditId
+        && left.ExecutionId == right.ExecutionId
+        && left.ExecutionOperationId == right.ExecutionOperationId
+        && left.JobId == right.JobId
+        && left.ProviderOperationId == right.ProviderOperationId
+        && left.RootProvisioningOperationId == right.RootProvisioningOperationId
+        && left.Receipt == right.Receipt;
 }
