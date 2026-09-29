@@ -143,6 +143,7 @@ public sealed class OpsLoopAuditTests
 
         AuditRecord record = Assert.Single(sink.Records);
         Assert.False(record.Authoritative);
+        Assert.True(record.Mutated);
         Assert.Equal("proposal-4", Assert.Single(record.ServerOperations!).ProposalId);
         Assert.Equal("exec-4", record.ServerOperations![0].ExecutionOperationId);
         Assert.Null(record.ServerOperations[0].OperationId);

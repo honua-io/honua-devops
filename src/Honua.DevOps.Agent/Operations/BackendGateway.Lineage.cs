@@ -64,10 +64,18 @@ internal sealed partial class BackendGateway
                 throw new InvalidDataException("The server did not return the requested canonical operation identity.");
             }
             string? configuredRoot = configuration.RootProvisioningOperationId;
-            if (!string.IsNullOrWhiteSpace(configuredRoot) && lineage.RootProvisioningOperationId != configuredRoot)
+            if (string.IsNullOrWhiteSpace(configuredRoot))
+            {
+                if (lineage.RootProvisioningOperationId is not null)
+                    throw new InvalidDataException("The server supplied a provisioning root without a configured verified handoff.");
+            }
+            else if (lineage.RootProvisioningOperationId != configuredRoot)
+            {
                 throw new InvalidDataException("The server did not retain the configured provisioning root; federation is unproven.");
-            if (lineage.RootProvisioningOperationId is { } root)
-                lineage = lineage with { ProvisioningLineage = HonuaOperationsToolkit.LoadVerifiedLineage(root, configuration.HonuaApiBaseUri) };
+            }
+
+            if (!string.IsNullOrWhiteSpace(configuredRoot))
+                lineage = lineage with { ProvisioningLineage = HonuaOperationsToolkit.LoadVerifiedLineage(configuredRoot, configuration.HonuaApiBaseUri) };
             return result with { CallResult = result.CallResult with { ServerLineage = lineage } };
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)

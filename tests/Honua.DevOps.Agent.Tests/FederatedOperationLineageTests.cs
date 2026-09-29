@@ -326,6 +326,44 @@ public sealed partial class TerraformProvisioningTests
         Assert.Throws<InvalidDataException>(() => store.ValidateCandidateJoin(
             joined with { ReleaseReceiptReference = duplicateReceipt.Reference, ReleaseReceiptSha256 = duplicateReceipt.Sha256 },
             server, duplicate));
+
+        Assert.Throws<InvalidDataException>(() => store.ValidateCandidateJoin(
+            joined,
+            server with { OperationId = "server-op-substituted" },
+            receiptBytes));
+    }
+
+    [Fact]
+    public async Task Federation_ServerCannotIntroduceALineageRootWithoutVerifiedConfiguration()
+    {
+        using TerraformTestRoot root = new();
+        (string provisioningId, BackendConfiguration configured) = await VerifiedFederationAsync(root);
+        string findingBytes = "{"
+            + "\"findingId\":\"deploy-stuck-abc\",\"status\":\"ProposalCreated\","
+            + "\"proposalId\":\"finding-proposal-4\",\"rootProvisioningOperationId\":\"" + provisioningId + "\"}\n";
+        TestHttpMessageHandler handler = new(_ =>
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(findingBytes, Encoding.UTF8, "application/json")
+            });
+        BackendConfiguration unconfigured = configured with { RootProvisioningOperationId = null };
+        using HttpClient client = new(handler);
+        using BackendGateway gateway = new(unconfigured, client);
+        ActuationSpine spine = new(
+            ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Propose),
+            ProvisioningSubstrateFixtures.DirectAllowedPolicy());
+        ActuationSpine.OperationGrant grant = spine.Authorize(new ActuationRequest(
+            "honua.ops-finding.propose", "propose", "deploy-stuck-abc", [], "finding=deploy-stuck-abc",
+            "honua-devops:ops-finding:deploy-stuck-abc", "proposal-required", true, "operator",
+            BackendMutation.OpsFindingPropose)).Grant!;
+
+        using BackendJsonResult result = await gateway.ProposeOpsFindingAsync("deploy-stuck-abc", grant, CancellationToken.None);
+
+        Assert.False(result.CallResult.IsSuccess);
+        Assert.True(result.CallResult.MutationAcknowledged);
+        Assert.Null(result.CallResult.ServerLineage);
+        Assert.Contains("without a configured verified handoff", result.CallResult.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("rootProvisioningOperationId", handler.CapturedRequests[0].Body!, StringComparison.Ordinal);
     }
 
     private static async Task<(string ProvisioningId, BackendConfiguration Configuration)> VerifiedFederationAsync(TerraformTestRoot root)
