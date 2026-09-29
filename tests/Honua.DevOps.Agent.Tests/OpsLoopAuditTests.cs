@@ -81,7 +81,8 @@ public sealed class OpsLoopAuditTests
                 [],
                 null),
             Bounds: new OpsLoopBounds(25, 24, 50, 12, 2048, false),
-            Limitations: []);
+            Limitations: [],
+            MutationAcknowledged: true);
 
         await ToolCallAuditor.EmitAsync(
             new AuditContext("session", "plan", "propose", "pr-first", "mcp", sink),
@@ -133,7 +134,8 @@ public sealed class OpsLoopAuditTests
             Bounds: new OpsLoopBounds(25, 24, 50, 12, 2048, false),
             Limitations: [],
             ServerOperations: [server],
-            ProvisioningLineage: new(provisioningId));
+            ProvisioningLineage: new(provisioningId),
+            MutationAcknowledged: true);
 
         await ToolCallAuditor.EmitAsync(
             new AuditContext("session", "plan", "propose", "pr-first", "mcp", sink),
@@ -148,6 +150,40 @@ public sealed class OpsLoopAuditTests
         Assert.Equal("exec-4", record.ServerOperations![0].ExecutionOperationId);
         Assert.Null(record.ServerOperations[0].OperationId);
         Assert.Equal(provisioningId, record.ProvisioningLineage!.ProvisioningOperationId);
+    }
+
+    [Fact]
+    public async Task EmitAsync_AcknowledgedMalformedProjection_RecordsMutationWithoutLineage()
+    {
+        CapturingAuditSink sink = new();
+        OpsLoopReport report = new(
+            Status: "proposal-failed",
+            ObservabilitySource: "honua-server-mcp",
+            OverallHealth: "Degraded",
+            PlatformReleaseVersion: null,
+            PlatformReleaseCoVersioned: null,
+            PlatformReleaseSkewedIds: [],
+            SupportedKindsVerified: true,
+            SupportedKinds: ["Deploy"],
+            Findings: [],
+            AlertHistory: [],
+            OperateTimeline: [],
+            DeployOperations: [],
+            McpToolsUsed: [],
+            EvidencePosture: new OpsLoopEvidencePosture("complete-fresh", "2026-07-10T00:00:00.0000000+00:00", [], null),
+            Bounds: new OpsLoopBounds(25, 24, 50, 12, 2048, false),
+            Limitations: ["The acknowledged response could not be projected."],
+            MutationAcknowledged: true);
+
+        await ToolCallAuditor.EmitAsync(
+            new AuditContext("session", "plan", "propose", "pr-first", "mcp", sink),
+            new ToolCallRecord("honua_observe_diagnose_propose", null),
+            report,
+            CancellationToken.None);
+
+        AuditRecord record = Assert.Single(sink.Records);
+        Assert.True(record.Mutated);
+        Assert.Null(record.ServerOperations);
     }
 
     private sealed class CapturingAuditSink : IAuditSink
