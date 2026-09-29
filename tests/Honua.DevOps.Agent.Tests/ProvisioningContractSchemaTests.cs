@@ -121,6 +121,31 @@ public sealed class ProvisioningContractSchemaTests
     }
 
     [Fact]
+    public void VerificationReceiptV1AcceptsReceiptsFromBeforeTheExpandedShape()
+    {
+        string receipt = JsonSerializer.Serialize(new
+        {
+            receiptId = $"urn:sha256:{Sha}",
+            receiptSha256 = Sha,
+            evidence = new
+            {
+                schemaVersion = "honua.devops.install-handoff-verification/v1",
+                provisioningOperationId = OperationId,
+                handoffSha256 = Sha,
+                candidateReference = "honua-2026.1.1",
+                proxyPackage = "@honua/mcp-server@2026.1.1",
+                proxyIntegrity = "sha512-dGVzdA==",
+                secretReferenceSha256 = Sha,
+                serverIdentity = "server-fixture",
+                observedTools = new[] { "honua_admin_server_status" },
+                verifiedAtUtc = "2026-01-01T00:00:00Z"
+            }
+        });
+
+        Assert.Empty(ProvisioningContracts.ValidateVerificationReceipt(receipt));
+    }
+
+    [Fact]
     public void ProxyHandoff_RequiresAnExplicitEndpointProvenance()
     {
         JsonNode handoff = JsonNode.Parse(ValidHandoffJson)!;
