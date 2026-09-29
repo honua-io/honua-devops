@@ -140,11 +140,11 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         }
         using (health)
         {
-        steps.Add(HttpStep("verify-health", new Uri(baseUri, "healthz/ready"), health));
-        if (!health.IsSuccessStatusCode)
-        {
-            return Failed("handoff-health-failed", "The installed server readiness endpoint was not healthy.", steps);
-        }
+            steps.Add(HttpStep("verify-health", new Uri(baseUri, "healthz/ready"), health));
+            if (!health.IsSuccessStatusCode)
+            {
+                return Failed("handoff-health-failed", "The installed server readiness endpoint was not healthy.", steps);
+            }
         }
 
         using HttpRequestMessage identityRequest = new(HttpMethod.Get, new Uri(baseUri, "api/v1/admin/version"));
@@ -165,19 +165,19 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         string identityBytes;
         using (identityResponse)
         {
-        identityBytes = await identityResponse.Content.ReadAsStringAsync(verificationToken);
-        steps.Add(HttpStep("verify-auth-and-server-identity", identityRequest.RequestUri!, identityResponse));
-        if (!identityResponse.IsSuccessStatusCode || string.IsNullOrWhiteSpace(identityBytes))
-        {
-            return Failed("handoff-auth-failed", "The authenticated Admin identity probe failed.", steps);
-        }
-        if (!ContainsExactStructuredValue(identityBytes, request.CandidateReference))
-        {
-            return Failed(
-                "candidate-identity-mismatch",
-                "The authenticated server identity does not contain an exact structured value matching the manifest-pinned candidate reference.",
-                steps);
-        }
+            identityBytes = await identityResponse.Content.ReadAsStringAsync(verificationToken);
+            steps.Add(HttpStep("verify-auth-and-server-identity", identityRequest.RequestUri!, identityResponse));
+            if (!identityResponse.IsSuccessStatusCode || string.IsNullOrWhiteSpace(identityBytes))
+            {
+                return Failed("handoff-auth-failed", "The authenticated Admin identity probe failed.", steps);
+            }
+            if (!ContainsExactStructuredValue(identityBytes, request.CandidateReference))
+            {
+                return Failed(
+                    "candidate-identity-mismatch",
+                    "The authenticated server identity does not contain an exact structured value matching the manifest-pinned candidate reference.",
+                    steps);
+            }
         }
 
         ProcessStartInfo start = new(request.Command)
@@ -369,7 +369,10 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
     {
         await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new
         {
-            jsonrpc = "2.0", id, method, @params = parameters
+            jsonrpc = "2.0",
+            id,
+            method,
+            @params = parameters
         }));
         await process.StandardInput.FlushAsync(cancellationToken);
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -392,27 +395,27 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             }
             using (document)
             {
-            JsonElement root = document.RootElement;
-            if (!root.TryGetProperty("id", out JsonElement responseId))
-            {
-                if (root.TryGetProperty("method", out JsonElement notificationMethod)
-                    && notificationMethod.ValueKind == JsonValueKind.String
-                    && !string.IsNullOrWhiteSpace(notificationMethod.GetString()))
+                JsonElement root = document.RootElement;
+                if (!root.TryGetProperty("id", out JsonElement responseId))
                 {
-                    continue;
-                }
+                    if (root.TryGetProperty("method", out JsonElement notificationMethod)
+                        && notificationMethod.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(notificationMethod.GetString()))
+                    {
+                        continue;
+                    }
 
-                throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
-            }
-            if (!responseId.TryGetInt32(out int value))
-            {
-                throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
-            }
-            if (value != id)
-            {
-                throw new VerificationFailure("mcp-response-out-of-order", "The proxy returned an MCP response for a different request id.");
-            }
-            return root.Clone();
+                    throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
+                }
+                if (!responseId.TryGetInt32(out int value))
+                {
+                    throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
+                }
+                if (value != id)
+                {
+                    throw new VerificationFailure("mcp-response-out-of-order", "The proxy returned an MCP response for a different request id.");
+                }
+                return root.Clone();
             }
         }
     }
