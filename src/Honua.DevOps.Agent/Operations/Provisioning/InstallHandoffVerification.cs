@@ -294,9 +294,9 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
                 ChildReaped: proxy.HasExited);
             // The verdict is earned by scanning the exact result that becomes evidence,
             // never asserted. A leaked key fails the handoff instead of being recorded.
-            if (ContainsSecret(verified, adminKey))
+            if (ContainsSecret(verified, adminKey, request.RequiredTools))
             {
-                return Failed("secret-scan-failed", "The verification result contained resolved secret material.", []);
+                return Failed("secret-scan-failed", "The persisted proxy evidence contained resolved secret material.", []);
             }
             if (!verified.ChildReaped)
             {
@@ -323,12 +323,26 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         }
     }
 
-    internal static bool ContainsSecret(InstallHandoffVerificationResult result, string secret)
+    internal static bool ContainsSecret(
+        InstallHandoffVerificationResult result,
+        string secret,
+        IReadOnlyCollection<string>? verifierOwnedValues = null)
     {
         if (string.IsNullOrEmpty(secret))
         {
             return false;
         }
+        if (verifierOwnedValues is not null)
+        {
+            // The receipt persists observed tool names. Required names are verifier-owned
+            // metadata, so only scan unexpected names supplied by the proxy. Serializing
+            // the whole result would reject harmless names such as `honua_admin_server_status`
+            // when an operator uses a short key like `admin`.
+            return result.ObservedTools.Any(value =>
+                !verifierOwnedValues.Contains(value, StringComparer.Ordinal)
+                && value.Contains(secret, StringComparison.Ordinal));
+        }
+
         string serialized = JsonSerializer.Serialize(result);
         return serialized.Contains(secret, StringComparison.Ordinal)
             || serialized.Contains(JsonSerializer.Serialize(secret).Trim('"'), StringComparison.Ordinal);
@@ -379,7 +393,18 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             using (document)
             {
             JsonElement root = document.RootElement;
-            if (!root.TryGetProperty("id", out JsonElement responseId) || !responseId.TryGetInt32(out int value))
+            if (!root.TryGetProperty("id", out JsonElement responseId))
+            {
+                if (root.TryGetProperty("method", out JsonElement notificationMethod)
+                    && notificationMethod.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(notificationMethod.GetString()))
+                {
+                    continue;
+                }
+
+                throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
+            }
+            if (!responseId.TryGetInt32(out int value))
             {
                 throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
             }

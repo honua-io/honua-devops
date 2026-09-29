@@ -19,13 +19,7 @@
         "proxyIntegrity",
         "secretReferenceSha256",
         "serverIdentity",
-        "serverEndpointIdentity",
         "observedTools",
-        "observedRosterSha256",
-        "verifierOutcome",
-        "childExitCode",
-        "childReaped",
-        "secretScanPassed",
         "verifiedAtUtc"
       ],
       "properties": {
