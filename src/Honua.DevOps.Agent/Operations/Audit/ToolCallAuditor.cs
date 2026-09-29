@@ -90,15 +90,7 @@ internal static class ToolCallAuditor
             status = opsLoop.Status;
             summary = Redaction.Scrub(
                 $"Honua MCP ops loop: health={opsLoop.OverallHealth ?? "unknown"}, evidence={opsLoop.EvidencePosture.Status}, findings={opsLoop.Findings.Count}, proposals={opsLoop.Findings.Count(finding => finding.Proposal is not null)}.");
-            mutated = opsLoop.ServerOperations is { Count: > 0 }
-                || opsLoop.Findings.Any(finding =>
-                    finding.Proposal?.GatewayStatus is
-                        "ProposalCreated" or
-                        "Executed" or
-                        "Failed" or
-                        "RolledBack" or
-                        "Indeterminate" or
-                        "Canceled");
+            mutated = opsLoop.MutationAcknowledged;
             serverOperations = opsLoop.ServerOperations;
             provisioningLineage = opsLoop.ProvisioningLineage;
         }
