@@ -19,7 +19,13 @@
         "proxyIntegrity",
         "secretReferenceSha256",
         "serverIdentity",
+        "serverEndpointIdentity",
         "observedTools",
+        "observedRosterSha256",
+        "verifierOutcome",
+        "childExitCode",
+        "childReaped",
+        "secretScanPassed",
         "verifiedAtUtc"
       ],
       "properties": {
@@ -37,12 +43,18 @@
           "$ref": "#/$defs/sha256"
         },
         "serverIdentity": { "type": "string", "minLength": 1 },
+        "serverEndpointIdentity": { "$ref": "#/$defs/sha256" },
         "observedTools": {
           "description": "The tools actually observed through paged MCP tools/list, not the roster that was asked for.",
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "minLength": 1 }
         },
+        "observedRosterSha256": { "$ref": "#/$defs/sha256" },
+        "verifierOutcome": { "const": "install-handoff-verified" },
+        "childExitCode": { "type": "integer" },
+        "childReaped": { "const": true },
+        "secretScanPassed": { "const": true },
         "verifiedAtUtc": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
