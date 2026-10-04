@@ -34,7 +34,10 @@ on:
   workflow_dispatch:
     inputs:
       candidate_image:
-        description: "Candidate server image/tag under test (e.g. ghcr.io/honua-io/honua-server:2026.06.0-rc.1)."
+        description: "Immutable candidate server image under test (repository@sha256:digest)."
+        required: false
+      candidate_commit:
+        description: "Immutable honua-server source commit represented by candidate_image."
         required: false
       candidate_version:
         description: "Candidate version label (used when validating an SDK bump rather than a server image)."
@@ -102,6 +105,7 @@ jobs:
           COMPAT_TRAIN_DISPATCH: "true"
           COMPAT_TRAIN_CANDIDATE_IMAGE: ${{ github.event.inputs.candidate_image }}
           COMPAT_TRAIN_CANDIDATE_VERSION: ${{ github.event.inputs.candidate_version }}
+          COMPAT_TRAIN_CANDIDATE_COMMIT: ${{ github.event.inputs.candidate_commit }}
           COMPAT_TRAIN_FIXTURES_VERSION: ${{ github.event.inputs.fixtures_version }}
           COMPAT_TRAIN_REPOS: ${{ github.event.inputs.train_repos }}
           COMPAT_TRAIN_EVIDENCE_OUTPUT: compat-train-conformance-evidence.json
@@ -172,6 +176,7 @@ jobs:
           COMPAT_TRAIN_VALIDATION_BUNDLE: release-validation-bundle.json
           COMPAT_TRAIN_PROBE_BUNDLE: live-probe-bundle.json
           COMPAT_TRAIN_RC_MODE: ${{ github.event.inputs.mode || 'advisory' }}
+          COMPAT_TRAIN_RC_REQUIRE_PROBE: ${{ github.event.inputs.mode == 'live' && 'true' || 'false' }}
           COMPAT_TRAIN_RELEASE_ID: ${{ github.event.inputs.candidate_version }}
           COMPAT_TRAIN_RC_BUNDLE_OUTPUT: rc-validation-bundle.json
           COMPAT_TRAIN_RC_NOTES_OUTPUT: rc-validation-notes.md

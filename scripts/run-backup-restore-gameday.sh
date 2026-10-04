@@ -26,6 +26,7 @@ Options:
   --output-dir <path>           Evidence directory
   --backup-command <cmd>        Optional shell command that produces a backup/checkpoint
   --restore-command <cmd>       Optional shell command that restores from the checkpoint
+                                Both commands are required for evidentiary game-days.
   --rto-target-minutes <n>      Default: 60
   --rpo-target-minutes <n>      Default: 15
   --backup-age-minutes <n>      Default: 0
@@ -109,28 +110,28 @@ mkdir -p "$OUTPUT_DIR/logs"
 BACKUP_LOG="$OUTPUT_DIR/logs/backup.log"
 RESTORE_LOG="$OUTPUT_DIR/logs/restore.log"
 
-run_step() {
-  local label="$1"
-  local command_text="$2"
-  local log_path="$3"
-  local start end duration
-  start="$(date +%s)"
-
-  if [[ -n "$command_text" ]]; then
-    bash -lc "$command_text" >"$log_path" 2>&1
-  else
-    printf "no-op %s command\n" "$label" >"$log_path"
-  fi
-
-  end="$(date +%s)"
-  duration=$((end - start))
-  echo "$duration"
-}
-
 echo "Running backup/restore game-day for $SERVICE_ID in $ENVIRONMENT"
 
-backup_duration_seconds="$(run_step "backup" "$BACKUP_COMMAND" "$BACKUP_LOG")"
-restore_duration_seconds="$(run_step "restore" "$RESTORE_COMMAND" "$RESTORE_LOG")"
+run_step() {
+  local label="$1" command_text="$2" log_path="$3" start end duration status
+  start="$(date +%s)"
+  status=0
+  if [[ -z "$command_text" ]]; then
+    printf "missing %s command; no recovery activity was performed\n" "$label" >"$log_path"
+    status=64
+  else
+    set +e
+    bash -lc "$command_text" >"$log_path" 2>&1
+    status=$?
+    set -e
+  fi
+  end="$(date +%s)"
+  duration=$((end - start))
+  printf '%s\t%s\n' "$duration" "$status"
+}
+
+IFS=$'\t' read -r backup_duration_seconds backup_command_status < <(run_step "backup" "$BACKUP_COMMAND" "$BACKUP_LOG")
+IFS=$'\t' read -r restore_duration_seconds restore_command_status < <(run_step "restore" "$RESTORE_COMMAND" "$RESTORE_LOG")
 
 rto_actual_minutes="$(awk -v seconds="$restore_duration_seconds" 'BEGIN { printf "%.2f", seconds / 60 }')"
 rpo_actual_minutes="$(awk -v value="$BACKUP_AGE_MINUTES" 'BEGIN { printf "%.2f", value }')"
@@ -146,7 +147,7 @@ if awk "BEGIN { exit !($rpo_actual_minutes <= $RPO_TARGET_MINUTES) }"; then
   rpo_target_met="true"
 fi
 
-if [[ "$rto_target_met" == "true" && "$rpo_target_met" == "true" ]]; then
+if [[ "$backup_command_status" -eq 0 && "$restore_command_status" -eq 0 && "$rto_target_met" == "true" && "$rpo_target_met" == "true" ]]; then
   overall_status="pass"
 else
   overall_status="fail"
@@ -161,6 +162,8 @@ cat >"$evidence_path" <<EOF
   "service_id": "$(json_escape "$SERVICE_ID")",
   "environment": "$(json_escape "$ENVIRONMENT")",
   "status": "$overall_status",
+  "backup_command_status": $backup_command_status,
+  "restore_command_status": $restore_command_status,
   "rto_target_minutes": $RTO_TARGET_MINUTES,
   "rto_actual_minutes": $rto_actual_minutes,
   "rto_target_met": $rto_target_met,
@@ -203,6 +206,6 @@ EOF
 echo "Game-day evidence written to: $OUTPUT_DIR"
 
 if [[ "$overall_status" != "pass" ]]; then
-  echo "[ERROR] backup/restore game-day failed RTO or RPO objective. Evidence: $OUTPUT_DIR" >&2
+  echo "[ERROR] backup/restore game-day failed command execution or an RTO/RPO objective. Evidence: $OUTPUT_DIR" >&2
   exit 2
 fi

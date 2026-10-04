@@ -174,12 +174,47 @@ bundle="$(
             + " failed, " + (($probe.summary.blocked // 0)|tostring) + " blocked") }
       end) as $probeLayer |
 
-    ([ $confLayer, $gateLayer, $valLayer, $probeLayer ]) as $layers |
+    # Candidate identity is itself a required layer. Independently-green
+    # evidence cannot be joined unless release, image digest, source SHA and
+    # fixture pin describe the same immutable candidate. Live mode additionally
+    # requires the manifest image publication receipt.
+    (($conformance.candidate.image // null)) as $confImage |
+    (($validation.candidate.image // null)) as $valImageObject |
+    (if ($valImageObject | type) == "object" and ($valImageObject.repository // "") != ""
+          and ($valImageObject.digest // "") != ""
+       then ($valImageObject.repository + "@" + $valImageObject.digest)
+       elif ($valImageObject | type) == "string" then $valImageObject else null end) as $valImage |
+    ({
+      release: ($conformance.candidate.version // null),
+      image: $confImage,
+      sourceCommit: ($conformance.candidate.sourceCommit // null),
+      fixturesVersion: ($conformance.fixtures_version // null)
+    }) as $confIdentity |
+    ({
+      release: ($validation.releaseId // null),
+      image: $valImage,
+      sourceCommit: ($validation.candidate.ref // null),
+      fixturesVersion: ($validation.candidate.fixturesVersion // null)
+    }) as $valIdentity |
+    (["release", "image", "sourceCommit", "fixturesVersion"]
+      | map(select(($confIdentity[.] // "") == "" or ($valIdentity[.] // "") == ""
+                   or $confIdentity[.] != $valIdentity[.]))) as $identityMismatches |
+    (($valImageObject.receipt // $valImageObject.latestEvidence // null)) as $imageReceipt |
+    ($identityMismatches + (if $mode == "live" and $imageReceipt == null then ["imageReceipt"] else [] end)) as $identityFailures |
+    ({ name: "candidate-identity",
+       status: (if ($identityFailures | length) == 0 then "pass" else "fail" end),
+       mismatches: $identityFailures,
+       conformance: $confIdentity,
+       validation: $valIdentity,
+       detail: (if ($identityFailures | length) == 0 then "all evidence identifies the same immutable candidate"
+                else "candidate identity missing/mismatch: " + ($identityFailures | join(", ")) end) }) as $identityLayer |
+
+    ([ $confLayer, $gateLayer, $valLayer, $identityLayer, $probeLayer ]) as $layers |
 
     # --- which layers are required for "releasable" ---------------------------
     # conformance, release-gate and release-validation are always required;
     # live-probe is required only when COMPAT_TRAIN_RC_REQUIRE_PROBE=true.
-    (["conformance", "release-gate", "release-validation"]
+    (["conformance", "release-gate", "release-validation", "candidate-identity"]
       + (if $requireProbe == "true" then ["live-probe"] else [] end)) as $required |
 
     ([ $layers[] | select(.name as $n | $required | index($n))

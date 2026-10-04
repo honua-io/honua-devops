@@ -23,7 +23,7 @@
     "honua-sdk-js": {
       "repo": "honua-io/honua-sdk-js",
       "workflow": "integration.yml",
-      "candidate_input": "base_url",
+      "candidate_input": "server_image",
       "candidate_commit_input": "server_commit",
       "fixtures_input": "fixtures_version",
       "enrolled": true

@@ -52,7 +52,7 @@ cat >"$WORKDIR/registry.json" <<'EOF'
   },
   "consumers": {
     "honua-sdk-dotnet": { "repo": "honua-io/honua-sdk-dotnet", "workflow": "conformance.yml", "candidate_input": "server_image", "fixtures_input": "fixtures_version", "enrolled": true },
-    "honua-sdk-js":     { "repo": "honua-io/honua-sdk-js",     "workflow": "integration.yml", "candidate_input": "base_url", "candidate_commit_input": "server_commit", "fixtures_input": "fixtures_version", "enrolled": true },
+    "honua-sdk-js":     { "repo": "honua-io/honua-sdk-js",     "workflow": "integration.yml", "candidate_input": "server_image", "candidate_commit_input": "server_commit", "fixtures_input": "fixtures_version", "enrolled": true },
     "honua-sdk-python": { "repo": "honua-io/honua-sdk-python", "workflow": "conformance.yml", "candidate_input": "server_image", "fixtures_input": "fixtures_version", "enrolled": true },
     "honua-mobile":     { "repo": "honua-io/honua-mobile",     "workflow": "live-server-integration.yml", "candidate_input": "honua_server_image", "fixtures_input": "fixtures_version", "enrolled": true },
     "honua-qgis-plugin":{ "repo": "honua-io/honua-qgis-plugin", "workflow": "", "candidate_input": "", "fixtures_input": "", "enrolled": false }
@@ -301,6 +301,48 @@ for g in "honua-server#1238" "honua-server#1166" "honua-server#1167" "honua-serv
     || { echo "[ERROR] shipped registry missing known gap $g" >&2; exit 1; }
 done
 echo "[OK] shipped registry covers the consumer set and the tracked known-server gaps"
+
+# ----------------------------------------------------------------------------
+echo
+echo "12) dispatch receipt binds the exact run; a concurrent green run cannot certify the failing invocation"
+mkdir -p "$WORKDIR/bin"
+cat >"$WORKDIR/dispatch-registry.json" <<'EOF'
+{"known_server_gaps":{},"consumers":{"consumer-a":{"repo":"honua-io/consumer-a","workflow":"conformance.yml","candidate_input":"server_image","fixtures_input":"fixtures_version","enrolled":true}}}
+EOF
+cat >"$WORKDIR/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "api" && "$*" == *"/dispatches"* ]]; then
+  cat >/dev/null
+  printf '%s\n' '{"workflow_run_id":101,"html_url":"https://github.example/runs/101"}'
+elif [[ "$1" == "api" && "$*" == *"/actions/runs/101"* ]]; then
+  printf '%s\n' '{"event":"workflow_dispatch","head_branch":"trunk","head_sha":"workflowsha","inputs":{"server_image":"ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fixtures_version":"fixture-1"}}'
+elif [[ "$1 $2 $3" == "run list --repo" ]]; then
+  # This is concurrent invocation B. Secure code must never discover/select it.
+  printf '102\n'
+elif [[ "$1 $2" == "run watch" && "$3" == "101" ]]; then
+  exit 1
+elif [[ "$1 $2" == "run watch" && "$3" == "102" ]]; then
+  exit 0
+else
+  exit 1
+fi
+EOF
+chmod +x "$WORKDIR/bin/gh"
+if PATH="$WORKDIR/bin:$PATH" \
+  COMPAT_TRAIN_CONSUMER_REGISTRY="$WORKDIR/dispatch-registry.json" \
+  COMPAT_TRAIN_DISPATCH=true COMPAT_TRAIN_DISPATCH_REF=trunk \
+  COMPAT_TRAIN_CANDIDATE_IMAGE="ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  COMPAT_TRAIN_FIXTURES_VERSION=fixture-1 COMPAT_TRAIN_REPOS=consumer-a \
+  "$GATE" >/dev/null; then
+  echo "[ERROR] concurrent green invocation B certified failing invocation A" >&2; exit 1
+fi
+echo "[OK] exact dispatch receipt kept invocation A isolated from concurrent B"
+
+echo
+echo "13) JS dispatch contract uses the server image input, never the external base_url input"
+jq -e '.consumers["honua-sdk-js"].candidate_input == "server_image"' "$SHIPPED" >/dev/null \
+  || { echo "[ERROR] JS candidate image is still mapped to base_url" >&2; exit 1; }
+echo "[OK] JS consumer receives candidate image through server_image"
 
 echo
 echo "Compatibility-train conformance gate smoke check passed."

@@ -150,6 +150,11 @@ if [[ -z "$CANDIDATE_LABEL" ]]; then
   echo "[BLOCK] no candidate under test: set COMPAT_TRAIN_CANDIDATE_IMAGE (server image/tag) or COMPAT_TRAIN_CANDIDATE_VERSION (SDK version). The gate refuses to validate an empty candidate." >&2
   exit 2
 fi
+if is_truthy "$DISPATCH" && [[ -n "$CANDIDATE_IMAGE" ]] \
+  && [[ ! "$CANDIDATE_IMAGE" =~ @sha256:[[:xdigit:]]{64}$ ]]; then
+  echo "[BLOCK] dispatch certification requires an immutable candidate image pinned by sha256 digest (got '${CANDIDATE_IMAGE}')." >&2
+  exit 2
+fi
 
 fixtures_norm="$(normalize "$FIXTURES_VERSION")"
 if [[ -z "$fixtures_norm" || "$fixtures_norm" == "latest" ]]; then
@@ -173,6 +178,8 @@ declare -A REPO_TARGET
 declare -A REPO_COMMIT
 declare -A REPO_DETAIL        # human-readable break/skip detail
 declare -A REPO_GAPS          # known gap issues hit (space-separated)
+declare -A REPO_RUN_ID
+declare -A REPO_RUN_HEAD
 
 # results_field <repo> <jq-path-suffix> -> value or empty
 results_field() {
@@ -196,55 +203,48 @@ dispatch_and_collect() {
   local gh_repo
   gh_repo="$(jq -r ".consumers.\"$repo\".repo" "$REGISTRY")"
 
-  local -a args=(workflow run "$workflow" --repo "$gh_repo" --ref "$DISPATCH_REF")
+  local inputs='{}'
   if [[ -n "$cand_input" ]]; then
-    # mobile/dotnet/python take an image; js takes a base_url. We pass the image
-    # tag/version for image inputs and the candidate label for base_url inputs;
-    # the candidate label is the server target either way.
-    args+=(-f "${cand_input}=${CANDIDATE_LABEL}")
+    inputs="$(jq --arg key "$cand_input" --arg value "$CANDIDATE_LABEL" '. + {($key): $value}' <<<"$inputs")"
   fi
   if [[ -n "$fix_input" ]]; then
-    args+=(-f "${fix_input}=${FIXTURES_VERSION}")
+    inputs="$(jq --arg key "$fix_input" --arg value "$FIXTURES_VERSION" '. + {($key): $value}' <<<"$inputs")"
   fi
   if [[ -n "$commit_input" && -n "$CANDIDATE_COMMIT" ]]; then
-    args+=(-f "${commit_input}=${CANDIDATE_COMMIT}")
+    inputs="$(jq --arg key "$commit_input" --arg value "$CANDIDATE_COMMIT" '. + {($key): $value}' <<<"$inputs")"
   fi
 
-  # Record the newest EXISTING run id before dispatch so we can correlate the run we trigger.
-  # GitHub run databaseIds increase monotonically, so the run we dispatch will have an id
-  # strictly greater than this baseline. Without this we would `gh run list --limit 1` after a
-  # fixed sleep and could certify on an OLDER still-SUCCESSFUL run instead of the one we just
-  # triggered.
-  local pre_id
-  pre_id="$(gh run list --repo "$gh_repo" --workflow "$workflow" --branch "$DISPATCH_REF" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
-  [[ "$pre_id" =~ ^[0-9]+$ ]] || pre_id=0
+  # The versioned dispatch API returns the exact created run. Never discover it
+  # by ordering concurrent runs: that can bind candidate A to candidate B.
+  local dispatch_response run_id run_url receipt
+  dispatch_response="$(gh api --method POST \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/${gh_repo}/actions/workflows/${workflow}/dispatches" \
+    --input - <<<"$(jq -n --arg ref "$DISPATCH_REF" --argjson inputs "$inputs" '{ref:$ref, inputs:$inputs}')" 2>/dev/null)" \
+    || { echo "dispatch-error"; return; }
+  run_id="$(jq -r '.workflow_run_id // empty' <<<"$dispatch_response")"
+  run_url="$(jq -r '.html_url // empty' <<<"$dispatch_response")"
+  [[ "$run_id" =~ ^[0-9]+$ && -n "$run_url" ]] || { echo "dispatch-no-receipt"; return; }
 
-  gh "${args[@]}" >&2 || { echo "dispatch-error"; return; }
-
-  # Poll until a NEW run (databaseId strictly greater than the pre-dispatch baseline) appears,
-  # rather than blindly taking the latest run after a fixed sleep.
-  local run_id="" run_url candidate_id waited=0
-  local poll_interval=5 appear_timeout="${DISPATCH_RUN_APPEAR_TIMEOUT:-120}"
-  while (( waited < appear_timeout )); do
-    sleep "$poll_interval"
-    waited=$(( waited + poll_interval ))
-    candidate_id="$(gh run list --repo "$gh_repo" --workflow "$workflow" --branch "$DISPATCH_REF" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
-    if [[ "$candidate_id" =~ ^[0-9]+$ && "$candidate_id" -gt "$pre_id" ]]; then
-      run_id="$candidate_id"
-      break
-    fi
-  done
-  if [[ -z "$run_id" ]]; then
-    # No NEW run materialized within the bound; do not fall back to a stale prior run.
-    echo "dispatch-not-found"
+  # Re-read the immutable dispatch receipt and compare the exact event/ref and
+  # every candidate/fixture input before accepting its conclusion.
+  receipt="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/${gh_repo}/actions/runs/${run_id}" 2>/dev/null)" \
+    || { echo "receipt-error"; return; }
+  if ! jq -e --arg ref "$DISPATCH_REF" --argjson expected "$inputs" '
+      .event == "workflow_dispatch" and .head_branch == $ref
+      and ((.inputs // {}) as $actual | $expected | to_entries
+           | all(. as $item | $actual[$item.key] == $item.value))' <<<"$receipt" >/dev/null; then
+    echo "receipt-mismatch"
     return
   fi
-  run_url="$(gh run view "$run_id" --repo "$gh_repo" --json url -q .url 2>/dev/null || true)"
+  local run_head
+  run_head="$(jq -r '.head_sha // empty' <<<"$receipt")"
   if ! timeout "$DISPATCH_TIMEOUT" gh run watch "$run_id" --repo "$gh_repo" --exit-status >&2 2>&1; then
-    printf 'failure\t%s\n' "$run_url"
+    printf 'failure\t%s\t%s\t%s\n' "$run_url" "$run_id" "$run_head"
     return
   fi
-  printf 'success\t%s\n' "$run_url"
+  printf 'success\t%s\t%s\t%s\n' "$run_url" "$run_id" "$run_head"
 }
 
 echo "[INFO] candidate=${CANDIDATE_LABEL} fixtures_version=${FIXTURES_VERSION} mode=$( is_truthy "$DISPATCH" && echo dispatch || echo results ) environment=${ENVIRONMENT}"
@@ -283,8 +283,10 @@ for repo in $TRAIN_REPOS; do
     require_command gh
     out="$(dispatch_and_collect "$repo" "$workflow" "$cand_input" "$fix_input" "$commit_input")"
     conclusion="${out%%$'\t'*}"
-    run_url="${out#*$'\t'}"
+    IFS=$'\t' read -r _ run_url run_id run_head <<<"$out"
     [[ "$run_url" != "$out" ]] && REPO_TARGET["$repo"]="${run_url}"
+    REPO_RUN_ID["$repo"]="${run_id:-}"
+    REPO_RUN_HEAD["$repo"]="${run_head:-}"
     case "$conclusion" in
       success) conclusion="success" ;;
       *) conclusion="failure" ;;
@@ -398,11 +400,15 @@ build_evidence() {
       --arg commit "${REPO_COMMIT[$repo]:-unset}" \
       --arg detail "${REPO_DETAIL[$repo]:-}" \
       --arg gaps "${REPO_GAPS[$repo]:-}" \
+      --arg run_id "${REPO_RUN_ID[$repo]:-}" \
+      --arg run_head "${REPO_RUN_HEAD[$repo]:-}" \
       '. + { ($repo): {
           status: $status,
           local_stack: $local_stack,
           base_url: $base_url,
           commit: $commit,
+          run_id: $run_id,
+          workflow_head_sha: $run_head,
           detail: $detail,
           known_gaps: ($gaps | if . == "" then [] else (split(" ") | map(select(length > 0))) end)
         } }' <<<"$repos_json")"
@@ -413,9 +419,10 @@ build_evidence() {
     --arg image "${CANDIDATE_IMAGE}" \
     --arg env "${ENVIRONMENT}" \
     --arg fixtures "${FIXTURES_VERSION}" \
+    --arg commit "${CANDIDATE_COMMIT}" \
     --argjson repos "$repos_json" \
     '{
-      candidate: { version: $version, image: $image },
+      candidate: { version: $version, image: $image, sourceCommit: $commit },
       environment: $env,
       fixtures_version: $fixtures,
       repos: $repos
