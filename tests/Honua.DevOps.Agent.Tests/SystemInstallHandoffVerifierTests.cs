@@ -18,7 +18,7 @@ public sealed class SystemInstallHandoffVerifierTests
     private const string Integrity = "sha512-dGVzdC1pbnRlZ3JpdHk=";
     private const string AdminKey = "system-verifier-secret-do-not-print";
 
-    [Fact]
+    [LinuxFact]
     public async Task RealVerifier_ProvesLiveServerAndMultiPageProxyAndReapsChild()
     {
         using VerifierFixture fixture = new();
@@ -35,9 +35,11 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.True(await fixture.WaitForChildReapedAsync());
     }
 
-    [Theory]
+    [LinuxTheory]
     [InlineData("noise", "mcp-stdout-noise")]
     [InlineData("malformed", "mcp-response-malformed")]
+    [InlineData("bad-notification-version", "mcp-response-malformed")]
+    [InlineData("bad-notification-missing-version", "mcp-response-malformed")]
     [InlineData("out-of-order", "mcp-response-out-of-order")]
     [InlineData("repeat-cursor", "mcp-pagination-loop")]
     [InlineData("missing-tool", "mcp-roster-incomplete")]
@@ -55,7 +57,7 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.True(await fixture.WaitForChildReapedAsync());
     }
 
-    [Fact]
+    [LinuxFact]
     public async Task SilentProxy_TerminatesAtOverallDeadlineAndIsReaped()
     {
         using VerifierFixture fixture = new(TimeSpan.FromMilliseconds(750));
@@ -68,7 +70,7 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.True(await fixture.WaitForChildReapedAsync());
     }
 
-    [Fact]
+    [LinuxFact]
     public async Task CandidateSubstringIsNotAcceptedAsIdentity()
     {
         using VerifierFixture fixture = new();
@@ -81,7 +83,7 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.False(fixture.ChildStarted);
     }
 
-    [Theory]
+    [LinuxTheory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
     public async Task AuthenticationFailuresNeverLaunchProxy(HttpStatusCode status)
@@ -96,7 +98,7 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.False(fixture.ChildStarted);
     }
 
-    [Fact]
+    [LinuxFact]
     public async Task MissingSecretAndUnavailableRegistryReturnTypedNonReadyResults()
     {
         using VerifierFixture fixture = new();
@@ -113,7 +115,7 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.False(fixture.ChildStarted);
     }
 
-    [Fact]
+    [LinuxFact]
     public async Task HealthFailureAndInstalledPackageIntegrityMismatchFailBeforeProxyLaunch()
     {
         using VerifierFixture fixture = new(npmIntegrity: "sha512-d3Jvbmc=");
@@ -130,7 +132,20 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.False(healthyPackage.ChildStarted);
     }
 
-    [Fact]
+    [LinuxFact]
+    public async Task McpNotificationsAreIgnoredWhileAwaitingResponses()
+    {
+        using VerifierFixture fixture = new();
+        await using LocalCandidateServer server = await LocalCandidateServer.StartAsync(Candidate, AdminKey);
+
+        InstallHandoffVerificationResult result = await fixture.VerifyAsync(server.BaseUrl, "notifications");
+
+        Assert.True(result.Succeeded, result.Detail);
+        Assert.Equal("install-handoff-verified", result.Status);
+        Assert.True(result.ChildReaped);
+    }
+
+    [LinuxFact]
     public void SecretScanDetectsResolvedKeyAnywhereInTheEvidenceResult()
     {
         OperationBackendStep leaky = new("verify-auth", "https://cell/api", true, "key=" + AdminKey, "<redacted>", false);
@@ -139,6 +154,11 @@ public sealed class SystemInstallHandoffVerifierTests
         Assert.False(SystemInstallHandoffVerifier.ContainsSecret(clean, AdminKey));
         Assert.True(SystemInstallHandoffVerifier.ContainsSecret(clean with { Steps = [leaky] }, AdminKey));
         Assert.True(SystemInstallHandoffVerifier.ContainsSecret(clean with { Detail = AdminKey }, AdminKey));
+
+        InstallHandoffVerificationResult expected = clean with { ObservedTools = ["honua_admin_server_status"] };
+        Assert.False(SystemInstallHandoffVerifier.ContainsSecret(expected, "admin", ["honua_admin_server_status"]));
+        InstallHandoffVerificationResult unexpected = clean with { ObservedTools = ["proxy-admin-leak"] };
+        Assert.True(SystemInstallHandoffVerifier.ContainsSecret(unexpected, "admin", ["honua_admin_server_status"]));
     }
 
     private static string Serialize(InstallHandoffVerificationResult result)
@@ -209,6 +229,9 @@ while IFS= read -r line; do
   if [[ "$line" != *'"id"'* ]]; then continue; fi
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   if [[ "$mode" == noise ]]; then printf '%s\n' 'starting proxy'; mode=happy; continue; fi
+  if [[ "$mode" == notifications ]]; then printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}'; mode=happy; fi
+  if [[ "$mode" == bad-notification-version ]]; then printf '%s\n' '{"jsonrpc":"1.0","method":"garbage"}'; mode=happy; fi
+  if [[ "$mode" == bad-notification-missing-version ]]; then printf '%s\n' '{"method":"notifications/tools/list_changed"}'; mode=happy; fi
   if [[ "$mode" == malformed ]]; then printf '%s\n' '{"jsonrpc":"2.0","result":{}}'; mode=happy; continue; fi
   if [[ "$mode" == out-of-order ]]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$((id + 1))"; mode=happy; continue; fi
   if [[ "$line" == *'"initialize"'* ]]; then
@@ -293,6 +316,28 @@ done
             await loop;
             listener.Close();
             stop.Dispose();
+        }
+    }
+}
+
+internal sealed class LinuxFactAttribute : Xunit.FactAttribute
+{
+    public LinuxFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip = "The system install handoff verifier requires Linux.";
+        }
+    }
+}
+
+internal sealed class LinuxTheoryAttribute : Xunit.TheoryAttribute
+{
+    public LinuxTheoryAttribute()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip = "The system install handoff verifier requires Linux.";
         }
     }
 }

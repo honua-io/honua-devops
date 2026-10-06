@@ -140,11 +140,11 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         }
         using (health)
         {
-        steps.Add(HttpStep("verify-health", new Uri(baseUri, "healthz/ready"), health));
-        if (!health.IsSuccessStatusCode)
-        {
-            return Failed("handoff-health-failed", "The installed server readiness endpoint was not healthy.", steps);
-        }
+            steps.Add(HttpStep("verify-health", new Uri(baseUri, "healthz/ready"), health));
+            if (!health.IsSuccessStatusCode)
+            {
+                return Failed("handoff-health-failed", "The installed server readiness endpoint was not healthy.", steps);
+            }
         }
 
         using HttpRequestMessage identityRequest = new(HttpMethod.Get, new Uri(baseUri, "api/v1/admin/version"));
@@ -165,19 +165,19 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         string identityBytes;
         using (identityResponse)
         {
-        identityBytes = await identityResponse.Content.ReadAsStringAsync(verificationToken);
-        steps.Add(HttpStep("verify-auth-and-server-identity", identityRequest.RequestUri!, identityResponse));
-        if (!identityResponse.IsSuccessStatusCode || string.IsNullOrWhiteSpace(identityBytes))
-        {
-            return Failed("handoff-auth-failed", "The authenticated Admin identity probe failed.", steps);
-        }
-        if (!ContainsExactStructuredValue(identityBytes, request.CandidateReference))
-        {
-            return Failed(
-                "candidate-identity-mismatch",
-                "The authenticated server identity does not contain an exact structured value matching the manifest-pinned candidate reference.",
-                steps);
-        }
+            identityBytes = await identityResponse.Content.ReadAsStringAsync(verificationToken);
+            steps.Add(HttpStep("verify-auth-and-server-identity", identityRequest.RequestUri!, identityResponse));
+            if (!identityResponse.IsSuccessStatusCode || string.IsNullOrWhiteSpace(identityBytes))
+            {
+                return Failed("handoff-auth-failed", "The authenticated Admin identity probe failed.", steps);
+            }
+            if (!ContainsExactStructuredValue(identityBytes, request.CandidateReference))
+            {
+                return Failed(
+                    "candidate-identity-mismatch",
+                    "The authenticated server identity does not contain an exact structured value matching the manifest-pinned candidate reference.",
+                    steps);
+            }
         }
 
         ProcessStartInfo start = new(request.Command)
@@ -294,9 +294,9 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
                 ChildReaped: proxy.HasExited);
             // The verdict is earned by scanning the exact result that becomes evidence,
             // never asserted. A leaked key fails the handoff instead of being recorded.
-            if (ContainsSecret(verified, adminKey))
+            if (ContainsSecret(verified, adminKey, request.RequiredTools))
             {
-                return Failed("secret-scan-failed", "The verification result contained resolved secret material.", []);
+                return Failed("secret-scan-failed", "The persisted proxy evidence contained resolved secret material.", []);
             }
             if (!verified.ChildReaped)
             {
@@ -323,12 +323,26 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         }
     }
 
-    internal static bool ContainsSecret(InstallHandoffVerificationResult result, string secret)
+    internal static bool ContainsSecret(
+        InstallHandoffVerificationResult result,
+        string secret,
+        IReadOnlyCollection<string>? verifierOwnedValues = null)
     {
         if (string.IsNullOrEmpty(secret))
         {
             return false;
         }
+        if (verifierOwnedValues is not null)
+        {
+            // The receipt persists observed tool names. Required names are verifier-owned
+            // metadata, so only scan unexpected names supplied by the proxy. Serializing
+            // the whole result would reject harmless names such as `honua_admin_server_status`
+            // when an operator uses a short key like `admin`.
+            return result.ObservedTools.Any(value =>
+                !verifierOwnedValues.Contains(value, StringComparer.Ordinal)
+                && value.Contains(secret, StringComparison.Ordinal));
+        }
+
         string serialized = JsonSerializer.Serialize(result);
         return serialized.Contains(secret, StringComparison.Ordinal)
             || serialized.Contains(JsonSerializer.Serialize(secret).Trim('"'), StringComparison.Ordinal);
@@ -355,7 +369,10 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
     {
         await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new
         {
-            jsonrpc = "2.0", id, method, @params = parameters
+            jsonrpc = "2.0",
+            id,
+            method,
+            @params = parameters
         }));
         await process.StandardInput.FlushAsync(cancellationToken);
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -378,16 +395,36 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             }
             using (document)
             {
-            JsonElement root = document.RootElement;
-            if (!root.TryGetProperty("id", out JsonElement responseId) || !responseId.TryGetInt32(out int value))
-            {
-                throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
-            }
-            if (value != id)
-            {
-                throw new VerificationFailure("mcp-response-out-of-order", "The proxy returned an MCP response for a different request id.");
-            }
-            return root.Clone();
+                JsonElement root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP message that is not a JSON-RPC object.");
+                }
+                if (!root.TryGetProperty("id", out JsonElement responseId))
+                {
+                    // Only a well-formed JSON-RPC 2.0 notification may be skipped; anything
+                    // else id-less is malformed protocol output and must fail closed.
+                    if (root.TryGetProperty("jsonrpc", out JsonElement notificationVersion)
+                        && notificationVersion.ValueKind == JsonValueKind.String
+                        && string.Equals(notificationVersion.GetString(), "2.0", StringComparison.Ordinal)
+                        && root.TryGetProperty("method", out JsonElement notificationMethod)
+                        && notificationMethod.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(notificationMethod.GetString()))
+                    {
+                        continue;
+                    }
+
+                    throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
+                }
+                if (!responseId.TryGetInt32(out int value))
+                {
+                    throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP response without an integer id.");
+                }
+                if (value != id)
+                {
+                    throw new VerificationFailure("mcp-response-out-of-order", "The proxy returned an MCP response for a different request id.");
+                }
+                return root.Clone();
             }
         }
     }
