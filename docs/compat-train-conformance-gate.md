@@ -54,7 +54,7 @@ targets a candidate:
 | Consumer | Workflow | Candidate input | Enrolled |
 | --- | --- | --- | --- |
 | `honua-sdk-dotnet` | `conformance.yml` | `server_image` | yes |
-| `honua-sdk-js` | `integration.yml` | `base_url` (+ `server_commit`) | yes |
+| `honua-sdk-js` | `integration.yml` | `server_image` is provenance only (`exercises_candidate_image: false`; dispatch refuses it) | yes |
 | `honua-sdk-python` | `conformance.yml` | `server_image` | yes |
 | `honua-mobile` | `live-server-integration.yml` | `honua_server_image` | yes |
 | `honua-qgis-plugin` | _(none yet)_ | — | no |

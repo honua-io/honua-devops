@@ -128,7 +128,10 @@ bundle="$(
     --arg requiredSurfaces "$REQUIRED_SURFACES" \
     --arg mode "$MODE" \
     --arg allowWaivers "$ALLOW_WAIVERS" \
-    --arg environment "$ENVIRONMENT" '
+    --arg environment "$ENVIRONMENT" \
+    --arg dispatchFixtures "${COMPAT_TRAIN_FIXTURES_VERSION:-}" \
+    --arg dispatchCommit "${COMPAT_TRAIN_CANDIDATE_COMMIT:-}" \
+    --arg dispatchVersion "${COMPAT_TRAIN_CANDIDATE_VERSION:-}" '
 
     ($manifest[0]) as $m |
 
@@ -254,11 +257,35 @@ bundle="$(
       environment: (if $environment == "" then ($m.channel // "preview") else $environment end),
       observedAt: $m.observedAt,
       mode: $mode,
-      candidate: {
-        ref: $m.candidate.ref,
-        refSource: $m.candidate.refSource,
-        image: ($m.candidate.image // null)
-      },
+      # Identity the RC aggregator compares to conformance evidence.
+      # Manifest values win. Dispatch pins fill only fields the manifest
+      # schema does not carry (fixtures today) or omits, so a real manifest
+      # plus the orchestrator inputs can satisfy candidate-identity. A
+      # manifest value that disagrees with the dispatch pin is kept, and
+      # the aggregator reports the mismatch.
+      candidate: (
+        def pin($v):
+          if ($v | type) == "string" and (($v | gsub("^\\s+|\\s+$"; "")) | length) > 0
+          then ($v | gsub("^\\s+|\\s+$"; ""))
+          else null end;
+        (pin($m.candidate.fixturesVersion // $m.fixturesVersion // "")) as $manifestFixtures |
+        (pin($dispatchFixtures)) as $dispatchFixturesPin |
+        (pin($m.candidate.sourceCommit // $m.candidate.ref // "")) as $manifestCommit |
+        (pin($dispatchCommit)) as $dispatchCommitPin |
+        (pin($m.candidate.version // "")) as $manifestVersion |
+        (pin($m.releaseId // "")) as $manifestRelease |
+        (pin($dispatchVersion)) as $dispatchVersionPin |
+        {
+          ref: ($m.candidate.ref // null),
+          refSource: ($m.candidate.refSource // null),
+          sourceCommit: (if $manifestCommit != null then $manifestCommit else ($dispatchCommitPin // null) end),
+          version: (if $manifestVersion != null then $manifestVersion
+                    elif $manifestRelease != null then $manifestRelease
+                    else ($dispatchVersionPin // null) end),
+          fixturesVersion: (if $manifestFixtures != null then $manifestFixtures else ($dispatchFixturesPin // null) end),
+          image: ($m.candidate.image // null)
+        }
+      ),
       verdict: (if $ok then "pass" else "fail" end),
       summary: {
         checks: ($checks | length),

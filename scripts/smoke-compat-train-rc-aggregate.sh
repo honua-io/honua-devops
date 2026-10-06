@@ -39,7 +39,7 @@ BUNDLE="$WORKDIR/rc-bundle.json"
 # conformance evidence (producer output shape: repos.<repo>.{status,...})
 cat >"$WORKDIR/conformance-green.json" <<'EOF'
 {
-  "candidate": { "version": "2026.06.0-rc.1", "image": "ghcr.io/honua-io/honua-server:2026.06.0-rc.1" },
+  "candidate": { "version": "honua-2026-05-preview", "image": "ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sourceCommit": "deadbeef" },
   "environment": "staging",
   "fixtures_version": "0.1.0-alpha.1",
   "repos": {
@@ -65,7 +65,7 @@ cat >"$WORKDIR/validation-pass.json" <<'EOF'
 {
   "kind": "compat-train-release-validation",
   "releaseId": "honua-2026-05-preview", "channel": "preview", "environment": "preview",
-  "candidate": { "ref": "deadbeef" },
+  "candidate": { "ref": "deadbeef", "fixturesVersion": "0.1.0-alpha.1", "image": { "repository": "ghcr.io/honua-io/honua-server", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "receipt": { "url": "https://github.example/evidence/1" } } },
   "verdict": "pass",
   "summary": { "surfacesMissing": [] },
   "followUps": []
@@ -76,7 +76,7 @@ cat >"$WORKDIR/validation-fail.json" <<'EOF'
 {
   "kind": "compat-train-release-validation",
   "releaseId": "honua-2026-05-preview", "channel": "preview", "environment": "preview",
-  "candidate": { "ref": "deadbeef" },
+  "candidate": { "ref": "deadbeef", "fixturesVersion": "0.1.0-alpha.1", "image": { "repository": "ghcr.io/honua-io/honua-server", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "receipt": { "url": "https://github.example/evidence/1" } } },
   "verdict": "fail",
   "summary": { "surfacesMissing": ["terraform"] },
   "followUps": [
@@ -216,4 +216,50 @@ grep -q "compatibility-train release-candidate validation" "$WORKDIR/notes.md" \
 echo "[OK] release notes written"
 
 echo
+echo
+echo "Validating candidate identity: green conformance A plus green manifest B blocks"
+jq '.candidate.image.digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$WORKDIR/validation-pass.json" >"$WORKDIR/validation-other.json"
+if COMPAT_TRAIN_CONFORMANCE_EVIDENCE="$WORKDIR/conformance-green.json" \
+   COMPAT_TRAIN_RELEASE_GATE_RESULT=pass \
+   COMPAT_TRAIN_VALIDATION_BUNDLE="$WORKDIR/validation-other.json" \
+   COMPAT_TRAIN_RC_BUNDLE_OUTPUT="$BUNDLE" "$AGG" >/dev/null; then
+  echo "[ERROR] contradictory candidate images produced a releasable bundle" >&2; exit 1
+fi
+jq -e '.layers[] | select(.name=="candidate-identity") | .mismatches | index("image")' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] image identity mismatch was not reported" >&2; exit 1; }
+echo "[OK] contradictory candidate identities blocked"
+
+echo
+echo "Validating live certification requires an image receipt"
+jq 'del(.candidate.image.receipt)' "$WORKDIR/validation-pass.json" >"$WORKDIR/validation-no-receipt.json"
+if COMPAT_TRAIN_CONFORMANCE_EVIDENCE="$WORKDIR/conformance-green.json" \
+   COMPAT_TRAIN_RELEASE_GATE_RESULT=pass \
+   COMPAT_TRAIN_VALIDATION_BUNDLE="$WORKDIR/validation-no-receipt.json" \
+   COMPAT_TRAIN_RC_BUNDLE_OUTPUT="$BUNDLE" "$AGG" >/dev/null; then
+  echo "[ERROR] live certification passed without an image receipt" >&2; exit 1
+fi
+echo "[OK] missing live image receipt blocked"
+
+echo
+echo "Validating a green probe for a different candidate does not satisfy live-probe"
+cat >"$WORKDIR/probe-other.json" <<'EOF'
+{ "kind": "compat-train-live-probe", "releaseId": "honua-other", "candidateRef": "cafebabe",
+  "summary": { "probes": 1, "passed": 1, "failed": 0, "blocked": 0 } }
+EOF
+if COMPAT_TRAIN_CONFORMANCE_EVIDENCE="$WORKDIR/conformance-green.json" \
+   COMPAT_TRAIN_RELEASE_GATE_RESULT=pass \
+   COMPAT_TRAIN_VALIDATION_BUNDLE="$WORKDIR/validation-pass.json" \
+   COMPAT_TRAIN_PROBE_BUNDLE="$WORKDIR/probe-other.json" \
+   COMPAT_TRAIN_RC_REQUIRE_PROBE=true \
+   COMPAT_TRAIN_RC_BUNDLE_OUTPUT="$BUNDLE" "$AGG" >/dev/null; then
+  echo "[ERROR] a green probe for another candidate was accepted" >&2; exit 1
+fi
+jq -e '.layers[] | select(.name=="live-probe") | .status=="fail"' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] mismatched probe was not failed" >&2; exit 1; }
+jq -e '.layers[] | select(.name=="candidate-identity") | .mismatches | index("probe.candidateRef")' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] probe candidateRef mismatch was not reported" >&2; exit 1; }
+jq -e '.layers[] | select(.name=="candidate-identity") | .mismatches | index("probe.releaseId")' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] probe releaseId mismatch was not reported" >&2; exit 1; }
+echo "[OK] probe identity is bound to the candidate before its status is accepted"
+
 echo "Compatibility-train RC aggregator smoke check passed."
