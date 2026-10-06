@@ -53,6 +53,10 @@ internal static class ToolCallAuditor
         string status = "unknown";
         string summary = string.Empty;
         bool mutated = false;
+        // An authoritative backend acknowledgement reported by the tool (not derived from
+        // projected steps) and the deterministic idempotency key the write was issued under.
+        bool backendAcknowledged = false;
+        string? reportedIdempotencyKey = null;
         IReadOnlyList<OperationBackendStep>? backendSteps = null;
         OperationEvidence? evidence = null;
         ProvisioningLineage? provisioningLineage = null;
@@ -91,6 +95,8 @@ internal static class ToolCallAuditor
             summary = Redaction.Scrub(
                 $"Honua MCP ops loop: health={opsLoop.OverallHealth ?? "unknown"}, evidence={opsLoop.EvidencePosture.Status}, findings={opsLoop.Findings.Count}, proposals={opsLoop.Findings.Count(finding => finding.Proposal is not null)}.");
             mutated = opsLoop.MutationAcknowledged;
+            backendAcknowledged = opsLoop.MutationAcknowledged;
+            reportedIdempotencyKey = opsLoop.MutationIdempotencyKey;
             serverOperations = opsLoop.ServerOperations;
             provisioningLineage = opsLoop.ProvisioningLineage;
         }
@@ -117,6 +123,20 @@ internal static class ToolCallAuditor
                     if (TryGetProperty(root, "Summary", out JsonElement summaryElement) && summaryElement.ValueKind == JsonValueKind.String)
                     {
                         summary = Redaction.Scrub(summaryElement.GetString() ?? string.Empty);
+                    }
+
+                    if (TryGetProperty(root, "MutationAcknowledged", out JsonElement acknowledgedElement)
+                        && acknowledgedElement.ValueKind == JsonValueKind.True)
+                    {
+                        mutated = true;
+                        backendAcknowledged = true;
+                    }
+
+                    if (TryGetProperty(root, "MutationIdempotencyKey", out JsonElement keyElement)
+                        && keyElement.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(keyElement.GetString()))
+                    {
+                        reportedIdempotencyKey = keyElement.GetString();
                     }
 
                     if (TryGetProperty(root, "BackendSteps", out JsonElement stepsElement) && stepsElement.ValueKind == JsonValueKind.Array)
@@ -149,7 +169,7 @@ internal static class ToolCallAuditor
 
         string? operationId = operationResponse?.Actuation?.OperationId
             ?? provisioningLineage?.ProvisioningOperationId;
-        string? idempotencyKey = operationResponse?.Actuation?.IdempotencyKey;
+        string? idempotencyKey = operationResponse?.Actuation?.IdempotencyKey ?? reportedIdempotencyKey;
         if (idempotencyKey is null && provisioningLineage is not null)
         {
             idempotencyKey = call.ToolName switch
@@ -223,7 +243,8 @@ internal static class ToolCallAuditor
                     SinkFailure: $"{exception.GetType().Name}: {Redaction.Scrub(exception.Message)}",
                     ReturnedStatus: status,
                     MutationAttempted: true,
-                    BackendAcknowledged: backendSteps?.Any(step => step.MutatesState && step.Success) == true,
+                    BackendAcknowledged: backendAcknowledged
+                        || backendSteps?.Any(step => step.MutatesState && step.Success) == true,
                     BackendSteps: backendSteps is null
                         ? []
                         : backendSteps.Select(step => new AuditRecoveryStep(

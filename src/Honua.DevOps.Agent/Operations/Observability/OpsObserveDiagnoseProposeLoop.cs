@@ -249,6 +249,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         string status = evidence.Status == "complete-fresh" ? "diagnosed" : "evidence-incomplete";
         ServerOperationLineage? serverLineage = null;
         bool mutationAcknowledged = false;
+        string? mutationIdempotencyKey = null;
         if (proposeRecommendedAction && evidence.Status == "complete-fresh")
         {
             ProposalAttempt attempt = await TryProposeOneAsync(
@@ -260,6 +261,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             status = attempt.Status;
             serverLineage = attempt.ServerLineage;
             mutationAcknowledged = attempt.MutationAcknowledged;
+            mutationIdempotencyKey = attempt.IdempotencyKey;
         }
 
         if (parsedFindings.Truncated)
@@ -302,7 +304,8 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             Limitations: limitations,
             ServerOperations: serverLineage is null ? null : [serverLineage],
             ProvisioningLineage: serverLineage?.ProvisioningLineage,
-            MutationAcknowledged: mutationAcknowledged);
+            MutationAcknowledged: mutationAcknowledged,
+            MutationIdempotencyKey: mutationIdempotencyKey);
     }
 
     private static EvidenceEvaluation EvaluateEvidence(
@@ -441,7 +444,8 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
     private readonly record struct ProposalAttempt(
         string Status,
         ServerOperationLineage? ServerLineage,
-        bool MutationAcknowledged);
+        bool MutationAcknowledged,
+        string? IdempotencyKey = null);
 
     private async Task<ProposalAttempt> TryProposeOneAsync(
         List<OpsLoopFindingReport> findings,
@@ -479,13 +483,14 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         // request and executes nothing. It goes through the actuation spine so the finding
         // identity and the policy decision are sealed with it, and so it fails closed when
         // the audit/receipt sink is unavailable (issue #153).
+        string idempotencyKey = $"honua-devops:ops-finding:{candidate.FindingId}";
         ActuationAuthorization authorization = _spine.Authorize(new ActuationRequest(
             ActuatorId: "honua.ops-finding.propose",
             Action: "propose",
             Target: candidate.FindingId,
             Environments: [],
             DesiredState: $"finding={candidate.FindingId}",
-            IdempotencyKey: $"honua-devops:ops-finding:{candidate.FindingId}",
+            IdempotencyKey: idempotencyKey,
             PolicyGate: "proposal-required",
             AuthorizationDryRun: true,
             Actor: "honua-devops:ops-loop",
@@ -509,7 +514,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
         {
             limitations.Add(
                 $"Finding proposal failed closed: {result.CallResult.Detail}. The server gateway did not confirm an outcome.");
-            return new("proposal-failed", null, mutationAcknowledged);
+            return new("proposal-failed", null, mutationAcknowledged, idempotencyKey);
         }
 
         OpsLoopProposal proposal;
@@ -523,7 +528,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             // The server already acknowledged the lifecycle-entry write. Preserve its
             // canonical receipt for reconciliation even when the presentation projection
             // cannot parse the gateway status.
-            return new("proposal-failed", result.CallResult.ServerLineage, mutationAcknowledged);
+            return new("proposal-failed", result.CallResult.ServerLineage, mutationAcknowledged, idempotencyKey);
         }
 
         findings[index] = candidate with { Proposal = proposal };
@@ -535,7 +540,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
                 ? "lineage-evidence-invalid"
                 : "proposal-failed";
             // Server ids stay visible for reconciliation. The unproven join is not attached.
-            return new(failure, null, mutationAcknowledged);
+            return new(failure, null, mutationAcknowledged, idempotencyKey);
         }
 
         return new(proposal.GatewayStatus switch
@@ -548,7 +553,7 @@ internal sealed class OpsObserveDiagnoseProposeLoop(
             "Canceled" => "execution-canceled",
             "Blocked" or "NotSupported" => "proposal-blocked",
             _ => "proposal-routed"
-        }, result.CallResult.ServerLineage, mutationAcknowledged);
+        }, result.CallResult.ServerLineage, mutationAcknowledged, idempotencyKey);
     }
 
     private static async Task<JsonElement> CallRequiredAsync(
