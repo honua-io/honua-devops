@@ -35,18 +35,21 @@ jobs:
         with:
           python-version: "3.x"
 
+      # The smoke script checks the public-content inventory against the checked-in
+      # tree, so it must run before generation rewrites compatibility/scoreboard.
+      - name: Smoke scoreboard generator
+        run: |
+          bash -n scripts/smoke-client-compat-scoreboard.sh
+          ./scripts/smoke-client-compat-scoreboard.sh
+
       - name: Generate scoreboard
         run: |
           python3 scripts/check-public-compatibility-content.py
-          bash -n scripts/smoke-client-compat-scoreboard.sh
           python3 scripts/generate-client-compat-scoreboard.py \
             --packs-root compatibility/releases \
             --catalog compatibility/clients.catalog.json \
             --output-dir compatibility/scoreboard \
             --hard-fail
-
-      - name: Smoke scoreboard generator
-        run: ./scripts/smoke-client-compat-scoreboard.sh
 
       - name: Upload static scoreboard artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
