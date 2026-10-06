@@ -37,6 +37,7 @@ jobs:
 
       - name: Generate scoreboard
         run: |
+          python3 scripts/check-public-compatibility-content.py
           bash -n scripts/smoke-client-compat-scoreboard.sh
           python3 scripts/generate-client-compat-scoreboard.py \
             --packs-root compatibility/releases \
