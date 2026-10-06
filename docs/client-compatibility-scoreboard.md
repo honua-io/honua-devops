@@ -61,6 +61,6 @@ Exit code `2` means the scoreboard found a release-blocking compatibility failur
 
 ## Publishing
 
-`.github/workflows/client-compatibility-scoreboard.yml` runs the generator on pull requests and pushes, uploads the generated static site artifact, and deploys the HTML scoreboard to GitHub Pages on `main` and release events.
+`.github/workflows/client-compatibility-scoreboard.yml` runs on pull requests and pushes to `trunk`. It generates the scoreboard only when `compatibility/releases` contains packs; otherwise it publishes the checked-in scoreboard, and it refuses to upload a matrix with no releases. It deploys the HTML scoreboard to GitHub Pages when `HONUA_DEPLOY_PAGES` is true.
 
 That gives the repo a public scoreboard page, JSON feed, RSS feed, and badge artifact without needing a separate publishing service for the initial baseline.

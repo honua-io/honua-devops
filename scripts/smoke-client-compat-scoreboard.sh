@@ -253,4 +253,39 @@ if [[ "$unknown_exit" -eq 0 ]]; then
   exit 1
 fi
 
+echo "Validating CI does not regenerate the scoreboard from an absent release tree"
+WORKFLOW="$REPO_ROOT/.github/workflows/client-compatibility-scoreboard.yml"
+grep -nF -- 'No release packs under compatibility/releases; keeping the checked-in scoreboard.' "$WORKFLOW" >/dev/null
+grep -nF -- 'refusing to publish an empty scoreboard' "$WORKFLOW" >/dev/null
+# The generator still replaces a populated matrix with "releases": [] when the
+# packs root is missing, and --hard-fail exits 0. The workflow must not do that
+# to the tree it uploads.
+ABSENT_OUT="$WORKDIR/absent-packs-out"
+mkdir -p "$ABSENT_OUT"
+cp "$REPO_ROOT/compatibility/scoreboard/compatibility-matrix.json" "$ABSENT_OUT/before.json"
+set +e
+python3 "$REPO_ROOT/scripts/generate-client-compat-scoreboard.py" \
+  --packs-root "$WORKDIR/missing-releases" \
+  --catalog "$REPO_ROOT/compatibility/clients.catalog.json" \
+  --output-dir "$ABSENT_OUT" \
+  --hard-fail
+absent_exit=$?
+set -e
+if [[ "$absent_exit" -ne 0 ]]; then
+  echo "[ERROR] Expected --hard-fail to exit 0 when no release packs exist, got ${absent_exit}." >&2
+  exit 1
+fi
+python3 - "$ABSENT_OUT/before.json" "$ABSENT_OUT/compatibility-matrix.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+before = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+after = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if not before.get("releases"):
+    raise SystemExit("[ERROR] Checked-in scoreboard fixture has no releases.")
+if after.get("releases"):
+    raise SystemExit("[ERROR] Expected a missing packs root to generate zero releases.")
+PY
+
 echo "Client compatibility scoreboard smoke check passed."

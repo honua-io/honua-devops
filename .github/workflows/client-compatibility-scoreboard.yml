@@ -35,18 +35,54 @@ jobs:
         with:
           python-version: "3.x"
 
+      # The smoke script checks the public-content inventory against the checked-in
+      # tree. It runs first so generation, when packs exist, cannot hide a
+      # checked-in policy failure by rewriting compatibility/scoreboard.
+      - name: Smoke scoreboard generator
+        run: |
+          bash -n scripts/smoke-client-compat-scoreboard.sh
+          ./scripts/smoke-client-compat-scoreboard.sh
+
+      # compatibility/releases is not checked in. Running the generator against
+      # that absent tree overwrites the populated scoreboard with "releases": []
+      # and --hard-fail still exits 0, so the artifact/Pages upload would publish
+      # an empty site. Generate only when real packs exist, then refuse an empty
+      # matrix before upload. Otherwise publish the checked-in scoreboard.
       - name: Generate scoreboard
         run: |
+          set -euo pipefail
           python3 scripts/check-public-compatibility-content.py
-          bash -n scripts/smoke-client-compat-scoreboard.sh
-          python3 scripts/generate-client-compat-scoreboard.py \
-            --packs-root compatibility/releases \
-            --catalog compatibility/clients.catalog.json \
-            --output-dir compatibility/scoreboard \
-            --hard-fail
+          pack_count=0
+          if [[ -d compatibility/releases ]]; then
+            while IFS= read -r -d '' pack_dir; do
+              if [[ -f "$pack_dir/evidence/session.json" || -f "$pack_dir/compatibility-results.json" ]]; then
+                pack_count=$((pack_count + 1))
+              fi
+            done < <(find compatibility/releases -mindepth 2 -maxdepth 2 -type d -print0)
+          fi
+          if [[ "$pack_count" -eq 0 ]]; then
+            echo "No release packs under compatibility/releases; keeping the checked-in scoreboard."
+          else
+            python3 scripts/generate-client-compat-scoreboard.py \
+              --packs-root compatibility/releases \
+              --catalog compatibility/clients.catalog.json \
+              --output-dir compatibility/scoreboard \
+              --hard-fail
+            python3 scripts/check-public-compatibility-content.py
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
 
-      - name: Smoke scoreboard generator
-        run: ./scripts/smoke-client-compat-scoreboard.sh
+          path = Path("compatibility/scoreboard/compatibility-matrix.json")
+          scoreboard = json.loads(path.read_text(encoding="utf-8"))
+          releases = scoreboard.get("releases") or []
+          if not releases:
+              raise SystemExit(
+                  "compatibility-matrix.json has no releases; refusing to publish an empty scoreboard"
+              )
+          print(f"scoreboard releases: {len(releases)}")
+          PY
 
       - name: Upload static scoreboard artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
