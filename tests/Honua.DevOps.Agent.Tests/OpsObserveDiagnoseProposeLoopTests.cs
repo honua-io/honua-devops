@@ -44,6 +44,9 @@ public sealed class OpsObserveDiagnoseProposeLoopTests
             CancellationToken.None);
 
         Assert.Equal("proposal-created", report.Status);
+        Assert.True(report.MutationAcknowledged);
+        // The audit recovery path keys on the same deterministic key ActuationSpine checks.
+        Assert.Equal("honua-devops:ops-finding:deploy-stuck-abc", report.MutationIdempotencyKey);
         Assert.Equal("honua-server-mcp", report.ObservabilitySource);
         Assert.Equal("Degraded", report.OverallHealth);
         Assert.Equal("2026.07.0", report.PlatformReleaseVersion);

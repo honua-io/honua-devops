@@ -61,6 +61,9 @@ A missing/mismatched root or operation identity, duplicate identity field, missi
 retained bytes, or digest mismatch fails the lineage claim. A failed response
 capture after creation may mean an operation already exists: reconcile using the
 same idempotency key; do not issue a new key or infer a successful join.
+The lifecycle acknowledgement is retained independently of the parsed projection,
+so an acknowledged write remains marked as mutated even when its receipt or status
+cannot be projected and must be reconciled.
 
 ## Machine-readable evidence
 

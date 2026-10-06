@@ -105,4 +105,6 @@ internal sealed record OpsLoopReport(
     OpsLoopBounds Bounds,
     IReadOnlyList<string> Limitations,
     [property: JsonPropertyName("serverOperations")] IReadOnlyList<ServerOperationLineage>? ServerOperations = null,
-    [property: JsonPropertyName("provisioningLineage")] ProvisioningLineage? ProvisioningLineage = null);
+    [property: JsonPropertyName("provisioningLineage")] ProvisioningLineage? ProvisioningLineage = null,
+    [property: JsonPropertyName("mutationAcknowledged")] bool MutationAcknowledged = false,
+    [property: JsonPropertyName("mutationIdempotencyKey")] string? MutationIdempotencyKey = null);
