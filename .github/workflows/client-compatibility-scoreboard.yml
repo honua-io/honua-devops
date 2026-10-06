@@ -35,6 +35,12 @@ jobs:
         with:
           python-version: "3.x"
 
+      # The smoke test validates the checked-in public scoreboard against the
+      # R30 inventory. Run it before the artifact build below replaces that
+      # snapshot (there are intentionally no release packs in this repository).
+      - name: Smoke scoreboard generator
+        run: ./scripts/smoke-client-compat-scoreboard.sh
+
       - name: Generate scoreboard
         run: |
           python3 scripts/check-public-compatibility-content.py
@@ -44,9 +50,6 @@ jobs:
             --catalog compatibility/clients.catalog.json \
             --output-dir compatibility/scoreboard \
             --hard-fail
-
-      - name: Smoke scoreboard generator
-        run: ./scripts/smoke-client-compat-scoreboard.sh
 
       - name: Upload static scoreboard artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
