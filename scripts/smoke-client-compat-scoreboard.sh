@@ -15,8 +15,26 @@ require_command() {
 
 require_command python3
 
+python3 "$REPO_ROOT/scripts/check-public-compatibility-content.py"
+
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+
+echo "Validating that unreviewed desktop-client detail fails the public-content policy"
+POLICY_FIXTURE="$WORKDIR/policy-repo"
+mkdir -p "$POLICY_FIXTURE/docs/strategy" "$POLICY_FIXTURE/compatibility/scoreboard" "$POLICY_FIXTURE/docs"
+cp "$REPO_ROOT/docs/strategy/portfolio-60-day-plan.md" "$POLICY_FIXTURE/docs/strategy/"
+cp "$REPO_ROOT/compatibility/clients.catalog.json" "$POLICY_FIXTURE/compatibility/"
+cp "$REPO_ROOT/compatibility/scoreboard/compatibility-matrix.json" "$POLICY_FIXTURE/compatibility/scoreboard/"
+cp "$REPO_ROOT/compatibility/scoreboard/compatibility-matrix.md" "$POLICY_FIXTURE/compatibility/scoreboard/"
+cp "$REPO_ROOT/compatibility/scoreboard/index.html" "$POLICY_FIXTURE/compatibility/scoreboard/"
+cp "$REPO_ROOT/docs/client-compatibility-scoreboard.md" "$POLICY_FIXTURE/docs/"
+printf '%s\n' 'ArcGIS'' Pro UI test instructions must not be public.' >>"$POLICY_FIXTURE/docs/client-compatibility-scoreboard.md"
+if python3 "$REPO_ROOT/scripts/check-public-compatibility-content.py" --root "$POLICY_FIXTURE" >/dev/null 2>&1; then
+  echo "[ERROR] Public-content policy accepted unreviewed desktop-client detail." >&2
+  exit 1
+fi
+
 FIXTURES_ROOT="$WORKDIR/releases"
 mkdir -p "$FIXTURES_ROOT/2026.03.0/demo-service/evidence" "$FIXTURES_ROOT/2026.03.1/demo-service/evidence"
 
