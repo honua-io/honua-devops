@@ -240,4 +240,26 @@ if COMPAT_TRAIN_CONFORMANCE_EVIDENCE="$WORKDIR/conformance-green.json" \
 fi
 echo "[OK] missing live image receipt blocked"
 
+echo
+echo "Validating a green probe for a different candidate does not satisfy live-probe"
+cat >"$WORKDIR/probe-other.json" <<'EOF'
+{ "kind": "compat-train-live-probe", "releaseId": "honua-other", "candidateRef": "cafebabe",
+  "summary": { "probes": 1, "passed": 1, "failed": 0, "blocked": 0 } }
+EOF
+if COMPAT_TRAIN_CONFORMANCE_EVIDENCE="$WORKDIR/conformance-green.json" \
+   COMPAT_TRAIN_RELEASE_GATE_RESULT=pass \
+   COMPAT_TRAIN_VALIDATION_BUNDLE="$WORKDIR/validation-pass.json" \
+   COMPAT_TRAIN_PROBE_BUNDLE="$WORKDIR/probe-other.json" \
+   COMPAT_TRAIN_RC_REQUIRE_PROBE=true \
+   COMPAT_TRAIN_RC_BUNDLE_OUTPUT="$BUNDLE" "$AGG" >/dev/null; then
+  echo "[ERROR] a green probe for another candidate was accepted" >&2; exit 1
+fi
+jq -e '.layers[] | select(.name=="live-probe") | .status=="fail"' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] mismatched probe was not failed" >&2; exit 1; }
+jq -e '.layers[] | select(.name=="candidate-identity") | .mismatches | index("probe.candidateRef")' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] probe candidateRef mismatch was not reported" >&2; exit 1; }
+jq -e '.layers[] | select(.name=="candidate-identity") | .mismatches | index("probe.releaseId")' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] probe releaseId mismatch was not reported" >&2; exit 1; }
+echo "[OK] probe identity is bound to the candidate before its status is accepted"
+
 echo "Compatibility-train RC aggregator smoke check passed."

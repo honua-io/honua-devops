@@ -160,18 +160,41 @@ bundle="$(
                else "" end)) }
       end) as $valLayer |
 
-    # live-probe: verified iff it has >=1 passed probe and zero failed probes.
-    # A probe layer that is all-blocked is "blocked" (an honest gap), not green.
+    # Anchors the live probe must match before its status is accepted.
+    # releaseId / candidateRef come from the manifest the probe re-read.
+    # A green probe for candidate B must not satisfy candidate A.
+    (($validation.releaseId // null)) as $valRelease |
+    (($validation.candidate.sourceCommit // $validation.candidate.ref // null)) as $valCommit |
+    (($conformance.candidate.version // null)) as $confRelease |
+    (($conformance.candidate.sourceCommit // null)) as $confCommit |
+    (def bound($actual; $anchors):
+        ($anchors | map(select(. != null and . != ""))) as $present |
+        ($actual // "") != "" and ($present | length) > 0 and all($present[]; . == $actual);
+      if $probe == null then []
+      else
+        [ (if bound($probe.releaseId; [$valRelease, $confRelease]) then empty else "probe.releaseId" end),
+          (if bound($probe.candidateRef; [$valCommit, $confCommit]) then empty else "probe.candidateRef" end) ]
+      end) as $probeMismatches |
+
+    # live-probe: verified iff it has >=1 passed probe, zero failed probes,
+    # AND its release/ref are the candidate under test. A mismatched probe
+    # is fail, not pass. A probe layer that is all-blocked is "blocked"
+    # (an honest gap), not green.
     (if $probe == null then
         { name: "live-probe", status: "missing", detail: "live-probe bundle not supplied" }
       else
         (($probe.summary.passed // 0)) as $p |
         (($probe.summary.failed // 0)) as $f |
         { name: "live-probe",
-          status: (if $f > 0 then "fail" elif $p > 0 then "pass" else "blocked" end),
+          status: (if ($probeMismatches | length) > 0 then "fail"
+                   elif $f > 0 then "fail"
+                   elif $p > 0 then "pass"
+                   else "blocked" end),
           passed: $p, failed: $f, blocked: ($probe.summary.blocked // 0),
-          detail: ("probes: " + ($p|tostring) + " passed, " + ($f|tostring)
-            + " failed, " + (($probe.summary.blocked // 0)|tostring) + " blocked") }
+          detail: (if ($probeMismatches | length) > 0
+            then "probe identity is not the candidate: " + ($probeMismatches | join(", "))
+            else ("probes: " + ($p|tostring) + " passed, " + ($f|tostring)
+              + " failed, " + (($probe.summary.blocked // 0)|tostring) + " blocked") end) }
       end) as $probeLayer |
 
     # Candidate identity is itself a required layer. Independently-green
@@ -191,16 +214,17 @@ bundle="$(
       fixturesVersion: ($conformance.fixtures_version // null)
     }) as $confIdentity |
     ({
-      release: ($validation.releaseId // null),
+      release: ($validation.releaseId // $validation.candidate.version // null),
       image: $valImage,
-      sourceCommit: ($validation.candidate.ref // null),
+      sourceCommit: ($validation.candidate.sourceCommit // $validation.candidate.ref // null),
       fixturesVersion: ($validation.candidate.fixturesVersion // null)
     }) as $valIdentity |
     (["release", "image", "sourceCommit", "fixturesVersion"]
       | map(select(($confIdentity[.] // "") == "" or ($valIdentity[.] // "") == ""
                    or $confIdentity[.] != $valIdentity[.]))) as $identityMismatches |
     (($valImageObject.receipt // $valImageObject.latestEvidence // null)) as $imageReceipt |
-    ($identityMismatches + (if $mode == "live" and $imageReceipt == null then ["imageReceipt"] else [] end)) as $identityFailures |
+    ($identityMismatches + $probeMismatches
+      + (if $mode == "live" and $imageReceipt == null then ["imageReceipt"] else [] end)) as $identityFailures |
     ({ name: "candidate-identity",
        status: (if ($identityFailures | length) == 0 then "pass" else "fail" end),
        mismatches: $identityFailures,

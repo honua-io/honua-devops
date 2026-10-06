@@ -214,27 +214,37 @@ dispatch_and_collect() {
     inputs="$(jq --arg key "$commit_input" --arg value "$CANDIDATE_COMMIT" '. + {($key): $value}' <<<"$inputs")"
   fi
 
-  # The versioned dispatch API returns the exact created run. Never discover it
-  # by ordering concurrent runs: that can bind candidate A to candidate B.
+  # return_run_details makes the dispatch response name the run this POST
+  # created (API 2026-03-10). Without it the call is 204 and has no run id.
+  # Never discover the run by ordering concurrent runs: that can bind
+  # candidate A to candidate B. Get-a-workflow-run does not return .inputs
+  # (schema has no such property), so a comparison against (.inputs // {})
+  # is always {} and rejects every real dispatch. Bind to the dispatch
+  # response, then confirm the run id, event, and ref. If a run payload does
+  # carry inputs, those still have to match.
   local dispatch_response run_id run_url receipt
   dispatch_response="$(gh api --method POST \
     -H 'Accept: application/vnd.github+json' \
     -H 'X-GitHub-Api-Version: 2026-03-10' \
     "repos/${gh_repo}/actions/workflows/${workflow}/dispatches" \
-    --input - <<<"$(jq -n --arg ref "$DISPATCH_REF" --argjson inputs "$inputs" '{ref:$ref, inputs:$inputs}')" 2>/dev/null)" \
+    --input - <<<"$(jq -n --arg ref "$DISPATCH_REF" --argjson inputs "$inputs" '{ref:$ref, inputs:$inputs, return_run_details:true}')" 2>/dev/null)" \
     || { echo "dispatch-error"; return; }
   run_id="$(jq -r '.workflow_run_id // empty' <<<"$dispatch_response")"
   run_url="$(jq -r '.html_url // empty' <<<"$dispatch_response")"
   [[ "$run_id" =~ ^[0-9]+$ && -n "$run_url" ]] || { echo "dispatch-no-receipt"; return; }
 
-  # Re-read the immutable dispatch receipt and compare the exact event/ref and
-  # every candidate/fixture input before accepting its conclusion.
   receipt="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/${gh_repo}/actions/runs/${run_id}" 2>/dev/null)" \
     || { echo "receipt-error"; return; }
-  if ! jq -e --arg ref "$DISPATCH_REF" --argjson expected "$inputs" '
-      .event == "workflow_dispatch" and .head_branch == $ref
-      and ((.inputs // {}) as $actual | $expected | to_entries
-           | all(. as $item | $actual[$item.key] == $item.value))' <<<"$receipt" >/dev/null; then
+  if ! jq -e --arg ref "$DISPATCH_REF" --arg id "$run_id" --argjson expected "$inputs" '
+      ((.id | tostring) == $id)
+      and .event == "workflow_dispatch"
+      and .head_branch == $ref
+      and ((.head_sha // "") | length) > 0
+      and (
+        ((has("inputs")) | not)
+        or ((.inputs // {}) as $actual | $expected | to_entries
+            | all(. as $item | $actual[$item.key] == $item.value))
+      )' <<<"$receipt" >/dev/null; then
     echo "receipt-mismatch"
     return
   fi
@@ -261,6 +271,20 @@ for repo in $TRAIN_REPOS; do
   REPO_LOCAL_STACK["$repo"]="false"
   REPO_TARGET["$repo"]="${CANDIDATE_LABEL}"
   REPO_COMMIT["$repo"]="${CANDIDATE_COMMIT:-unset}"
+
+  # A candidate input that only labels the run (recorded in metadata, not
+  # booted) must not certify the image. honua-sdk-js integration.yml is the
+  # case: server_image is external-target provenance; self-contained mode
+  # boots the workflow pin or HONUA_INTEGRATION_SERVER_IMAGE repo variable.
+  # `//` treats false as empty, so a boolean false must be tested explicitly.
+  exercises="$(jq -r "if .consumers.\"$repo\".exercises_candidate_image == false then \"false\" else \"true\" end" "$REGISTRY")"
+  if is_truthy "$DISPATCH" && [[ "$exercises" != "true" ]]; then
+    echo "[BLOCK] ${repo}: workflow ${workflow} input '${cand_input}' does not select the image under test (exercises_candidate_image=false). Refusing to certify ${CANDIDATE_LABEL} from a label-only dispatch."
+    REPO_STATUS["$repo"]="fail"
+    REPO_DETAIL["$repo"]="candidate input does not exercise the image under test"
+    failures=$((failures + 1))
+    continue
+  fi
 
   # Unenrolled consumer (no conformance workflow yet, e.g. qgis-plugin).
   if [[ "$enrolled" != "true" || -z "$workflow" ]]; then
@@ -415,7 +439,7 @@ build_evidence() {
   done
 
   jq -n \
-    --arg version "${CANDIDATE_VERSION:-$CANDIDATE_IMAGE}" \
+    --arg version "${CANDIDATE_VERSION}" \
     --arg image "${CANDIDATE_IMAGE}" \
     --arg env "${ENVIRONMENT}" \
     --arg fixtures "${FIXTURES_VERSION}" \

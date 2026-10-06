@@ -220,4 +220,39 @@ jq -e '.checks[] | select(.id=="server-esri-sdk-certification") | .surface=="ser
 echo "[OK] esri-compat maps to server surface"
 
 echo
+echo "Validating candidate identity is copied from the manifest, with dispatch pins filling omissions"
+jq -e '.candidate.fixturesVersion == null and .candidate.sourceCommit == "deadbeef" and .candidate.version == "honua-test-rc"' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] manifest identity was not emitted (sourceCommit/version)" >&2; exit 1; }
+COMPAT_TRAIN_BUNDLE_OUTPUT="$BUNDLE" \
+COMPAT_TRAIN_FIXTURES_VERSION=0.2.0-alpha.1 \
+COMPAT_TRAIN_CANDIDATE_COMMIT=should-not-replace-manifest \
+COMPAT_TRAIN_CANDIDATE_VERSION=should-not-replace-release \
+  "$VALIDATE" "$WORKDIR/manifest-pass.json" >/dev/null
+jq -e '.candidate.fixturesVersion == "0.2.0-alpha.1"
+    and .candidate.sourceCommit == "deadbeef"
+    and .candidate.version == "honua-test-rc"' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] dispatch fixtures pin was not recorded, or it overwrote the manifest ref/release" >&2; exit 1; }
+cat >"$WORKDIR/manifest-fixtures.json" <<'EOF'
+{
+  "releaseId": "honua-test-rc",
+  "channel": "preview",
+  "candidate": {
+    "ref": "deadbeef",
+    "fixturesVersion": "1.0.0",
+    "image": { "evidenceState": "passed" }
+  },
+  "releaseGates": [],
+  "repositoryLanes": [],
+  "releaseLaneCriteria": []
+}
+EOF
+COMPAT_TRAIN_BUNDLE_OUTPUT="$BUNDLE" \
+COMPAT_TRAIN_FIXTURES_VERSION=0.2.0-alpha.1 \
+COMPAT_TRAIN_MODE=advisory \
+  "$VALIDATE" "$WORKDIR/manifest-fixtures.json" >/dev/null
+jq -e '.candidate.fixturesVersion == "1.0.0"' "$BUNDLE" >/dev/null \
+  || { echo "[ERROR] manifest fixturesVersion lost to the dispatch pin" >&2; exit 1; }
+echo "[OK] candidate fixtures/commit/version identity is emitted"
+
+echo
 echo "Compatibility-train release-candidate validation smoke check passed."

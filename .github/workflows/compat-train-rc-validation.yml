@@ -97,6 +97,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Live certification compares release, image, source commit, and fixtures.
+      # Those inputs are optional on the dispatch form because advisory runs
+      # still publish a bundle; live mode cannot leave them empty or the
+      # candidate-identity layer fails closed on every train.
+      - name: Require candidate identity for live certification
+        if: ${{ github.event.inputs.mode == 'live' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${{ github.event.inputs.candidate_image }}" ]] || missing+=(candidate_image)
+          [[ -n "${{ github.event.inputs.candidate_commit }}" ]] || missing+=(candidate_commit)
+          [[ -n "${{ github.event.inputs.candidate_version }}" ]] || missing+=(candidate_version)
+          [[ -n "${{ github.event.inputs.fixtures_version }}" ]] || missing+=(fixtures_version)
+          if ((${#missing[@]})); then
+            echo "::error::live RC validation requires ${missing[*]} so each evidence bundle carries the same candidate identity"
+            exit 1
+          fi
+
       # 1 + 2: PRODUCE per-repo conformance evidence, then GATE it for live-ness.
       - name: Conformance gate — run consumer conformance against the candidate
         id: conformance
@@ -131,6 +149,9 @@ jobs:
         env:
           COMPAT_TRAIN_MANIFEST_URL: ${{ github.event.inputs.manifest_url }}
           COMPAT_TRAIN_MODE: advisory
+          COMPAT_TRAIN_CANDIDATE_VERSION: ${{ github.event.inputs.candidate_version }}
+          COMPAT_TRAIN_CANDIDATE_COMMIT: ${{ github.event.inputs.candidate_commit }}
+          COMPAT_TRAIN_FIXTURES_VERSION: ${{ github.event.inputs.fixtures_version }}
           COMPAT_TRAIN_BUNDLE_OUTPUT: release-validation-bundle.json
           COMPAT_TRAIN_RELEASE_NOTES_OUTPUT: release-validation-notes.md
         run: |

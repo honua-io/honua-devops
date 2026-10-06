@@ -312,10 +312,11 @@ EOF
 cat >"$WORKDIR/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "api" && "$*" == *"/dispatches"* ]]; then
-  cat >/dev/null
+  body="$(cat)"
+  echo "$body" | jq -e '.return_run_details == true' >/dev/null || exit 1
   printf '%s\n' '{"workflow_run_id":101,"html_url":"https://github.example/runs/101"}'
 elif [[ "$1" == "api" && "$*" == *"/actions/runs/101"* ]]; then
-  printf '%s\n' '{"event":"workflow_dispatch","head_branch":"trunk","head_sha":"workflowsha","inputs":{"server_image":"ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fixtures_version":"fixture-1"}}'
+  printf '%s\n' '{"id":101,"event":"workflow_dispatch","head_branch":"trunk","head_sha":"workflowsha","inputs":{"server_image":"ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fixtures_version":"fixture-1"}}'
 elif [[ "$1 $2 $3" == "run list --repo" ]]; then
   # This is concurrent invocation B. Secure code must never discover/select it.
   printf '102\n'
@@ -339,10 +340,83 @@ fi
 echo "[OK] exact dispatch receipt kept invocation A isolated from concurrent B"
 
 echo
-echo "13) JS dispatch contract uses the server image input, never the external base_url input"
-jq -e '.consumers["honua-sdk-js"].candidate_input == "server_image"' "$SHIPPED" >/dev/null \
-  || { echo "[ERROR] JS candidate image is still mapped to base_url" >&2; exit 1; }
-echo "[OK] JS consumer receives candidate image through server_image"
+echo "13) JS server_image is provenance only; dispatch must not certify it"
+jq -e '.consumers["honua-sdk-js"].candidate_input == "server_image"
+    and .consumers["honua-sdk-js"].exercises_candidate_image == false' "$SHIPPED" >/dev/null \
+  || { echo "[ERROR] JS candidate input is not recorded as a non-exercising label" >&2; exit 1; }
+cat >"$WORKDIR/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "[ERROR] label-only JS dispatch invoked gh" >&2
+exit 99
+EOF
+chmod +x "$WORKDIR/bin/gh"
+set +e
+js_out="$(PATH="$WORKDIR/bin:$PATH" \
+  COMPAT_TRAIN_DISPATCH=true COMPAT_TRAIN_DISPATCH_REF=trunk \
+  COMPAT_TRAIN_CANDIDATE_IMAGE="ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  COMPAT_TRAIN_FIXTURES_VERSION=fixture-1 COMPAT_TRAIN_REPOS=honua-sdk-js \
+  "$GATE" 2>&1)"
+js_rc=$?
+set -e
+[[ "$js_rc" -eq 1 ]] || { echo "[ERROR] label-only JS dispatch did not block (rc=$js_rc)" >&2; echo "$js_out" >&2; exit 1; }
+echo "$js_out" | grep -q "does not select the image under test" \
+  || { echo "[ERROR] JS block did not explain the label-only input" >&2; echo "$js_out" >&2; exit 1; }
+echo "$js_out" | grep -q "label-only JS dispatch invoked gh" \
+  && { echo "[ERROR] JS certification dispatched a workflow" >&2; exit 1; }
+echo "[OK] JS server_image is not treated as an image-backed certification"
+
+echo
+echo "14) a workflow run without .inputs still binds to the dispatch response"
+cat >"$WORKDIR/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "api" && "$*" == *"/dispatches"* ]]; then
+  body="$(cat)"
+  echo "$body" | jq -e '.return_run_details == true' >/dev/null || exit 1
+  printf '%s\n' '{"workflow_run_id":101,"html_url":"https://github.example/runs/101"}'
+elif [[ "$1" == "api" && "$*" == *"/actions/runs/101"* ]]; then
+  # Official get-a-workflow-run schema has no inputs property.
+  printf '%s\n' '{"id":101,"event":"workflow_dispatch","head_branch":"trunk","head_sha":"workflowsha"}'
+elif [[ "$1 $2" == "run watch" && "$3" == "101" ]]; then
+  exit 0
+else
+  exit 1
+fi
+EOF
+chmod +x "$WORKDIR/bin/gh"
+PATH="$WORKDIR/bin:$PATH" \
+  COMPAT_TRAIN_CONSUMER_REGISTRY="$WORKDIR/dispatch-registry.json" \
+  COMPAT_TRAIN_DISPATCH=true COMPAT_TRAIN_DISPATCH_REF=trunk \
+  COMPAT_TRAIN_CANDIDATE_IMAGE="ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  COMPAT_TRAIN_FIXTURES_VERSION=fixture-1 COMPAT_TRAIN_REPOS=consumer-a \
+  "$GATE" >/dev/null \
+  || { echo "[ERROR] missing run inputs rejected the dispatch receipt" >&2; exit 1; }
+echo "[OK] dispatch receipt binds the run when the run resource omits inputs"
+
+echo
+echo "15) a run resource that does expose different inputs is a receipt mismatch"
+cat >"$WORKDIR/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "api" && "$*" == *"/dispatches"* ]]; then
+  cat >/dev/null
+  printf '%s\n' '{"workflow_run_id":101,"html_url":"https://github.example/runs/101"}'
+elif [[ "$1" == "api" && "$*" == *"/actions/runs/101"* ]]; then
+  printf '%s\n' '{"id":101,"event":"workflow_dispatch","head_branch":"trunk","head_sha":"workflowsha","inputs":{"server_image":"ghcr.io/honua-io/honua-server@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","fixtures_version":"fixture-1"}}'
+elif [[ "$1 $2" == "run watch" && "$3" == "101" ]]; then
+  exit 0
+else
+  exit 1
+fi
+EOF
+chmod +x "$WORKDIR/bin/gh"
+if PATH="$WORKDIR/bin:$PATH" \
+  COMPAT_TRAIN_CONSUMER_REGISTRY="$WORKDIR/dispatch-registry.json" \
+  COMPAT_TRAIN_DISPATCH=true COMPAT_TRAIN_DISPATCH_REF=trunk \
+  COMPAT_TRAIN_CANDIDATE_IMAGE="ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  COMPAT_TRAIN_FIXTURES_VERSION=fixture-1 COMPAT_TRAIN_REPOS=consumer-a \
+  "$GATE" >/dev/null; then
+  echo "[ERROR] contradictory run inputs certified the candidate" >&2; exit 1
+fi
+echo "[OK] exposed contradictory inputs still mismatch"
 
 echo
 echo "Compatibility-train conformance gate smoke check passed."

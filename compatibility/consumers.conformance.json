@@ -26,7 +26,9 @@
       "candidate_input": "server_image",
       "candidate_commit_input": "server_commit",
       "fixtures_input": "fixtures_version",
-      "enrolled": true
+      "exercises_candidate_image": false,
+      "enrolled": true,
+      "$comment": "workflow_dispatch server_image is recorded as external-target provenance (HONUA_INTEGRATION_EXTERNAL_SERVER_IMAGE). It does not select the container: self-contained mode boots vars.HONUA_INTEGRATION_SERVER_IMAGE or the workflow pin, and external mode connects to base_url without proving that deployment runs the digest. Dispatch certification refuses this label."
     },
     "honua-sdk-python": {
       "repo": "honua-io/honua-sdk-python",
