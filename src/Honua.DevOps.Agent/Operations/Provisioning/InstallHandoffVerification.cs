@@ -396,9 +396,18 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             using (document)
             {
                 JsonElement root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    throw new VerificationFailure("mcp-response-malformed", "The proxy returned an MCP message that is not a JSON-RPC object.");
+                }
                 if (!root.TryGetProperty("id", out JsonElement responseId))
                 {
-                    if (root.TryGetProperty("method", out JsonElement notificationMethod)
+                    // Only a well-formed JSON-RPC 2.0 notification may be skipped; anything
+                    // else id-less is malformed protocol output and must fail closed.
+                    if (root.TryGetProperty("jsonrpc", out JsonElement notificationVersion)
+                        && notificationVersion.ValueKind == JsonValueKind.String
+                        && string.Equals(notificationVersion.GetString(), "2.0", StringComparison.Ordinal)
+                        && root.TryGetProperty("method", out JsonElement notificationMethod)
                         && notificationMethod.ValueKind == JsonValueKind.String
                         && !string.IsNullOrWhiteSpace(notificationMethod.GetString()))
                     {

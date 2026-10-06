@@ -38,6 +38,8 @@ public sealed class SystemInstallHandoffVerifierTests
     [LinuxTheory]
     [InlineData("noise", "mcp-stdout-noise")]
     [InlineData("malformed", "mcp-response-malformed")]
+    [InlineData("bad-notification-version", "mcp-response-malformed")]
+    [InlineData("bad-notification-missing-version", "mcp-response-malformed")]
     [InlineData("out-of-order", "mcp-response-out-of-order")]
     [InlineData("repeat-cursor", "mcp-pagination-loop")]
     [InlineData("missing-tool", "mcp-roster-incomplete")]
@@ -228,6 +230,8 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   if [[ "$mode" == noise ]]; then printf '%s\n' 'starting proxy'; mode=happy; continue; fi
   if [[ "$mode" == notifications ]]; then printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}'; mode=happy; fi
+  if [[ "$mode" == bad-notification-version ]]; then printf '%s\n' '{"jsonrpc":"1.0","method":"garbage"}'; mode=happy; fi
+  if [[ "$mode" == bad-notification-missing-version ]]; then printf '%s\n' '{"method":"notifications/tools/list_changed"}'; mode=happy; fi
   if [[ "$mode" == malformed ]]; then printf '%s\n' '{"jsonrpc":"2.0","result":{}}'; mode=happy; continue; fi
   if [[ "$mode" == out-of-order ]]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$((id + 1))"; mode=happy; continue; fi
   if [[ "$line" == *'"initialize"'* ]]; then
