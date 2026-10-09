@@ -2,8 +2,18 @@
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 38 operator tools the interactive agent
+MCP-capable host) can call the same 27 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
+
+**2026.1 scope: honua-devops is the provisioning executor.** It provisions
+Honua into your cloud (`provision_infrastructure`), writes and verifies the
+install handoff (`install_handoff`, `verify_install_handoff`), and offers
+read-only planners and explainers. Day-2 observe/diagnose/propose is **not**
+served here: once the handoff is verified, point your MCP client at the
+installed honua-server's own `/mcp` endpoint and use its `honua_ops_health`,
+`honua_ops_findings`, `honua_alert_events`, `honua_operate_events` and
+`honua_propose_*` tools. A server proposal executes only after a separate
+principal approves it via REST `POST /api/v1/admin/proposals/{id}/approve`.
 
 In MCP mode the client LLM does the reasoning, so **no model provider
 configuration is needed** (`HONUA_DEVOPS_PROVIDER`, `*_MODEL`, `*_API_KEY` for
@@ -59,9 +69,9 @@ On Windows the archive is a `.zip` and the executable is
 Verify the registration reached `tools/list`:
 
 ```bash
-claude mcp list                       # honua-devops should report 38 tools
+claude mcp list                       # honua-devops should report 27 tools
 ~/.local/share/honua-devops/Honua.DevOps.Agent --list-tools | head -1
-# honua-devops exposes 38 operator tools:
+# honua-devops exposes 27 operator tools:
 ```
 
 Upgrade by repeating the download/verify/extract over the same directory with a
@@ -116,12 +126,12 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 38 tools), or run the
+Verify with `claude mcp list` (the server should report 27 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --mcp
-# stderr: honua-devops MCP stdio server ready (tools=38, mode=plan, tier=plan, approval=pr-first, ...)
+# stderr: honua-devops MCP stdio server ready (tools=27, mode=plan, tier=plan, approval=pr-first, ...)
 ```
 
 ## Register with Codex CLI
@@ -153,7 +163,7 @@ Backends (same variables as every other `honua-devops` mode — see README
 | --- | --- |
 | `HONUA_DEVOPS_HONUA_API_BASE_URL` | Honua API (readiness, admin, metrics, manifest, deploy-control). Default `http://localhost:8080`. |
 | `HONUA_DEVOPS_HONUA_API_KEY` | Sent as `X-API-Key` for Honua admin/metrics contracts. |
-| `HONUA_DEVOPS_OTEL_BASE_URL` | OTEL log/metric queries. Default `http://localhost:4318`. |
+| `HONUA_DEVOPS_OTEL_BASE_URL` | OTEL collector health probe (preflight). Default `http://localhost:4318`. |
 | `HONUA_DEVOPS_OTEL_API_KEY` | Optional OTEL bearer token. |
 | `HONUA_DEVOPS_SUPPORT_API_BASE_URL` | Optional; enables `process_pending_tickets`. |
 | `HONUA_DEVOPS_DEPLOY_TARGET_ID` | Optional; without it `create_gitops_proposal` returns a blocked `target-unconfigured` projection. |
@@ -186,38 +196,46 @@ deployment plan across dev/staging/prod. In the default plan mode nothing is
 applied: the response is a plan with evidence, policy gates, and the approval
 path (pr-first) called out.
 
-> diagnose slow tiles
+> provision honua into aws ecs and hand it off
 
-[honua-devops:honua_diagnose → honua_explain_slow_queries]
-Claude runs the read-only edition-aware diagnostics over health/metrics/error
-telemetry and explains slow query signatures (spatial index, cache, pool
-bottlenecks) with prioritized remediation and validation checks.
+[honua-devops:provision_infrastructure → install_handoff → verify_install_handoff]
+Claude plans the `aws-ecs` stack, waits for your reviewed approval receipt,
+applies the exact saved plan, then writes and verifies the install handoff.
+
+> what's unhealthy right now?
+
+Not an honua-devops question in 2026.1: use the installed honua-server `/mcp`
+(`honua_ops_health`, `honua_ops_findings`) named in the verified handoff.
 ```
 
 ## Exposed tools (1:1 with the interactive agent)
 
-All 38 tools registered by `CapabilityToolset` (the
+All 27 operator tools registered by `CapabilityToolset` (the
 `ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
-live MCP surface 1:1):
+live MCP surface 1:1; the experimental rollback tool is added only when
+`HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`, see "Release posture" below):
 
-`describe_environment`, `honua_observe_diagnose_propose`,
-`find_recent_operations`, `analyze_logs`,
-`analyze_metrics`, `tune_performance`, `troubleshoot_incident`,
-`plan_server_upgrade`, `plan_gitops_engine`,
+`describe_environment`, `find_recent_operations`, `plan_gitops_engine`,
 `generate_metadata_release_changeset`,
 `explain_metadata_release_changeset`, `plan_metadata_release_gitops`,
-`deploy_service_gitops`, `plan_forward_fix`,
-`inspect_metadata_release`, `analyze_customer_requirements`,
-`recommend_deployment_topology`, `triage_support_ticket`,
-`process_pending_tickets`, `get_support_ticket_console_view`,
-`honua_diagnose`, `honua_explain_slow_queries`, `honua_runbook_execute`,
-`honua_auto_remediation_plan`, `plan_deliverable_lifecycle`,
+`deploy_service_gitops`, `inspect_metadata_release`,
+`analyze_customer_requirements`, `recommend_deployment_topology`,
+`triage_support_ticket`, `process_pending_tickets`,
+`get_support_ticket_console_view`, `plan_deliverable_lifecycle`,
 `create_gitops_proposal`, `plan_gp_substrate`, `plan_gp_job_sizing`,
 `plan_azure_gp_substrate`, `plan_azure_gp_job_sizing`,
 `get_gitops_proposal`, `record_gitops_proposal_decision`,
 `get_devops_operation_status`, `build_ai_devops_brief`,
 `provision_infrastructure`, `install_handoff`, `verify_install_handoff`,
 `explain_release_package`.
+
+## Retired tools (2026.1)
+
+Deleted, not flag-gated (owner ruling 2026-10-08): `honua_observe_diagnose_propose`,
+`honua_auto_remediation_plan`, `honua_runbook_execute`, `plan_server_upgrade`,
+`plan_forward_fix`, `honua_diagnose`, `honua_explain_slow_queries`,
+`analyze_logs`, `analyze_metrics`, `tune_performance`, `troubleshoot_incident`.
+Their day-2 role belongs to honua-server `/mcp` (see the top of this page).
 
 ## Governed provisioning and verified handoff
 
@@ -333,33 +351,9 @@ that fails its own contract is never created.
 > `record_gitops_proposal_decision` stay behind the same execution-mode/tier and
 > approval gates as the interactive agent (see "Safety model over MCP" below); in
 > the default `plan` + `pr-first` posture they return an approval-required
-> projection rather than acting. Recovery uses the health-gated fix-forward planner
-> `plan_forward_fix` (verify health -> propose a corrected revision -> re-deploy),
-> not rollback (see "Release posture" under the safety model).
-
-`honua_observe_diagnose_propose` is the primary day-2 operator entry point. It
-reads honua_ops_health, honua_ops_findings, honua_alert_events,
-honua_operate_events, honua_platform_release_status, and
-honua_deploy_operations from the connected server over a bounded MCP session.
-It caps history at 50 entries and 168 hours, caps the MCP response at 1 MiB and
-each projected text value at 2,048 characters, de-duplicates deterministic
-finding ids, and reports the live `supportedKinds` executor catalog. With
-`proposeRecommendedAction=true`, it routes at most one supported finding through
-`POST findings/{findingId}/propose` only at execution tier `propose` or higher.
-That server endpoint reconstructs the intentionally hidden execution payload and
-applies the existing operation gateway, autonomy, and Console approval policy;
-the DevOps brain never synthesizes a payload or approves/executes the operation.
-
-Before executor discovery or proposal routing, the loop validates both required
-`generatedAt` values and every required server `evidencePosture` envelope. Response
-timestamps may be at most five minutes old and one minute into the future; each
-source must also satisfy its server-published `maximumObservationAgeSeconds`.
-Missing/malformed/future/stale timestamps, non-actionable or unverified backends,
-`partialResult=true`, and non-empty `sourceErrors` return `evidence-incomplete`,
-preserve bounded diagnostics, and make zero executor/proposal calls. Required MCP
-transport or payload failure returns `observability-unavailable` with empty
-actionable findings. `OpsLoopReport.EvidencePosture` records privacy-safe source
-identity, observation time, evaluated age, completeness, and suppression reason.
+> projection rather than acting. Recovery is a forward change (a corrected
+> revision through `deploy_service_gitops`, or a server-side `honua_propose_*`
+> proposal), not rollback (see "Release posture" under the safety model).
 
 ## Safety model over MCP
 
@@ -372,11 +366,6 @@ re-implemented and none can be bypassed by the client**:
   time by whoever configures the server.
 - Defaults stay `plan` + `pr-first`: planning tools emit evidence bundles and
   never apply manifests, submit, or roll back deploy operations.
-- `honua_runbook_execute` and `honua_auto_remediation_plan` keep their
-  Enterprise edition gate and execute-tier gate. In the default plan tier they
-  return `confirmation-required` / `runbook-plan-ready` /
-  `auto-remediation-approval-required` instead of executing — the
-  approval-required response, not the action.
 - `create_gitops_proposal` still records proposals with
   `submitImmediately=false` and stays blocked (`target-unconfigured`) until
   `HONUA_DEVOPS_DEPLOY_TARGET_ID` is set.
@@ -398,17 +387,16 @@ where an unhealthy outcome is recovered by rolling **forward** — never back:
 - **Rollback is experimental and OFF by default.** The `rollback_gitops_operation`
   tool is *not advertised* (removed from the catalog), and the handler self-refuses
   with `experimental-disabled`. The code is retained but gated behind
-  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`. With it enabled the catalog exposes 36
-  tools (rollback in addition to `plan_forward_fix`).
+  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`. With it enabled the catalog exposes 28
+  tools.
 - **Cross-environment promotion is experimental and OFF by default.**
   `deploy_service_gitops` refuses a `promote` action or any multi-environment
   request with `experimental-disabled`; single-environment `sync`/`apply` is
   unaffected. Retained behind `HONUA_DEVOPS_EXPERIMENTAL_CROSS_ENV_PROMOTION=true`.
-- **Recovery is `plan_forward_fix`** (always advertised): it verifies live
-  readiness + deploy preflight (and a prior operation's terminal/smoke evidence),
-  then returns an ordered forward-convergence plan (diagnose -> propose corrected
-  revision -> re-deploy through the governed create path -> re-verify), never a
-  rollback. It is read-only and plan-only.
+- **Recovery is a forward change**: propose a corrected revision and re-deploy
+  through the governed create path (`deploy_service_gitops`, or a server-side
+  `honua_propose_deploy_operation` proposal approved by a separate principal),
+  then re-verify health on the installed server's `/mcp`. Never a rollback.
 
 This server is part of the private operator surface (proprietary license). It
 is not the public geospatial-mcp data-access surface — see

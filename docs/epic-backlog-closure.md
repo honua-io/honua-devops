@@ -23,7 +23,7 @@ apply path), `create_gitops_proposal` / `get_gitops_proposal` /
 `record_gitops_proposal_decision` (Console proposal bridge), and
 `rollback_gitops_operation` (registered only when rollback is explicitly
 enabled — see `OperationRuntime.RollbackEnabled`; the default recovery path is
-`plan_forward_fix`).
+a forward change through `deploy_service_gitops`).
 
 Covered today by those tools:
 
@@ -44,28 +44,23 @@ Not shipped — backlog, not capability:
 
 ## AI DevOps
 
-The shipped day-2 operations tools are:
-
-- `honua_observe_diagnose_propose` (primary day-2 loop)
-- `honua_diagnose`
-- `honua_explain_slow_queries`
-- `honua_runbook_execute`
-- `honua_auto_remediation_plan`
+For 2026.1 honua-devops ships **no** day-2 operations tools: it is the
+provisioning executor (`provision_infrastructure`, `install_handoff`,
+`verify_install_handoff`) plus read-only planners and explainers. The former
+ops loop (`honua_observe_diagnose_propose`, `honua_diagnose`,
+`honua_explain_slow_queries`, `honua_runbook_execute`,
+`honua_auto_remediation_plan`, `plan_server_upgrade`, `plan_forward_fix`,
+`analyze_logs`, `analyze_metrics`, `tune_performance`, `troubleshoot_incident`)
+was deleted by owner ruling on 2026-10-08. Day-2 observe/diagnose/propose is
+honua-server's own `/mcp` surface (`honua_ops_*`, `honua_propose_*`), with
+approval by a separate principal via `POST /api/v1/admin/proposals/{id}/approve`.
 
 Index recommendations, capacity forecasting, incident summarization, and
-migration advice are **not** separate tools. Where they are covered at all today
-they are outputs of the tools above (for example, `honua_explain_slow_queries`
-returns index-related remediation, and `honua_diagnose` returns prioritized
-findings). There are no `honua_recommend_indexes`, `honua_capacity_forecast`,
-`honua_incident_summary`, or `honua_migration_advisor` tools, and none are on
-the near-term backlog. The closest active work is
-honua-io/honua-devops#156 (remediation actuator vocabulary).
+migration advice are not honua-devops tools and are not on its backlog.
 
-Edition gates are explicit (see `HonuaOperationsToolkit`):
-
-- Community: read-only health diagnostics
-- Pro: troubleshooting, tuning, capacity, and migration planning
-- Enterprise: runbook execution, incident response, and auto-remediation planning
+Edition gates that remain are on planners (see `HonuaOperationsToolkit`):
+`plan_deliverable_lifecycle` requires Pro, and its cross-environment promotion
+step requires Enterprise.
 
 Write-capable paths still require execution tier, approval mode, scoped support
 sessions, audit evidence, and validation checks.

@@ -26,10 +26,7 @@ internal enum BackendMutation
     DeployOperationRollback,
 
     // POST /metadata-release/operations — creates a durable metadata-release operation.
-    MetadataReleaseCreate,
-
-    // POST /ops/findings/{id}/propose — creates a server-owned proposal from a finding.
-    OpsFindingPropose
+    MetadataReleaseCreate
 }
 
 // Classification of one BackendGateway method. `Mutation` is null for routes that are
@@ -74,18 +71,9 @@ internal static class BackendMutationCatalog
                 "CreateMetadataReleaseOperationJsonAsync",
                 BackendMutation.MetadataReleaseCreate,
                 "Creates a durable metadata-release operation."),
-            ["ProposeOpsFindingAsync"] = new(
-                "ProposeOpsFindingAsync",
-                BackendMutation.OpsFindingPropose,
-                "Creates a server-owned proposal from an ops finding."),
 
             // ---- Non-mutating reads and plans ----
-            ["CreateMcpOpsClient"] = new("CreateMcpOpsClient", null, "Factory; performs no call."),
-            ["QueryLogsAsync"] = new("QueryLogsAsync", null, "OTEL log query."),
-            ["QueryMetricsAsync"] = new("QueryMetricsAsync", null, "OTEL metric query."),
             ["RequestTroubleshootAsync"] = new("RequestTroubleshootAsync", null, "Read-only diagnostic fan-out."),
-            ["RequestTuneAsync"] = new("RequestTuneAsync", null, "Read-only tuning analysis fan-out."),
-            ["RequestUpgradeAsync"] = new("RequestUpgradeAsync", null, "Read-only version/capability/readiness reads."),
             ["PlanGitOpsDeployAsync"] = new(
                 "PlanGitOpsDeployAsync",
                 null,
@@ -108,8 +96,6 @@ internal static class BackendMutationCatalog
                 "GetMetadataReleaseOperationByPackageJsonAsync",
                 null,
                 "Metadata-release operation GET."),
-            ["RequestManifestDriftAsync"] = new("RequestManifestDriftAsync", null, "Manifest drift GET."),
-            ["RequestManifestVersionsAsync"] = new("RequestManifestVersionsAsync", null, "Manifest versions GET."),
             ["RequestRequirementsAnalysisAsync"] = new("RequestRequirementsAnalysisAsync", null, "Read-only analysis fan-out."),
             ["RequestTopologyRecommendationAsync"] = new("RequestTopologyRecommendationAsync", null, "Read-only analysis fan-out."),
             ["ProbeHonuaAsync"] = new("ProbeHonuaAsync", null, "Readiness probe GET."),

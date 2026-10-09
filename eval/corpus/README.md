@@ -22,7 +22,7 @@ eval/corpus/
   corpus.json                 # manifest: surfaces, schema, held-out policy, run policy
   scenarios/
     studio.json               # 37 Studio scenarios across 8 capabilities
-    devops.json               # 24 DevOps scenarios across 12 operation areas
+    devops.json               # 15 DevOps scenarios across 8 operation areas
   run_corpus.py               # runner (zero-AI by default; --run-sample is opt-in)
   README.md
 ```

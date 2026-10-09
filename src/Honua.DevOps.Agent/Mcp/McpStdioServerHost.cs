@@ -73,12 +73,12 @@ internal static class McpStdioServerHost
                     $"Execution mode is `{runtime.ExecutionMode.ToString().ToLowerInvariant()}` " +
                     $"(tier `{runtime.ExecutionTier.ToConfigValue()}`, approval `{policy.ApprovalMode.ToConfigValue()}`). " +
                     "The operator defaults to plan-only behavior: planning tools emit evidence bundles and never " +
-                    "apply manifests, submit, or roll back deploy operations. Edition-gated tools " +
-                    "(honua_runbook_execute, honua_auto_remediation_plan) return approval-required or edition-gated " +
-                    "responses unless the runtime gates allow execution. Call describe_environment first when the " +
-                    "request lacks an explicit service, environment, or edition. For day-2 health, findings, alerts, " +
-                    "or operation history, call honua_observe_diagnose_propose first with proposeRecommendedAction=false; " +
-                    "only request a proposal when the operator explicitly asks and the configured tier permits it."
+                    "apply manifests, submit, or roll back deploy operations. honua-devops is the 2026.1 provisioning " +
+                    "executor (provision_infrastructure, install_handoff, verify_install_handoff); call describe_environment " +
+                    "first when the request lacks an explicit service, environment, or edition. Day-2 observe/diagnose/propose " +
+                    "is not served here: use the installed honua-server /mcp endpoint (honua_ops_* and honua_propose_* tools); " +
+                    "a server proposal executes only after a separate principal approves it via " +
+                    "POST /api/v1/admin/proposals/{id}/approve."
             };
 
             Console.Error.WriteLine(

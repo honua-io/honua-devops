@@ -182,11 +182,6 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
     [
         "describe_environment",
         "find_recent_operations",
-        "analyze_logs",
-        "analyze_metrics",
-        "tune_performance",
-        "troubleshoot_incident",
-        "plan_server_upgrade",
         "plan_gitops_engine",
         "generate_metadata_release_changeset",
         "explain_metadata_release_changeset",
@@ -195,16 +190,10 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         "analyze_customer_requirements",
         "recommend_deployment_topology",
         "record_gitops_proposal_decision",
-        "plan_forward_fix",
         "inspect_metadata_release",
         "triage_support_ticket",
         "process_pending_tickets",
         "get_support_ticket_console_view",
-        "honua_diagnose",
-        "honua_explain_slow_queries",
-        "honua_observe_diagnose_propose",
-        "honua_runbook_execute",
-        "honua_auto_remediation_plan",
         "plan_deliverable_lifecycle",
         "create_gitops_proposal",
         "plan_gp_substrate",
@@ -338,35 +327,6 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         using JsonDocument audit = JsonDocument.Parse(auditLine);
         Assert.Equal("proposal-150", audit.RootElement.GetProperty("serverOperations")[0].GetProperty("proposalId").GetString());
         Assert.Equal(auditEventId, audit.RootElement.GetProperty("auditEventId").GetString());
-    }
-
-    [Fact]
-    public async Task CallTool_RunbookExecute_StaysPlanGatedOverMcp()
-    {
-        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(2));
-        CallToolResult result = await fixture.Client.CallToolAsync(
-            "honua_runbook_execute",
-            arguments: new Dictionary<string, object?>
-            {
-                ["runbookName"] = "deploy-submit",
-                ["service"] = "roads-api",
-                ["environment"] = "dev",
-                ["parameters"] = "operationId=op-123",
-                ["confirmed"] = true,
-                ["edition"] = "enterprise"
-            },
-            cancellationToken: cts.Token);
-
-        Assert.NotEqual(true, result.IsError);
-        JsonElement payload = ExtractJsonPayload(result);
-
-        // plan mode + plan tier: the write-capable runbook must stay a plan, and the
-        // backend must never receive the deploy-operation submit call.
-        Assert.Equal("runbook-plan-ready", GetString(payload, "Status"));
-        Assert.DoesNotContain(
-            fixture.CapturedBackendRequests,
-            request => request.StartsWith("POST ", StringComparison.Ordinal)
-                && request.Contains("/api/v1/admin/deploy/operations", StringComparison.Ordinal));
     }
 
     private static JsonElement ExtractJsonPayload(CallToolResult result)

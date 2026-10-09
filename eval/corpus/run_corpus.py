@@ -144,7 +144,7 @@ STUDIO_SAMPLE = [
 # DevOps: ~4-6 read-only / proposal-only scenarios (no actuation).
 DEVOPS_SAMPLE = [
     "devops-describe-01-happy",
-    "devops-diagnose-01-failed-health",
+    "devops-triage-ticket-01",
     "devops-explain-release-01",
     "devops-describe-env-drift-01",
     "devops-gitops-proposal-01",

@@ -33,22 +33,19 @@ open-core runtime promise.
 - .NET 10 console host
 - Microsoft Agent Framework (`Microsoft.Agents.AI`, `Microsoft.Agents.AI.OpenAI`)
 - OpenAI-compatible provider adapters (`codex`, `claude`, `local-llama`) plus a native Amazon Bedrock Converse adapter (`bedrock`)
-- Built-in operations toolset (function tools for logs, metrics, troubleshooting, tuning, upgrades, GitOps deploys, customer requirement analysis)
+- Built-in operator toolset (provisioning executor, install handoff, GitOps deploy planning, release explainers, customer requirement analysis)
 
 ## Built-In Capabilities
 
-- Log analysis and root-cause guidance (via OTEL endpoints)
-- Metrics analysis and performance tuning plans (via OTEL + Honua API)
-- Troubleshooting and optimization workflows (via Honua API)
-- Server-owned day-2 operations loop (`honua_observe_diagnose_propose`): bounded MCP health/findings/alerts/timeline/platform-release/deploy evidence, with finding-id proposals routed through Honua's existing gateway and Console approval lane
+- Provisioning executor (`provision_infrastructure`): plan, then apply a reviewed Terraform plan for a supported stack, with explicit confirmation and an approval receipt
+- Install handoff (`install_handoff`, `verify_install_handoff`): points an MCP client at the installed honua-server `/mcp` endpoint, where day-2 operations live
+- Day-2 observe/diagnose/propose is **not** part of the 2026.1 honua-devops surface: it is served by honua-server's own `/mcp` endpoint (`honua_ops_health`, `honua_ops_findings`, `honua_alert_events`, `honua_operate_events`, `honua_propose_*`), and a proposal executes only after a separate principal approves it via REST `POST /api/v1/admin/proposals/{id}/approve`.
 - Honua support ticket triage through `honua-support` (`process_pending_tickets`)
-- Server upgrade planning with rollback gates (via Honua API)
 - GitOps-driven multi-environment deployment planning (Honua-native GitOps; see `honua-server` #351/#363)
-- AI DevOps tools (`honua_diagnose`, slow-query explanation, runbook execution, and auto-remediation planning) — edition-gated for community/pro/enterprise
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 - Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`) projecting stable, evidence-linked proposal/operation/brief and read-only release-explanation contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
-- MCP stdio server mode (`--mcp`) exposing the full 37-tool operator surface 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
+- MCP stdio server mode (`--mcp`) exposing the full 27-tool operator surface (28 with the experimental rollback flag) 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
 - Signed support bug-report intake (`--bugreport-listen`) with durable cross-restart `eventId` replay protection — see [docs/bug-report-idempotency.md](docs/bug-report-idempotency.md)
 
 The MCP host is also packaged as self-contained GitHub Release binaries and a
@@ -158,15 +155,8 @@ Health probes:
 - `HONUA_DEVOPS_HONUA_READINESS_PATH` (default `/healthz/ready`)
 - `HONUA_DEVOPS_OTEL_HEALTH_PATH` (default `/`)
 
-OTEL path overrides:
-
-- `HONUA_DEVOPS_OTEL_LOGS_PATH`
-- `HONUA_DEVOPS_OTEL_METRICS_PATH`
-
 Honua endpoint contract overrides (defaults map to implemented `honua-server` routes):
 
-- `HONUA_DEVOPS_HONUA_MCP_PATH` (`/mcp`) — primary read source for the day-2 operator loop
-- `HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH` (`/api/v1/admin/observability/findings`) — canonical finding-id proposal route; the server materializes hidden action payloads and applies gateway/autonomy policy
 - `HONUA_DEVOPS_HONUA_ADMIN_ERRORS_PATH` (`/api/v1/admin/observability/errors`)
 - `HONUA_DEVOPS_HONUA_ADMIN_TELEMETRY_PATH` (`/api/v1/admin/observability/telemetry`)
 - `HONUA_DEVOPS_HONUA_METRICS_HEALTH_PATH` (`/api/v1/metrics/health`)
@@ -184,8 +174,6 @@ Honua endpoint contract overrides (defaults map to implemented `honua-server` ro
 - `HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH` (`/api/v1/admin/deploy/operations`)
 - `HONUA_DEVOPS_HONUA_METADATA_RELEASE_OPERATIONS_PATH` (`/api/v1/admin/metadata/releases/operations`) — create an additive metadata-release layer-evolution operation (Demo B safe-rollback)
 - `HONUA_DEVOPS_HONUA_METADATA_RELEASE_BY_PACKAGE_PATH` (`/api/v1/admin/metadata/releases`) — read a metadata-release operation by package id (the `inspect_metadata_release` detect tool)
-- `HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH` (`/api/v1/admin/manifest/drift`)
-- `HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH` (`/api/v1/admin/manifest/versions`)
 
 Legacy aliases still accepted for compatibility:
 
@@ -312,7 +300,7 @@ Register with Claude Code:
 claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
 ```
 
-All 38 operator tools are exposed 1:1 with the interactive agent — same
+All 27 operator tools (28 when `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`) are exposed 1:1 with the interactive agent — same
 handlers, same execution-mode/approval/edition gates, and one JSONL audit
 record per tool call (stdout-targeted audit evidence moves to stderr because
 stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)

@@ -129,8 +129,7 @@ public class BackendMutationCatalogTests
             nameof(BackendMutation.DeployOperationRollback),
             nameof(BackendMutation.DeployOperationSubmit),
             nameof(BackendMutation.ManifestApply),
-            nameof(BackendMutation.MetadataReleaseCreate),
-            nameof(BackendMutation.OpsFindingPropose)
+            nameof(BackendMutation.MetadataReleaseCreate)
         ];
 
         string[] actual =

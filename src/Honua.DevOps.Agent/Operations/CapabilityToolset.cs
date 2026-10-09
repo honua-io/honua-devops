@@ -27,46 +27,10 @@ internal static class CapabilityToolset
                 "describe_environment",
                 "Discover the connected Honua environment: readiness, edition, manifest scope, deploy targets, and allowed environments. Call first when the operator's request lacks an explicit service, environment, or edition."),
             CreateTool(
-                (string findingId, string severity, string rule, int lookbackHours, int pageSize, bool proposeRecommendedAction)
-                    => toolkit.ObserveDiagnoseProposeAsync(
-                        findingId,
-                        severity,
-                        rule,
-                        lookbackHours,
-                        pageSize,
-                        proposeRecommendedAction),
-                "honua_observe_diagnose_propose",
-                "Run the primary Honua day-2 loop against the server-owned MCP contracts: bounded ops health, deterministic findings/recommendedAction/evidenceRefs, alert history, Operate timeline, platform release and deploy history, plus truthful supportedKinds discovery. Correlates evidence and, only when explicitly requested and execution tier is propose or higher, routes at most one live finding by deterministic finding id through Honua's existing operation gateway and Console approval/autonomy policy. Never supplies a hidden execution payload, directly executes, approves, submits, or rolls back. Empty findingId/severity/rule means no filter; lookback defaults to 24h and caps at 168h; pageSize defaults to 25 and caps at 50."),
-            CreateTool(
                 (string toolFilter, bool mutatedOnly, string statusContains, int limit)
                     => toolkit.FindRecentOperationsAsync(toolFilter, mutatedOnly, statusContains, limit),
                 "find_recent_operations",
                 "Search the audit journal for recent operations across sessions. Returns diagnostic auditEventId, timestamp, tool, status, mutated flag, and summary. JSONL is a non-authoritative replica; auditEventId cannot be used for rollback. Use the typed server operation references for runtime actions. Filters: toolFilter (exact tool name, empty for any), mutatedOnly (true skips reads), statusContains (substring), limit (1-200, default 20)."),
-            CreateTool(
-                (string service, string environment, string timeframe, string symptoms, string logSample)
-                    => toolkit.AnalyzeLogsAsync(service, environment, timeframe, symptoms, logSample),
-                "analyze_logs",
-                "Analyze logs and return findings, prioritized remediation, and validation checks."),
-            CreateTool(
-                (string service, string environment, string timeframe, string objective, string metricSnapshot)
-                    => toolkit.AnalyzeMetricsAsync(service, environment, timeframe, objective, metricSnapshot),
-                "analyze_metrics",
-                "Analyze metrics and identify performance bottlenecks with optimization priorities."),
-            CreateTool(
-                (string service, string environment, string workloadProfile, string bottleneck, string targetSlo)
-                    => toolkit.TunePerformanceAsync(service, environment, workloadProfile, bottleneck, targetSlo),
-                "tune_performance",
-                "Create a performance tuning plan for Honua services."),
-            CreateTool(
-                (string service, string environment, string incidentSummary, string suspectedComponent, string businessImpact)
-                    => toolkit.TroubleshootIncidentAsync(service, environment, incidentSummary, suspectedComponent, businessImpact),
-                "troubleshoot_incident",
-                "Troubleshoot an incident and provide ordered response actions."),
-            CreateTool(
-                (string environment, string currentVersion, string targetVersion, string maintenanceWindow, string constraints)
-                    => toolkit.PlanServerUpgradeAsync(environment, currentVersion, targetVersion, maintenanceWindow, constraints),
-                "plan_server_upgrade",
-                "Plan a Honua server upgrade with staged rollout and rollback criteria."),
             CreateTool(
                 (string service, string environmentsCsv, string revision, string action, string changeSummary)
                     => toolkit.PlanGitOpsEngineAsync(service, environmentsCsv, revision, action, changeSummary),
@@ -92,11 +56,6 @@ internal static class CapabilityToolset
                     => toolkit.DeployServiceWithGitOpsAsync(service, environmentsCsv, revision, action, changeSummary),
                 "deploy_service_gitops",
                 "Generate GitOps deployment actions across environments, and (only when EXECUTION_MODE=execute and the approval gate is satisfied) actuate sync/promote THROUGH the honua-server deploy-control endpoints: validate (preflight+plan), create a durable operation (submitImmediately=false), pause for external approval under pr-first or when the server requires approval, and only submit+poll to terminal when policy/approval allows. Default plan posture mutates nothing."),
-            CreateTool(
-                (string service, string environment, string forwardRevision, string priorOperationId, string symptoms)
-                    => toolkit.PlanForwardFixAsync(service, environment, forwardRevision, priorOperationId, symptoms),
-                "plan_forward_fix",
-                "Health-gated FIX-FORWARD (roll-forward convergence) planner and the release's operate-recovery loop. Verifies the health of a single-environment deploy (live readiness + deploy preflight, plus the prior operation's terminal status/failing phase/smoke evidence/server-side rollback when priorOperationId is given) and, when unhealthy, returns an ordered plan to recover by rolling FORWARD (diagnose -> propose a corrected revision -> re-deploy through the governed create path -> re-verify), NEVER by rolling back. Read-only and plan-only: no mutation, submit, promotion, or rollback. Returns readiness of healthy-converged / forward-fix-required / backend-unavailable. Use this instead of rollback for recovery in this release."),
             CreateTool(
                 (string operationId, string reason)
                     => toolkit.RollbackGitOpsOperationAsync(operationId, reason),
@@ -131,26 +90,6 @@ internal static class CapabilityToolset
                     => toolkit.BuildSupportTicketConsoleViewAsync(ticketId, severity, environment, symptoms, requestedAction, allowedAccessMode, ttlMinutes, rollbackExpected, attachedEvidence),
                 "get_support_ticket_console_view",
                 "Build a Console-facing view of a support ticket's L2/L3 trust state: live delegated-session (access mode disabled/read-only/operator-scoped, effective TTL, absolute expiry, customer-visible and active flags), the DiagnosisScorecard (pass/fail, composite score, per-criterion checklist, failure modes, evidence), the escalation rationale (which signal/trigger caused the operator-scoped hand-off, or not-escalated), and audit-journal references. Read-only projection: runs the same diagnosis as triage but never opens a session, posts a diagnosis, or escalates."),
-            CreateTool(
-                (string service, string environment, string timeframe, string symptoms, string edition)
-                    => toolkit.HonuaDiagnoseAsync(service, environment, timeframe, symptoms, edition),
-                "honua_diagnose",
-                "Run edition-aware read-only health diagnostics over Honua health, metrics, and error telemetry."),
-            CreateTool(
-                (string service, string environment, string timeframe, string slowQuerySample, string edition)
-                    => toolkit.ExplainSlowQueriesAsync(service, environment, timeframe, slowQuerySample, edition),
-                "honua_explain_slow_queries",
-                "Explain slow query signatures and identify likely spatial, cache, or pool bottlenecks."),
-            CreateTool(
-                (string runbookName, string service, string environment, string parameters, bool confirmed, string edition)
-                    => toolkit.RunbookExecuteAsync(runbookName, service, environment, parameters, confirmed, edition),
-                "honua_runbook_execute",
-                "Prepare or execute approved operational runbooks with Enterprise and execution-tier gates."),
-            CreateTool(
-                (string service, string environment, string detectedIssue, string desiredOutcome, bool autoApply, string edition, string findingId, string remediationAction)
-                    => toolkit.AutoRemediationPlanAsync(service, environment, detectedIssue, desiredOutcome, autoApply, edition, findingId, remediationAction),
-                "honua_auto_remediation_plan",
-                "Plan Enterprise-gated self-healing actions with policy, approval, rollback, and validation controls. Intent is classified from TYPED input only, never from the detectedIssue/desiredOutcome prose: pass findingId (preferred - a server-owned deterministic ops finding id `{rule}-{32 hex}`, or its bare rule id) or remediationAction (`gitops-rollback` or `drift-observe`). Mapped finding rules: `deploy-manual-intervention` -> gitops-rollback; `platform-release-skew` and `platform-release-runtime-divergence` -> drift-observe. A rollback also needs the durable deploy-control operation id as an `operationId=<id>` token in detectedIssue/desiredOutcome; that token alone still resolves to a rollback for backward compatibility. Unmapped rule, unregistered action, disagreeing findingId/remediationAction, or no typed intent returns `unsupported-action` with zero backend calls."),
             CreateTool(
                 (string workItemId, string kind, string currentState, string lowerEnvironment, string publishEnvironment, string previewUrl, string edition)
                     => toolkit.PlanDeliverableLifecycleAsync(workItemId, kind, currentState, lowerEnvironment, publishEnvironment, previewUrl, edition),

@@ -174,7 +174,7 @@ public sealed partial class TerraformProvisioningTests
     }
 
     [Fact]
-    public async Task Federation_MetadataReleaseAndFindingReceiptsKeepServerIdsAndRequireTheVerifiedRoot()
+    public async Task Federation_MetadataReleaseReceiptsKeepServerIdsAndRequireTheVerifiedRoot()
     {
         using TerraformTestRoot root = new();
         (string provisioningId, BackendConfiguration configuration) = await VerifiedFederationAsync(root);
@@ -183,17 +183,11 @@ public sealed partial class TerraformProvisioningTests
             + "\"proposalId\":\"metadata-proposal-7\",\"executionId\":\"metadata-exec-7\","
             + "\"rootProvisioningOperationId\":\"" + provisioningId + "\","
             + "\"metadataRelease\":{\"rootProvisioningOperationId\":\"" + provisioningId + "\"}}\n";
-        string findingBytes = "{"
-            + "\"findingId\":\"deploy-stuck-abc\",\"status\":\"ProposalCreated\","
-            + "\"proposalId\":\"finding-proposal-4\",\"executionOperationId\":\"finding-exec-4\","
-            + "\"rootProvisioningOperationId\":\"" + provisioningId + "\"}\n";
         TestHttpMessageHandler handler = new(request =>
         {
             string path = request.RequestUri!.AbsolutePath;
             if (path.Contains("/metadata/releases", StringComparison.Ordinal))
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(metadataBytes, Encoding.UTF8, "application/json") };
-            if (path.EndsWith("/propose", StringComparison.Ordinal))
-                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(findingBytes, Encoding.UTF8, "application/json") };
             return TestHttpMessageHandler.JsonOk(new { status = "ok" });
         });
         using HttpClient client = new(handler);
@@ -235,40 +229,6 @@ public sealed partial class TerraformProvisioningTests
         ServerOperationLineage inspectedLineage = Assert.Single(JsonSerializer.Deserialize<OperationResponse>(JsonSerializer.Serialize(inspected))!.ServerOperations);
         Assert.Equal("metadata-op-7", inspectedLineage.OperationId);
         Assert.Equal(provisioningId, inspectedLineage.RootProvisioningOperationId);
-
-        ActuationSpine.OperationGrant findingGrant = spine.Authorize(new ActuationRequest(
-            "honua.ops-finding.propose", "propose", "deploy-stuck-abc", [], "finding=deploy-stuck-abc",
-            "honua-devops:ops-finding:deploy-stuck-abc", "proposal-required", true, "operator",
-            BackendMutation.OpsFindingPropose)).Grant!;
-        using BackendJsonResult proposed = await gateway.ProposeOpsFindingAsync("deploy-stuck-abc", findingGrant, CancellationToken.None);
-        using BackendJsonResult proposedAgain = await restarted.ProposeOpsFindingAsync("deploy-stuck-abc", findingGrant, CancellationToken.None);
-        foreach (BackendJsonResult response in new[] { proposed, proposedAgain })
-        {
-            Assert.True(response.CallResult.IsSuccess);
-            ServerOperationLineage finding = response.CallResult.ServerLineage!;
-            Assert.Null(finding.OperationId);
-            Assert.Equal("finding-proposal-4", finding.ProposalId);
-            Assert.Equal("finding-exec-4", finding.ExecutionOperationId);
-            Assert.NotEqual(finding.ExecutionOperationId, finding.OperationId);
-            Assert.Equal(provisioningId, finding.RootProvisioningOperationId);
-            Assert.Equal(provisioningId, finding.ProvisioningLineage!.ProvisioningOperationId);
-        }
-        string[] proposeBodies = handler.CapturedRequests.Where(r => r.Method == "POST" && r.Uri.EndsWith("/propose", StringComparison.Ordinal)).Select(r => r.Body!).ToArray();
-        Assert.Equal(2, proposeBodies.Length);
-        Assert.All(proposeBodies, body => Assert.Equal(provisioningId, JsonDocument.Parse(body).RootElement.GetProperty("rootProvisioningOperationId").GetString()));
-
-        TestHttpMessageHandler missingRoot = new(_ => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"status\":\"ProposalCreated\",\"proposalId\":\"proposal-x\",\"operationId\":\"" + provisioningId + "\"}\n", Encoding.UTF8, "application/json")
-        });
-        using HttpClient missingClient = new(missingRoot);
-        using BackendGateway missingGateway = new(configuration, missingClient);
-        using BackendJsonResult unproven = await missingGateway.ProposeOpsFindingAsync("deploy-stuck-abc", findingGrant, CancellationToken.None);
-        Assert.False(unproven.CallResult.IsSuccess);
-        Assert.True(unproven.CallResult.MutationAcknowledged);
-        Assert.Null(unproven.CallResult.ServerLineage);
-        Assert.Contains("lineage-evidence-invalid", unproven.CallResult.Detail, StringComparison.Ordinal);
-        Assert.DoesNotContain("operationId", missingRoot.CapturedRequests[0].Body!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -338,26 +298,27 @@ public sealed partial class TerraformProvisioningTests
     {
         using TerraformTestRoot root = new();
         (string provisioningId, BackendConfiguration configured) = await VerifiedFederationAsync(root);
-        string findingBytes = "{"
-            + "\"findingId\":\"deploy-stuck-abc\",\"status\":\"ProposalCreated\","
-            + "\"proposalId\":\"finding-proposal-4\",\"rootProvisioningOperationId\":\"" + provisioningId + "\"}\n";
+        string metadataBytes = "{"
+            + "\"operationId\":\"metadata-op-9\",\"proposalId\":\"metadata-proposal-9\","
+            + "\"rootProvisioningOperationId\":\"" + provisioningId + "\"}\n";
         TestHttpMessageHandler handler = new(_ =>
             new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(findingBytes, Encoding.UTF8, "application/json")
+                Content = new StringContent(metadataBytes, Encoding.UTF8, "application/json")
             });
         BackendConfiguration unconfigured = configured with { RootProvisioningOperationId = null };
         using HttpClient client = new(handler);
         using BackendGateway gateway = new(unconfigured, client);
         ActuationSpine spine = new(
-            ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Propose),
+            ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Propose) with { DeployTargetId = "pkg-1" },
             ProvisioningSubstrateFixtures.DirectAllowedPolicy());
         ActuationSpine.OperationGrant grant = spine.Authorize(new ActuationRequest(
-            "honua.ops-finding.propose", "propose", "deploy-stuck-abc", [], "finding=deploy-stuck-abc",
-            "honua-devops:ops-finding:deploy-stuck-abc", "proposal-required", true, "operator",
-            BackendMutation.OpsFindingPropose)).Grant!;
+            "honua.metadata-release.create", "create", "pkg-1", [], "field=name",
+            "honua-devops:metadata-release:pkg-1", "proposal-required", true, "operator",
+            BackendMutation.MetadataReleaseCreate)).Grant!;
 
-        using BackendJsonResult result = await gateway.ProposeOpsFindingAsync("deploy-stuck-abc", grant, CancellationToken.None);
+        using BackendJsonResult result = await gateway.CreateMetadataReleaseOperationJsonAsync(
+            "pkg-1", "dev", "roads", "name", "String", null, "add field", grant.IdempotencyKey, "corr-1", grant, CancellationToken.None);
 
         Assert.False(result.CallResult.IsSuccess);
         Assert.True(result.CallResult.MutationAcknowledged);

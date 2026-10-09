@@ -211,8 +211,6 @@ internal static class ProvisioningSubstrateFixtures
                 null,
                 "healthz/ready",
                 "health",
-                "v1/logs/search",
-                "v1/metrics/search",
                 "api/v1/admin/observability/errors",
                 "api/v1/admin/observability/telemetry",
                 "api/v1/metrics/health",

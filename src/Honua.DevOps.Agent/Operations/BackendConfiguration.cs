@@ -9,8 +9,6 @@ internal sealed record BackendConfiguration(
     string? OTelApiKey,
     string HonuaReadinessPath,
     string OTelHealthPath,
-    string OTelLogsPath,
-    string OTelMetricsPath,
     string HonuaAdminErrorsPath,
     string HonuaAdminTelemetryPath,
     string HonuaMetricsHealthPath,
@@ -32,14 +30,10 @@ internal sealed record BackendConfiguration(
     string HonuaDeployOperationsPath = "api/v1/admin/deploy/operations",
     string HonuaMetadataReleaseOperationsPath = "api/v1/admin/metadata/releases/operations",
     string HonuaMetadataReleaseByPackagePath = "api/v1/admin/metadata/releases",
-    string HonuaManifestDriftPath = "api/v1/admin/manifest/drift",
-    string HonuaManifestVersionsPath = "api/v1/admin/manifest/versions",
     bool SupportAutoBundleEnabled = false,
     IReadOnlyList<string>? SupportAutoBundleAllowedHosts = null,
     string? SupportAutoBundleApiKey = null,
     Uri? ConsoleBaseUri = null,
-    string HonuaMcpPath = "mcp",
-    string HonuaOpsFindingsPath = "api/v1/admin/observability/findings",
     string? RootProvisioningOperationId = null)
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
@@ -52,8 +46,6 @@ internal sealed record BackendConfiguration(
     private const string LegacyHonuaHealthPathVariable = "HONUA_DEVOPS_HONUA_HEALTH_PATH";
     private const string OTelHealthPathVariable = "HONUA_DEVOPS_OTEL_HEALTH_PATH";
 
-    private const string OTelLogsPathVariable = "HONUA_DEVOPS_OTEL_LOGS_PATH";
-    private const string OTelMetricsPathVariable = "HONUA_DEVOPS_OTEL_METRICS_PATH";
 
     private const string HonuaAdminErrorsPathVariable = "HONUA_DEVOPS_HONUA_ADMIN_ERRORS_PATH";
     private const string HonuaAdminTelemetryPathVariable = "HONUA_DEVOPS_HONUA_ADMIN_TELEMETRY_PATH";
@@ -72,10 +64,6 @@ internal sealed record BackendConfiguration(
     private const string HonuaDeployOperationsPathVariable = "HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH";
     private const string HonuaMetadataReleaseOperationsPathVariable = "HONUA_DEVOPS_HONUA_METADATA_RELEASE_OPERATIONS_PATH";
     private const string HonuaMetadataReleaseByPackagePathVariable = "HONUA_DEVOPS_HONUA_METADATA_RELEASE_BY_PACKAGE_PATH";
-    private const string HonuaManifestDriftPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH";
-    private const string HonuaManifestVersionsPathVariable = "HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH";
-    private const string HonuaMcpPathVariable = "HONUA_DEVOPS_HONUA_MCP_PATH";
-    private const string HonuaOpsFindingsPathVariable = "HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH";
 
     // Backwards-compatible aliases from the original /ops route placeholders.
     private const string LegacyTroubleshootPathVariable = "HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH";
@@ -120,14 +108,6 @@ internal sealed record BackendConfiguration(
             "/",
             OTelHealthPathVariable);
 
-        string otelLogsPath = ParseRelativePath(
-            Environment.GetEnvironmentVariable(OTelLogsPathVariable),
-            "/v1/logs/search",
-            OTelLogsPathVariable);
-        string otelMetricsPath = ParseRelativePath(
-            Environment.GetEnvironmentVariable(OTelMetricsPathVariable),
-            "/v1/metrics/search",
-            OTelMetricsPathVariable);
 
         string honuaAdminErrorsPath = ParseRelativePathWithLegacy(
             HonuaAdminErrorsPathVariable,
@@ -197,22 +177,6 @@ internal sealed record BackendConfiguration(
             Environment.GetEnvironmentVariable(HonuaMetadataReleaseByPackagePathVariable),
             "/api/v1/admin/metadata/releases",
             HonuaMetadataReleaseByPackagePathVariable);
-        string honuaManifestDriftPath = ParseRelativePath(
-            Environment.GetEnvironmentVariable(HonuaManifestDriftPathVariable),
-            "/api/v1/admin/manifest/drift",
-            HonuaManifestDriftPathVariable);
-        string honuaManifestVersionsPath = ParseRelativePath(
-            Environment.GetEnvironmentVariable(HonuaManifestVersionsPathVariable),
-            "/api/v1/admin/manifest/versions",
-            HonuaManifestVersionsPathVariable);
-        string honuaMcpPath = ParseRelativePath(
-            Environment.GetEnvironmentVariable(HonuaMcpPathVariable),
-            "/mcp",
-            HonuaMcpPathVariable);
-        string honuaOpsFindingsPath = ParseRelativePath(
-            Environment.GetEnvironmentVariable(HonuaOpsFindingsPathVariable),
-            "/api/v1/admin/observability/findings",
-            HonuaOpsFindingsPathVariable);
 
         TimeSpan timeout = ParseTimeout(Environment.GetEnvironmentVariable(TimeoutSecondsVariable));
 
@@ -243,8 +207,6 @@ internal sealed record BackendConfiguration(
             OTelApiKey: otelApiKey,
             HonuaReadinessPath: honuaReadinessPath,
             OTelHealthPath: otelHealthPath,
-            OTelLogsPath: otelLogsPath,
-            OTelMetricsPath: otelMetricsPath,
             HonuaAdminErrorsPath: honuaAdminErrorsPath,
             HonuaAdminTelemetryPath: honuaAdminTelemetryPath,
             HonuaMetricsHealthPath: honuaMetricsHealthPath,
@@ -266,14 +228,10 @@ internal sealed record BackendConfiguration(
             HonuaDeployOperationsPath: honuaDeployOperationsPath,
             HonuaMetadataReleaseOperationsPath: honuaMetadataReleaseOperationsPath,
             HonuaMetadataReleaseByPackagePath: honuaMetadataReleaseByPackagePath,
-            HonuaManifestDriftPath: honuaManifestDriftPath,
-            HonuaManifestVersionsPath: honuaManifestVersionsPath,
             SupportAutoBundleEnabled: supportAutoBundleEnabled,
             SupportAutoBundleAllowedHosts: supportAutoBundleAllowedHosts,
             SupportAutoBundleApiKey: supportAutoBundleApiKey,
             ConsoleBaseUri: consoleBaseUri,
-            HonuaMcpPath: honuaMcpPath,
-            HonuaOpsFindingsPath: honuaOpsFindingsPath,
             RootProvisioningOperationId: Environment.GetEnvironmentVariable("HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID"));
     }
 

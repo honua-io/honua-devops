@@ -112,8 +112,6 @@ public class ServiceBundleDriftDetectionTests
             OTelApiKey: null,
             HonuaReadinessPath: "healthz/ready",
             OTelHealthPath: "health",
-            OTelLogsPath: "v1/logs/search",
-            OTelMetricsPath: "v1/metrics/search",
             HonuaAdminErrorsPath: "api/v1/admin/observability/errors",
             HonuaAdminTelemetryPath: "api/v1/admin/observability/telemetry",
             HonuaMetricsHealthPath: "api/v1/metrics/health",

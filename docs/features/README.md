@@ -6,9 +6,9 @@
 
 - Provider-pluggable agent runtime with Codex, Claude, `local-llama`, and Amazon Bedrock configuration paths (`HONUA_DEVOPS_PROVIDER` = `codex` | `claude` | `local-llama` | `bedrock`).
 - Plan/execute modes, execution tiers, approval modes, audit hooks, support-session posture, and break-glass controls.
-- Built-in operations toolkit for log/metrics analysis (`analyze_logs`, `analyze_metrics`), performance tuning (`tune_performance`), incident troubleshooting (`troubleshoot_incident`), diagnostics (`honua_diagnose`), slow-query explanation (`honua_explain_slow_queries`), runbook execution (`honua_runbook_execute`), and remediation planning (`honua_auto_remediation_plan`). Capacity forecasting, index recommendation, incident summarization, and migration advice are *not* separate tools — see `docs/epic-backlog-closure.md`.
-- Primary day-2 `honua_observe_diagnose_propose` loop over bounded honua-server MCP health/findings/alerts/timeline/platform-release/deploy evidence, with at-most-one deterministic finding-id proposal through the server-owned gateway and approval lane.
-- Honua API, OTEL, and `honua-support` backend integration, including diagnosis evidence, scorecard posting, and signed escalation webhook intake for support tickets.
+- 2026.1 scope: the provisioning executor (`provision_infrastructure`) plus install handoff (`install_handoff`, `verify_install_handoff`), `describe_environment`, `find_recent_operations`, and read-only planners/explainers.
+- Day-2 observe/diagnose/propose is served by honua-server's own `/mcp` (`honua_ops_*`, `honua_propose_*`) with approval by a separate principal via `POST /api/v1/admin/proposals/{id}/approve`. The former devops ops loop (`honua_observe_diagnose_propose`, `honua_auto_remediation_plan`, `honua_runbook_execute`, `plan_server_upgrade`, `plan_forward_fix`, `honua_diagnose`, `honua_explain_slow_queries`, `analyze_logs`, `analyze_metrics`, `tune_performance`, `troubleshoot_incident`) was deleted for 2026.1.
+- Honua API, OTEL health probe, and `honua-support` backend integration, including diagnosis evidence, scorecard posting, and signed escalation webhook intake for support tickets.
 - Desired-state control repo model with typed service bundles, platform stacks, promotions, execution policies, and releases.
 - Customer bootstrap scripts that emit validation, preflight, and operator CI workflows.
 - Runtime-adapter lifecycle for validate, plan/apply infra, plan/apply release, verify, rollback, drift, and export actual state.
