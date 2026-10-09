@@ -5,7 +5,6 @@ using System.Text.Json;
 using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.DesiredState;
 using Honua.DevOps.Agent.Operations.GitOps;
-using Honua.DevOps.Agent.Operations.Observability;
 
 namespace Honua.DevOps.Agent.Operations;
 
@@ -29,92 +28,6 @@ internal sealed partial class BackendGateway : IDisposable
 
     internal BackendConfiguration Configuration => configuration;
 
-    internal HonuaMcpOpsClient CreateMcpOpsClient()
-    {
-        Uri endpoint = BuildEndpoint(configuration.HonuaApiBaseUri, configuration.HonuaMcpPath);
-        return new HonuaMcpOpsClient(
-            _httpClient,
-            endpoint,
-            request => ApplyApiKey(request, configuration.HonuaApiKey, ApiKeyTransport.XApiKey));
-    }
-
-    // Creates a server-owned proposal from an ops finding. This is a lifecycle-entry write:
-    // it records a durable governed request and executes nothing, so it needs the sealed
-    // operation grant from the actuation spine (issue #153).
-    internal Task<BackendJsonResult> ProposeOpsFindingAsync(
-        string findingId,
-        ActuationSpine.OperationGrant grant,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(grant);
-        grant.EnsureAuthorizes(BackendMutation.OpsFindingPropose);
-        if (string.IsNullOrWhiteSpace(findingId))
-        {
-            throw new ArgumentException("Finding id is required.", nameof(findingId));
-        }
-
-        string path = $"{configuration.HonuaOpsFindingsPath.TrimEnd('/')}/{Uri.EscapeDataString(findingId.Trim())}/propose";
-        object? payload = null;
-        if (!string.IsNullOrWhiteSpace(configuration.RootProvisioningOperationId))
-        {
-            HonuaOperationsToolkit.LoadVerifiedLineage(configuration.RootProvisioningOperationId, configuration.HonuaApiBaseUri);
-            payload = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["rootProvisioningOperationId"] = configuration.RootProvisioningOperationId
-            };
-        }
-        return CaptureServerOperationAsync(SendJsonAsync(
-            configuration.HonuaApiBaseUri,
-            HttpMethod.Post,
-            path,
-            payload,
-            configuration.HonuaApiKey,
-            ApiKeyTransport.XApiKey,
-            cancellationToken), isMutation: true, shape: ServerReceiptShape.FindingProposal);
-    }
-
-    internal Task<BackendCallResult> QueryLogsAsync(
-        string service,
-        string environment,
-        string timeframe,
-        string symptoms,
-        string logSample,
-        CancellationToken cancellationToken)
-    {
-        return PostToOtelAsync(
-            configuration.OTelLogsPath,
-            new
-            {
-                service,
-                environment,
-                timeframe,
-                symptoms,
-                logSample
-            },
-            cancellationToken);
-    }
-
-    internal Task<BackendCallResult> QueryMetricsAsync(
-        string service,
-        string environment,
-        string timeframe,
-        string objective,
-        string metricSnapshot,
-        CancellationToken cancellationToken)
-    {
-        return PostToOtelAsync(
-            configuration.OTelMetricsPath,
-            new
-            {
-                service,
-                environment,
-                timeframe,
-                objective,
-                metricSnapshot
-            },
-            cancellationToken);
-    }
-
     internal async Task<BackendCallResult> RequestTroubleshootAsync(
         string service,
         string environment,
@@ -137,53 +50,6 @@ internal sealed partial class BackendGateway : IDisposable
             GetFromHonuaAsync(AddQueryParameters(configuration.HonuaAdminErrorsPath, queryContext), cancellationToken),
             GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsHealthPath, queryContext), cancellationToken),
             GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken));
-
-        return CombineResults(operation, calls);
-    }
-
-    internal async Task<BackendCallResult> RequestTuneAsync(
-        string service,
-        string environment,
-        string workloadProfile,
-        string bottleneck,
-        string targetSlo,
-        CancellationToken cancellationToken)
-    {
-        string operation =
-            $"tune:{NormalizeResourceToken(service, "service")}:{NormalizeResourceToken(environment, "env")}";
-        (string Name, string Value)[] queryContext =
-        [
-            ("service", service),
-            ("environment", environment),
-            ("workloadProfile", workloadProfile),
-            ("bottleneck", bottleneck),
-            ("targetSlo", targetSlo)
-        ];
-        BackendCallResult[] calls = await Task.WhenAll(
-            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsPerformancePath, queryContext), cancellationToken),
-            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsDatabasePath, queryContext), cancellationToken),
-            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsCachePath, queryContext), cancellationToken),
-            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaMetricsMemoryPath, queryContext), cancellationToken),
-            GetFromHonuaAsync(AddQueryParameters(configuration.HonuaQueryCacheStatisticsPath, queryContext), cancellationToken));
-
-        return CombineResults(operation, calls);
-    }
-
-    internal async Task<BackendCallResult> RequestUpgradeAsync(
-        string environment,
-        string currentVersion,
-        string targetVersion,
-        string maintenanceWindow,
-        string constraints,
-        CancellationToken cancellationToken)
-    {
-        _ = maintenanceWindow;
-        _ = constraints;
-        string operation = $"upgrade:{NormalizeResourceToken(environment, "env")}:{currentVersion}->{targetVersion}";
-        BackendCallResult[] calls = await Task.WhenAll(
-            GetFromHonuaAsync(configuration.HonuaAdminVersionPath, cancellationToken),
-            GetFromHonuaAsync(configuration.HonuaAdminCapabilitiesPath, cancellationToken),
-            GetFromHonuaAsync(configuration.HonuaReadinessPath, cancellationToken));
 
         return CombineResults(operation, calls);
     }
@@ -604,23 +470,6 @@ internal sealed partial class BackendGateway : IDisposable
             cancellationToken));
     }
 
-    internal Task<BackendCallResult> RequestManifestDriftAsync(bool verbose, CancellationToken cancellationToken)
-    {
-        string path = verbose
-            ? AddQueryParameters(configuration.HonuaManifestDriftPath, ("verbose", "true"))
-            : configuration.HonuaManifestDriftPath;
-
-        return GetFromHonuaAsync(path, cancellationToken);
-    }
-
-    internal Task<BackendCallResult> RequestManifestVersionsAsync(int limit, CancellationToken cancellationToken)
-    {
-        int clampedLimit = Math.Clamp(limit, 1, 100);
-        return GetFromHonuaAsync(
-            AddQueryParameters(configuration.HonuaManifestVersionsPath, ("limit", clampedLimit.ToString())),
-            cancellationToken);
-    }
-
     internal async Task<BackendCallResult> RequestRequirementsAnalysisAsync(
         string customerRequirements,
         string scaleProfile,
@@ -784,19 +633,6 @@ internal sealed partial class BackendGateway : IDisposable
             configuration.HonuaApiKey,
             ApiKeyTransport.XApiKey,
             request => configureRequest?.Invoke(request),
-            cancellationToken);
-    }
-
-    private Task<BackendCallResult> PostToOtelAsync(string relativePath, object payload, CancellationToken cancellationToken)
-    {
-        return SendAsync(
-            configuration.OTelBaseUri,
-            HttpMethod.Post,
-            relativePath,
-            payload,
-            configuration.OTelApiKey,
-            ApiKeyTransport.Bearer,
-            configureRequest: null,
             cancellationToken);
     }
 

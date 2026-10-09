@@ -54,7 +54,7 @@ internal static class ReleaseCapabilityGate
             Actions:
             [
                 "Recover by rolling FORWARD: diagnose the failing signal, propose a corrected revision, and re-deploy through the governed create path (deploy_service_gitops / propose operation).",
-                "Use honua_diagnose and get_devops_operation_status to verify health, then converge with a forward fix.",
+                "Use get_devops_operation_status and the installed server's /mcp honua_ops_health / honua_ops_findings tools to verify health, then converge with a forward fix.",
                 $"To evaluate the experimental rollback surface in a non-release context, set `{RollbackEnableVariable}=true`."
             ],
             ValidationChecks:

@@ -259,7 +259,7 @@ Use when smoke or SLO validation fails after rollout.
 Prompt shape:
 
 ```text
-Use plan_server_upgrade or deploy_service_gitops to produce rollback actions, required checks, and adapter rollback guidance for the affected environment.
+Use deploy_service_gitops to produce rollback actions, required checks, and adapter rollback guidance for the affected environment.
 ```
 
 Rollback posture:
@@ -270,11 +270,12 @@ Rollback posture:
 
 ### Incident Response
 
-Start in read-only tiers:
+Start read-only on the installed honua-server `/mcp` (day-2 is not an
+honua-devops surface in 2026.1):
 
-- `analyze_logs`
-- `analyze_metrics`
-- `troubleshoot_incident`
+- `honua_ops_health`
+- `honua_ops_findings`
+- `honua_alert_events` / `honua_operate_events`
 
 Use `break-glass` only when:
 
@@ -287,7 +288,6 @@ Use `break-glass` only when:
 
 After stability:
 
-- use `tune_performance` for workload-specific tuning plans
 - use `recommend_deployment_topology` when WAF, ingress, or edge posture should change
 - capture the result as desired-state changes rather than applying one-off manual fixes
 

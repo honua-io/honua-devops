@@ -81,12 +81,8 @@ public class HonuaOperatorReadinessTests
         using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
         HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway, defaultEdition: "pro");
 
-        OperationResponse response = await toolkit.ExplainSlowQueriesAsync(
-            service: "roads-api",
-            environment: "dev",
-            timeframe: "1h",
-            slowQuerySample: "SELECT * FROM parcels",
-            edition: string.Empty);
+        OperationResponse response = await toolkit.PlanDeliverableLifecycleAsync(
+            "GIS-42", "map", "draft", "dev", "dev", "", edition: string.Empty);
 
         Assert.NotEqual("edition-gated", response.Status);
     }
@@ -99,12 +95,8 @@ public class HonuaOperatorReadinessTests
         using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
         HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway, defaultEdition: "community");
 
-        OperationResponse response = await toolkit.ExplainSlowQueriesAsync(
-            service: "roads-api",
-            environment: "dev",
-            timeframe: "1h",
-            slowQuerySample: "SELECT * FROM parcels",
-            edition: string.Empty);
+        OperationResponse response = await toolkit.PlanDeliverableLifecycleAsync(
+            "GIS-42", "map", "draft", "dev", "dev", "", edition: string.Empty);
 
         Assert.Equal("edition-gated", response.Status);
     }
@@ -131,8 +123,6 @@ public class HonuaOperatorReadinessTests
             OTelApiKey: null,
             HonuaReadinessPath: "healthz/ready",
             OTelHealthPath: "health",
-            OTelLogsPath: "v1/logs/search",
-            OTelMetricsPath: "v1/metrics/search",
             HonuaAdminErrorsPath: "api/v1/admin/observability/errors",
             HonuaAdminTelemetryPath: "api/v1/admin/observability/telemetry",
             HonuaMetricsHealthPath: "api/v1/metrics/health",

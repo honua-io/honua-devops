@@ -6,99 +6,6 @@ namespace Honua.DevOps.Agent.Tests;
 
 public class EpicBacklogCompletionTests
 {
-    [Fact]
-    public async Task HonuaDiagnoseAsync_IsCommunityReadOnlyAndScopesBackendRequests()
-    {
-        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
-        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
-        using BackendGateway gateway = CreateGateway(httpClient);
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway);
-
-        OperationResponse response = await toolkit.HonuaDiagnoseAsync(
-            service: "roads-api",
-            environment: "prod",
-            timeframe: "last-15m",
-            symptoms: "timeouts",
-            edition: "community");
-
-        Assert.Equal("diagnosis-ready", response.Status);
-        Assert.Contains(response.Findings, finding => finding.Contains("Community edition", StringComparison.Ordinal));
-        Assert.Equal(3, handler.CapturedRequests.Count);
-        Assert.All(handler.CapturedRequests, request =>
-        {
-            Assert.Contains("service=roads-api", request.Uri, StringComparison.Ordinal);
-            Assert.Contains("environment=prod", request.Uri, StringComparison.Ordinal);
-        });
-    }
-
-    [Fact]
-    public async Task ExplainSlowQueriesGatesCommunityAndReturnsAnalysisForPro()
-    {
-        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
-        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
-        using BackendGateway gateway = CreateGateway(httpClient);
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway);
-
-        OperationResponse gated = await toolkit.ExplainSlowQueriesAsync(
-            service: "roads-api",
-            environment: "prod",
-            timeframe: "last-hour",
-            slowQuerySample: "Seq Scan with ST_Intersects and cache miss",
-            edition: "community");
-        Assert.Equal("edition-gated", gated.Status);
-
-        OperationResponse slowQuery = await toolkit.ExplainSlowQueriesAsync(
-            service: "roads-api",
-            environment: "prod",
-            timeframe: "last-hour",
-            slowQuerySample: "Seq Scan with ST_Intersects and cache miss",
-            edition: "pro");
-        Assert.Equal("slow-query-explained", slowQuery.Status);
-        Assert.Contains(slowQuery.Findings, finding => finding.Contains("Spatial predicate", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task EnterpriseRunbookAndAutoRemediationRespectGates()
-    {
-        OperatorPolicyModel directPolicy = new(
-            ApprovalMode.DirectAllowed,
-            "stdout-evidence",
-            new SupportSessionPolicy(SupportSessionAccess.OperatorScoped, 30, true),
-            BreakGlassPostActionReviewRequired: true);
-        HonuaOperationsToolkit toolkit = new(
-            CreateRuntime(ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv),
-            CreateGateway(),
-            directPolicy);
-
-        // Issue #151: `clear-tile-cache` has no registered actuator. Under the fully
-        // write-enabled posture above (execute mode, execute-lower-env tier, direct-allowed,
-        // confirmed=true) this previously reported `runbook-execute-ready` while making zero
-        // backend calls. Policy and caller intent authorize an actuator that exists; they
-        // cannot implement one, so the honest answer is `unsupported-action`.
-        OperationResponse runbook = await toolkit.RunbookExecuteAsync(
-            runbookName: "clear-tile-cache",
-            service: "roads-api",
-            environment: "staging",
-            parameters: "layer=roads",
-            confirmed: true,
-            edition: "enterprise");
-        Assert.Equal("unsupported-action", runbook.Status);
-        Assert.Null(runbook.BackendSteps);
-        Assert.NotNull(runbook.Evidence);
-
-        // Same for a remediation this agent does not implement: `cache miss storm` maps to no
-        // registered remediation action, so `autoApply: true` cannot make it ready.
-        OperationResponse remediation = await toolkit.AutoRemediationPlanAsync(
-            service: "roads-api",
-            environment: "staging",
-            detectedIssue: "cache miss storm",
-            desiredOutcome: "restore p95 latency",
-            autoApply: true,
-            edition: "enterprise");
-        Assert.Equal("unsupported-action", remediation.Status);
-        Assert.Null(remediation.BackendSteps);
-    }
-
     private static OperationRuntime CreateRuntime(
         ExecutionMode mode = ExecutionMode.Plan,
         ExecutionTier tier = ExecutionTier.Plan)
@@ -128,8 +35,6 @@ public class EpicBacklogCompletionTests
             OTelApiKey: null,
             HonuaReadinessPath: "healthz/ready",
             OTelHealthPath: "health",
-            OTelLogsPath: "v1/logs/search",
-            OTelMetricsPath: "v1/metrics/search",
             HonuaAdminErrorsPath: "api/v1/admin/observability/errors",
             HonuaAdminTelemetryPath: "api/v1/admin/observability/telemetry",
             HonuaMetricsHealthPath: "api/v1/metrics/health",

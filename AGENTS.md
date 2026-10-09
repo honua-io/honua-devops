@@ -4,10 +4,10 @@
 
 `honua-devops` is private, proprietary operator tooling: an AI DevOps operator
 and solution architect for Honua. It is a .NET 10 console host that exposes
-operator-grade capabilities as agent function tools — log/metrics analysis,
-troubleshooting and tuning, server upgrade planning, Honua-native GitOps
-deployment planning, customer-requirement analysis, support-ticket triage,
-topology recommendations, and a Console-facing AI DevOps bridge.
+operator-grade capabilities as agent function tools — governed provisioning
+and install handoff, Honua-native GitOps deployment planning, release
+explainers, customer-requirement analysis, support-ticket triage, topology
+recommendations, and a Console-facing AI DevOps bridge.
 
 It is NOT part of Honua's open-core runtime promise. Public surfaces live in
 `honua-server`, the SDK/mobile repos, and the base MCP data-access surface.
@@ -16,6 +16,31 @@ See `LICENSE` (proprietary).
 The agent defaults to safe behavior: `plan` execution mode with `pr-first`
 approval. It plans and emits evidence bundles; it does not apply manifests,
 submit, or roll back deploy operations on its own.
+
+## 2026.1 supported surface
+
+For 2026.1 honua-devops is the **provisioning executor only** (owner ruling
+2026-10-08: the retired ops loop is deleted, not flag-gated). The supported
+agent surface is:
+
+- `describe_environment`, `provision_infrastructure`, `install_handoff`,
+  `verify_install_handoff`, `find_recent_operations`;
+- read-only explainers/planners (`explain_release_package`,
+  `explain_metadata_release_changeset`, `inspect_metadata_release`,
+  `get_devops_operation_status`, and the other plan-only tools in
+  `CapabilityToolset`);
+- `rollback_gitops_operation` stays experimental and is only advertised when
+  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`.
+
+Day-2 observe/diagnose/propose is **not** an honua-devops responsibility. It is
+honua-server's own `/mcp` surface (`honua_ops_health`, `honua_ops_findings`,
+`honua_alert_events`, `honua_operate_events`, `honua_propose_*`), and a
+proposal executes only after a separate principal approves it via REST
+`POST /api/v1/admin/proposals/{id}/approve`. Do not re-add
+`honua_observe_diagnose_propose`, `honua_auto_remediation_plan`,
+`honua_runbook_execute`, `plan_server_upgrade`, `plan_forward_fix`,
+`honua_diagnose`, `honua_explain_slow_queries`, `analyze_logs`,
+`analyze_metrics`, `tune_performance`, or `troubleshoot_incident` here.
 
 ## Tech Stack
 
@@ -134,9 +159,7 @@ agent provider.
   response invariant: a tool's status, its audit `Mutated` flag, and its backend
   steps all derive from one authoritative result, and `executed`/`applied` requires
   a typed actuator, a durable receipt, and a successful mutating backend step.
-  `ActuatorRegistry` resolves the typed actuator BEFORE any readiness is reported —
-  an unregistered runbook or remediation returns `unsupported-action` with zero
-  backend calls.
+  (The runbook/remediation `ActuatorRegistry` was retired with the 2026.1 ops loop.)
 - `Configuration/`, `Prompts/` — runtime config and prompt assets.
 - Backends are external HTTP services configured by env: Honua API
   (`HONUA_DEVOPS_HONUA_API_BASE_URL`), OTEL (`HONUA_DEVOPS_OTEL_BASE_URL`),

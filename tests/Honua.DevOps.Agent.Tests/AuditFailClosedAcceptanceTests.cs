@@ -5,7 +5,6 @@ using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Actuation;
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.GitOps;
-using Honua.DevOps.Agent.Operations.Observability;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
 
 namespace Honua.DevOps.Agent.Tests;

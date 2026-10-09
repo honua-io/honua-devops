@@ -5,8 +5,8 @@ using Microsoft.Extensions.AI;
 namespace Honua.DevOps.Agent.Tests;
 
 // Release posture: single-environment deploy + health-gated fix-forward. Rollback and
-// cross-environment promotion are experimental and OFF by default; plan_forward_fix is the
-// forward-only recovery path.
+// cross-environment promotion are experimental and OFF by default; recovery is a forward
+// change through the governed deploy path.
 public class ReleasePostureTests
 {
     [Fact]
@@ -53,14 +53,14 @@ public class ReleasePostureTests
     }
 
     [Fact]
-    public void CapabilityToolset_OmitsRollbackTool_ButKeepsForwardFix_WhenRollbackDisabled()
+    public void CapabilityToolset_OmitsRollbackTool_WhenRollbackDisabled()
     {
         using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         IList<AITool> tools = CapabilityToolset.Create(CreateRuntime(rollbackEnabled: false), gateway);
 
         string[] names = [.. tools.Select(tool => tool.Name)];
         Assert.DoesNotContain("rollback_gitops_operation", names);
-        Assert.Contains("plan_forward_fix", names);
+        Assert.Contains("deploy_service_gitops", names);
     }
 
     [Fact]
@@ -71,7 +71,30 @@ public class ReleasePostureTests
 
         string[] names = [.. tools.Select(tool => tool.Name)];
         Assert.Contains("rollback_gitops_operation", names);
-        Assert.Contains("plan_forward_fix", names);
+        Assert.Contains("deploy_service_gitops", names);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CapabilityToolset_DoesNotRegisterRetiredOpsLoopTools(bool rollbackEnabled)
+    {
+        // 2026.1 owner ruling: the devops ops loop is deleted, not flag-gated. Day-2
+        // observe/propose belongs to honua-server /mcp (honua_ops_*, honua_propose_*).
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        IList<AITool> tools = CapabilityToolset.Create(CreateRuntime(rollbackEnabled), gateway);
+
+        string[] names = [.. tools.Select(tool => tool.Name)];
+        string[] retired =
+        [
+            "honua_observe_diagnose_propose", "honua_auto_remediation_plan", "honua_runbook_execute",
+            "plan_server_upgrade", "plan_forward_fix", "honua_diagnose", "honua_explain_slow_queries",
+            "analyze_logs", "analyze_metrics", "tune_performance", "troubleshoot_incident"
+        ];
+        Assert.Empty(names.Intersect(retired, StringComparer.Ordinal));
+        Assert.Contains("provision_infrastructure", names);
+        Assert.Contains("install_handoff", names);
+        Assert.Contains("verify_install_handoff", names);
     }
 
     [Fact]
@@ -141,79 +164,6 @@ public class ReleasePostureTests
         Assert.NotEqual("experimental-disabled", response.Status);
     }
 
-    [Fact]
-    public async Task PlanForwardFixAsync_ReportsHealthyConverged_WhenBackendHealthy()
-    {
-        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway);
-
-        OperationResponse response = await toolkit.PlanForwardFixAsync(
-            service: "roads-api",
-            environment: "dev",
-            forwardRevision: "main",
-            priorOperationId: "",
-            symptoms: "",
-            cancellationToken: CancellationToken.None);
-
-        Assert.Equal("healthy-converged", response.Status);
-    }
-
-    [Fact]
-    public async Task PlanForwardFixAsync_RequiresForwardFix_WhenReadinessUnhealthy()
-    {
-        using BackendGateway gateway = CreateGateway(request =>
-            request.RequestUri!.AbsoluteUri.Contains("healthz/ready", StringComparison.Ordinal)
-                ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
-                : TestHttpMessageHandler.JsonOk(new { status = "ok" }));
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway);
-
-        OperationResponse response = await toolkit.PlanForwardFixAsync(
-            service: "roads-api",
-            environment: "dev",
-            forwardRevision: "fix/main",
-            priorOperationId: "",
-            symptoms: "5xx spike",
-            cancellationToken: CancellationToken.None);
-
-        Assert.Equal("forward-fix-required", response.Status);
-        // Recovery is forward-only: at least one action mentions rolling forward, none issues a rollback.
-        Assert.Contains(response.Actions, action => action.Contains("FORWARD", StringComparison.Ordinal));
-        Assert.DoesNotContain(response.Actions, action => action.Contains("roll back", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public async Task PlanForwardFixAsync_ReportsBackendUnavailable_WhenBackendDown()
-    {
-        using BackendGateway gateway = CreateGateway(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway);
-
-        OperationResponse response = await toolkit.PlanForwardFixAsync(
-            service: "roads-api",
-            environment: "dev",
-            forwardRevision: "main",
-            priorOperationId: "",
-            symptoms: "",
-            cancellationToken: CancellationToken.None);
-
-        Assert.Equal("backend-unavailable", response.Status);
-    }
-
-    [Fact]
-    public async Task PlanForwardFixAsync_RejectsMultipleEnvironments()
-    {
-        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
-        HonuaOperationsToolkit toolkit = new(CreateRuntime(), gateway);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => toolkit.PlanForwardFixAsync(
-                service: "roads-api",
-                environment: "dev,staging",
-                forwardRevision: "main",
-                priorOperationId: "",
-                symptoms: "",
-                cancellationToken: CancellationToken.None));
-    }
-
     private static OperationRuntime CreateRuntime(
         bool rollbackEnabled = false,
         bool crossEnvEnabled = false)
@@ -253,8 +203,6 @@ public class ReleasePostureTests
             OTelApiKey: null,
             HonuaReadinessPath: "healthz/ready",
             OTelHealthPath: "health",
-            OTelLogsPath: "v1/logs/search",
-            OTelMetricsPath: "v1/metrics/search",
             HonuaAdminErrorsPath: "api/v1/admin/observability/errors",
             HonuaAdminTelemetryPath: "api/v1/admin/observability/telemetry",
             HonuaMetricsHealthPath: "api/v1/metrics/health",

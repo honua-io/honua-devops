@@ -2,12 +2,6 @@ using System.Text.Json;
 
 namespace Honua.DevOps.Agent.Operations;
 
-internal enum ServerReceiptShape
-{
-    WorkflowOperation,
-    FindingProposal
-}
-
 internal sealed partial class BackendGateway
 {
     private IReadOnlyDictionary<string, string>? BindProvisioningRoot(IReadOnlyDictionary<string, string>? parameters)
@@ -30,8 +24,7 @@ internal sealed partial class BackendGateway
     private async Task<BackendJsonResult> CaptureServerOperationAsync(
         Task<BackendJsonResult> pending,
         string? expectedOperationId = null,
-        bool isMutation = false,
-        ServerReceiptShape shape = ServerReceiptShape.WorkflowOperation)
+        bool isMutation = false)
     {
         BackendJsonResult result = await pending;
         result = result with { CallResult = result.CallResult with { MutationAcknowledged = isMutation && result.CallResult.IsSuccess } };
@@ -49,16 +42,7 @@ internal sealed partial class BackendGateway
             // This is a protected evidence replica, not an operation/proposal store.
             ProvisioningEvidenceReference receipt = store.Put("server-operation", result.EvidenceBytes);
             ServerOperationLineage lineage = ServerOperationLineage.Read(result.Payload.RootElement, receipt);
-            if (shape == ServerReceiptShape.FindingProposal)
-            {
-                if (!TryClaimFinding(result.Payload.RootElement, lineage, out string? findingFailure))
-                {
-                    if (findingFailure is not null)
-                        throw new InvalidDataException(findingFailure);
-                    return result;
-                }
-            }
-            else if (string.IsNullOrWhiteSpace(lineage.OperationId)
+            if (string.IsNullOrWhiteSpace(lineage.OperationId)
                 || (expectedOperationId is not null && expectedOperationId != lineage.OperationId))
             {
                 throw new InvalidDataException("The server did not return the requested canonical operation identity.");
@@ -88,33 +72,4 @@ internal sealed partial class BackendGateway
         }
     }
 
-    // A finding proposal joins by proposalId and executionOperationId. Those are not copied
-    // onto operationId. A blocked outcome with no server identity is not a lineage claim.
-    private static bool TryClaimFinding(JsonElement payload, ServerOperationLineage lineage, out string? failure)
-    {
-        failure = null;
-        string? status = payload.TryGetProperty("status", out JsonElement statusElement)
-            && statusElement.ValueKind == JsonValueKind.String
-            ? statusElement.GetString() : null;
-        bool hasProposal = !string.IsNullOrWhiteSpace(lineage.ProposalId);
-        bool hasExecution = !string.IsNullOrWhiteSpace(lineage.ExecutionOperationId);
-        if (status == "ProposalCreated" && !hasProposal)
-        {
-            failure = "The server did not return the canonical proposal id.";
-            return false;
-        }
-        if (status == "Executed" && !hasExecution)
-        {
-            failure = "The server did not return the canonical execution operation id.";
-            return false;
-        }
-        if (status is "Failed" or "RolledBack" or "Indeterminate" or "Canceled" && !hasProposal && !hasExecution)
-        {
-            failure = "The server gateway outcome omitted proposal and execution ids.";
-            return false;
-        }
-        return hasProposal || hasExecution
-            || !string.IsNullOrWhiteSpace(lineage.OperationId)
-            || !string.IsNullOrWhiteSpace(lineage.OperationInstanceId);
-    }
 }

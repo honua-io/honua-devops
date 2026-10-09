@@ -171,36 +171,6 @@ public class BackendGatewayTests
     }
 
     [Fact]
-    public async Task RequestTuneAsync_PropagatesTuningContextToHonuaRequests()
-    {
-        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
-        using HttpClient httpClient = new(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(5)
-        };
-        using BackendGateway gateway = new(CreateBackendConfiguration(), httpClient);
-
-        BackendCallResult result = await gateway.RequestTuneAsync(
-            service: "roads-api",
-            environment: "staging",
-            workloadProfile: "batch imports",
-            bottleneck: "cache miss storm",
-            targetSlo: "p95 < 250ms",
-            cancellationToken: CancellationToken.None);
-
-        Assert.True(result.IsSuccess);
-        Assert.Equal(5, handler.CapturedRequests.Count);
-        Assert.All(handler.CapturedRequests, request =>
-        {
-            Assert.Contains("service=roads-api", request.Uri, StringComparison.Ordinal);
-            Assert.Contains("environment=staging", request.Uri, StringComparison.Ordinal);
-            Assert.Contains("workloadProfile=batch%20imports", request.Uri, StringComparison.Ordinal);
-            Assert.Contains("bottleneck=cache%20miss%20storm", request.Uri, StringComparison.Ordinal);
-            Assert.Contains("targetSlo=p95%20%3C%20250ms", request.Uri, StringComparison.Ordinal);
-        });
-    }
-
-    [Fact]
     public async Task ProbeOtelAsync_TruncatesResponsePreview()
     {
         string largeBody = new('x', 1200);
@@ -232,8 +202,6 @@ public class BackendGatewayTests
             OTelApiKey: null,
             HonuaReadinessPath: "healthz/ready",
             OTelHealthPath: "health",
-            OTelLogsPath: "v1/logs/search",
-            OTelMetricsPath: "v1/metrics/search",
             HonuaAdminErrorsPath: "api/v1/admin/observability/errors",
             HonuaAdminTelemetryPath: "api/v1/admin/observability/telemetry",
             HonuaMetricsHealthPath: "api/v1/metrics/health",

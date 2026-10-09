@@ -9,11 +9,11 @@ public class BackendConfigurationTests
     {
         using TestEnvironmentVariableScope environment = new();
         ResetBackendVariables(environment);
-        environment.Set("HONUA_DEVOPS_OTEL_LOGS_PATH", "https://evil.example/v1/logs/search");
+        environment.Set("HONUA_DEVOPS_OTEL_HEALTH_PATH", "https://evil.example/v1/health");
 
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(BackendConfiguration.Load);
 
-        Assert.Contains("HONUA_DEVOPS_OTEL_LOGS_PATH", exception.Message);
+        Assert.Contains("HONUA_DEVOPS_OTEL_HEALTH_PATH", exception.Message);
     }
 
     [Fact]
@@ -21,11 +21,11 @@ public class BackendConfigurationTests
     {
         using TestEnvironmentVariableScope environment = new();
         ResetBackendVariables(environment);
-        environment.Set("HONUA_DEVOPS_OTEL_LOGS_PATH", "/https://evil.example/v1/logs/search");
+        environment.Set("HONUA_DEVOPS_OTEL_HEALTH_PATH", "/https://evil.example/v1/health");
 
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(BackendConfiguration.Load);
 
-        Assert.Contains("HONUA_DEVOPS_OTEL_LOGS_PATH", exception.Message);
+        Assert.Contains("HONUA_DEVOPS_OTEL_HEALTH_PATH", exception.Message);
     }
 
     [Fact]
@@ -89,30 +89,12 @@ public class BackendConfigurationTests
         environment.Set("HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH", "/api/v1/admin/deploy/preflight");
         environment.Set("HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH", "/api/v1/admin/deploy/plan");
         environment.Set("HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH", "/api/v1/admin/deploy/operations");
-        environment.Set("HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH", "/api/v1/admin/manifest/drift");
-        environment.Set("HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH", "/api/v1/admin/manifest/versions");
 
         BackendConfiguration configuration = BackendConfiguration.Load();
 
         Assert.Equal("api/v1/admin/deploy/preflight", configuration.HonuaDeployPreflightPath);
         Assert.Equal("api/v1/admin/deploy/plan", configuration.HonuaDeployPlanPath);
         Assert.Equal("api/v1/admin/deploy/operations", configuration.HonuaDeployOperationsPath);
-        Assert.Equal("api/v1/admin/manifest/drift", configuration.HonuaManifestDriftPath);
-        Assert.Equal("api/v1/admin/manifest/versions", configuration.HonuaManifestVersionsPath);
-    }
-
-    [Fact]
-    public void Load_ConfiguresMcpReadAndFindingProposalPaths()
-    {
-        using TestEnvironmentVariableScope environment = new();
-        ResetBackendVariables(environment);
-        environment.Set("HONUA_DEVOPS_HONUA_MCP_PATH", "/operator/mcp");
-        environment.Set("HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH", "/api/v1/admin/observability/findings");
-
-        BackendConfiguration configuration = BackendConfiguration.Load();
-
-        Assert.Equal("operator/mcp", configuration.HonuaMcpPath);
-        Assert.Equal("api/v1/admin/observability/findings", configuration.HonuaOpsFindingsPath);
     }
 
     private static void ResetBackendVariables(TestEnvironmentVariableScope environment)
@@ -126,8 +108,6 @@ public class BackendConfigurationTests
             "HONUA_DEVOPS_HONUA_READINESS_PATH",
             "HONUA_DEVOPS_HONUA_HEALTH_PATH",
             "HONUA_DEVOPS_OTEL_HEALTH_PATH",
-            "HONUA_DEVOPS_OTEL_LOGS_PATH",
-            "HONUA_DEVOPS_OTEL_METRICS_PATH",
             "HONUA_DEVOPS_HONUA_ADMIN_ERRORS_PATH",
             "HONUA_DEVOPS_HONUA_ADMIN_TELEMETRY_PATH",
             "HONUA_DEVOPS_HONUA_METRICS_HEALTH_PATH",
@@ -143,10 +123,6 @@ public class BackendConfigurationTests
             "HONUA_DEVOPS_HONUA_DEPLOY_PREFLIGHT_PATH",
             "HONUA_DEVOPS_HONUA_DEPLOY_PLAN_PATH",
             "HONUA_DEVOPS_HONUA_DEPLOY_OPERATIONS_PATH",
-            "HONUA_DEVOPS_HONUA_MANIFEST_DRIFT_PATH",
-            "HONUA_DEVOPS_HONUA_MANIFEST_VERSIONS_PATH",
-            "HONUA_DEVOPS_HONUA_MCP_PATH",
-            "HONUA_DEVOPS_HONUA_OPS_FINDINGS_PATH",
             "HONUA_DEVOPS_HONUA_TROUBLESHOOT_PATH",
             "HONUA_DEVOPS_HONUA_TUNE_PATH",
             "HONUA_DEVOPS_HONUA_UPGRADE_PATH",

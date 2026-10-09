@@ -70,8 +70,8 @@ That keeps the first write-capable default out of production until the operator 
 
 The current CLI and tool surface is intentionally narrow:
 
-- diagnostic tools (`analyze_logs`, `analyze_metrics`, `troubleshoot_incident`, `tune_performance`) are read-mostly
-- rollout-oriented tools (`plan_server_upgrade`, `deploy_service_gitops`) must always surface an effective dry-run/write decision
+- day-2 diagnostics are not on this surface in 2026.1; they are honua-server `/mcp` (`honua_ops_*`)
+- rollout-oriented tools (`deploy_service_gitops`, `provision_infrastructure`) must always surface an effective dry-run/write decision
 - write intent must record both requested action and effective action
 
 Current deployment actions:

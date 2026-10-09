@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Honua.DevOps.Agent.Operations.Observability;
 
 namespace Honua.DevOps.Agent.Operations.Audit;
 
@@ -88,17 +87,6 @@ internal static class ToolCallAuditor
                 }
                 backendSteps = scrubbedSteps;
             }
-        }
-        else if (toolResult is OpsLoopReport opsLoop)
-        {
-            status = opsLoop.Status;
-            summary = Redaction.Scrub(
-                $"Honua MCP ops loop: health={opsLoop.OverallHealth ?? "unknown"}, evidence={opsLoop.EvidencePosture.Status}, findings={opsLoop.Findings.Count}, proposals={opsLoop.Findings.Count(finding => finding.Proposal is not null)}.");
-            mutated = opsLoop.MutationAcknowledged;
-            backendAcknowledged = opsLoop.MutationAcknowledged;
-            reportedIdempotencyKey = opsLoop.MutationIdempotencyKey;
-            serverOperations = opsLoop.ServerOperations;
-            provisioningLineage = opsLoop.ProvisioningLineage;
         }
         else if (toolResult is not null)
         {
