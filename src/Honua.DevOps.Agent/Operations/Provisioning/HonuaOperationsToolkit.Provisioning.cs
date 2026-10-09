@@ -457,7 +457,17 @@ internal sealed partial class HonuaOperationsToolkit
                     [
                         GetEvidenceStore().Put("plan", await File.ReadAllBytesAsync(planFile, cancellationToken)),
                         GetEvidenceStore().Put("plan-metadata", await File.ReadAllBytesAsync(planMetadataFile, cancellationToken))
-                    ]));
+                    ]))
+            {
+                ApprovalRequest = new ProvisionApprovalRequest(
+                    provisioningOperationId,
+                    ComputeSha256(planFile),
+                    metadata.PlanMetadataDigest,
+                    nextAction,
+                    canonicalStack,
+                    environment,
+                    metadata.ExpiresAtUtc)
+            };
         }
         finally
         {
@@ -1251,9 +1261,12 @@ internal sealed partial class HonuaOperationsToolkit
     private static string ValidateEnvironment(JsonElement value)
     {
         string environment = ReadString("environment", value).ToLowerInvariant();
-        if (environment is not ("dev" or "staging"))
+        // `it` is the release harness's disposable integration-test cell environment
+        // (honua-release e2e/targets/terraform_target.py passes -var=environment=it), so the
+        // governed lane can provision exactly the cell the release gate certifies.
+        if (environment is not ("dev" or "staging" or "it"))
         {
-            throw new InvalidOperationException("Variable `environment` must be `dev` or `staging` for the small provisioning lane.");
+            throw new InvalidOperationException("Variable `environment` must be `dev`, `staging`, or `it` for the small provisioning lane.");
         }
         return environment;
     }
@@ -2002,6 +2015,14 @@ internal sealed partial class HonuaOperationsToolkit
         if (!string.Equals(receipt.SigningMode, signatureProvider.SigningMode, StringComparison.Ordinal))
         {
             error = $"The approval receipt was signed in `{receipt.SigningMode}` mode but this verifier is configured for `{signatureProvider.SigningMode}`.";
+            return false;
+        }
+        // The issuer refuses to mint this, and the verifier refuses to accept it: a
+        // receipt its own verifier could have forged authorizes nothing outside dev.
+        if (string.Equals(receipt.SigningMode, ApprovalSigningModes.LocalHmacDev, StringComparison.Ordinal)
+            && !string.Equals(manifest.Environment, ApprovalReceiptIssuer.LocalHmacDevEnvironment, StringComparison.Ordinal))
+        {
+            error = $"`{ApprovalSigningModes.LocalHmacDev}` approval receipts are refused outside environment `{ApprovalReceiptIssuer.LocalHmacDevEnvironment}` (plan environment `{manifest.Environment}`); configure `{ApprovalSigningModes.KmsMac}`.";
             return false;
         }
         string? expectedKeyId = signatureProvider.ResolveKeyId(receipt.Issuer);

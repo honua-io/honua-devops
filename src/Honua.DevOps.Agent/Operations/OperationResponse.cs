@@ -35,4 +35,14 @@ internal sealed record OperationResponse(
 
     [JsonPropertyName("auditEventId")]
     public string AuditEventId { get; init; } = Guid.NewGuid().ToString("n");
+
+    /// <summary>
+    /// Present only on a <c>provision_infrastructure action=plan</c> response: the exact
+    /// fields a separate approver must bind into a
+    /// <c>honua.devops.provision-approval/v1</c> receipt. Serialized so the issuer
+    /// (<c>honua-devops --issue-provision-approval</c>) reads structure, not prose.
+    /// </summary>
+    [JsonPropertyName("approvalRequest")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProvisionApprovalRequest? ApprovalRequest { get; init; }
 }

@@ -114,7 +114,7 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_WEBHOOK_PATH` (`/escalations` default; signed POST path)
 - `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE` (`true` default; when true, accepted webhooks trigger read-only ticket triage output)
 - `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
-- `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`)
+- `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`; must be exactly `dev` when `HONUA_DEVOPS_PROVISION_APPROVAL_SIGNING_MODE=local-hmac-dev` with issuer keys configured). The `provision_infrastructure` small lane accepts `dev`, `staging` and `it` (the release harness's disposable cell environment).
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-iac`)
 - `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `trunk`)
 - `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
@@ -270,6 +270,25 @@ Inspect the operation journal (requires `HONUA_DEVOPS_AUDIT_HOOK_TARGET=file:///
 dotnet run --project src/Honua.DevOps.Agent -- --list-operations --limit 50
 dotnet run --project src/Honua.DevOps.Agent -- --show-operation <operationId>
 ```
+
+### Approving a provisioning plan
+
+`provision_infrastructure` apply/destroy needs a signed
+`honua.devops.provision-approval/v1` receipt from a principal other than the one
+that applies. Issue it from the saved plan response, as the approver:
+
+```bash
+HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS="honua-release-approver=arn:aws:kms:us-east-1:<acct>:key/<id>" \
+dotnet run --project src/Honua.DevOps.Agent -- --issue-provision-approval \
+  --from-plan-response plan.json --action apply \
+  --signing-mode kms-mac --issuer honua-release-approver > approval.json
+```
+
+The receipt JSON is the only stdout output. `kms-mac` needs the approver to hold
+`kms:GenerateMac` (and the applying agent only `kms:VerifyMac`) on the key from
+honua-iac `bootstrap/aws-exec-identity`; `local-hmac-dev` is non-evidentiary and
+refused outside environment `dev`. Full flow, flags and KMS prerequisites:
+[docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md#approving-a-provisioning-plan).
 
 Run the honua-support escalation receiver:
 

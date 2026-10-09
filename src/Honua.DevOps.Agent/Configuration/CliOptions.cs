@@ -1,4 +1,5 @@
 using System.Globalization;
+using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Troubleshooting;
 using Honua.DevOps.Agent.Providers;
 
@@ -18,7 +19,8 @@ internal sealed record CliOptions(
     bool BugReportListen,
     bool Mcp,
     string? AwaitApproval,
-    BlindEvalCliOptions? EvalBlind)
+    BlindEvalCliOptions? EvalBlind,
+    IssueProvisionApprovalCliOptions? IssueProvisionApproval = null)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
@@ -42,6 +44,15 @@ internal sealed record CliOptions(
     private const string EvalPassThresholdFlag = "--eval-pass-threshold";
     private const string EvalFixtureFlag = "--eval-fixture";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
+    internal const string IssueProvisionApprovalFlag = "--issue-provision-approval";
+    private const string FromPlanResponseFlag = "--from-plan-response";
+    private const string ActionFlag = "--action";
+    private const string SigningModeFlag = "--signing-mode";
+    private const string IssuerFlag = "--issuer";
+    private const string TtlMinutesFlag = "--ttl-minutes";
+    private const string DecisionFlag = "--decision";
+    private const string StackFlag = "--stack";
+    private const string EnvironmentFlag = "--environment";
 
     internal const string HelpText = """
 honua-devops — AI operator for Honua
@@ -86,6 +97,22 @@ Options:
                               it in Console (Submitted/terminal) or HONUA_DEVOPS_APPROVAL_TIMEOUT_SECONDS
                               (default 3600) elapses. pr-first/break-glass-only wait read-only; direct-allowed
                               may submit per policy. Reports the final status and exits non-zero on timeout/error.
+  --issue-provision-approval  Issue a signed honua.devops.provision-approval/v1 receipt for a reviewed
+                              provision_infrastructure plan and print ONLY the receipt JSON on stdout.
+                              Run it as the approving principal, never as the agent that applies.
+                              Requires --from-plan-response, --action, --signing-mode and --issuer.
+  --from-plan-response <path> Saved provision_infrastructure action=plan response (tool result JSON).
+  --action <apply|destroy>    The mutation being approved; must match the plan.
+  --signing-mode <kms-mac|local-hmac-dev>
+                              kms-mac (certified; issuer holds kms:GenerateMac only, key ARN from
+                              HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS) or local-hmac-dev
+                              (NON-EVIDENTIARY; environment dev only; HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS).
+  --issuer <id>               Issuer identity; must be on the verifier's trusted-issuer allowlist.
+  --ttl-minutes <n>           Receipt lifetime in minutes, 1-60 (default 15).
+  --decision <approved|rejected>
+                              Default approved. A rejected receipt is a signed record; it authorizes nothing.
+  --stack <id>, --environment <name>
+                              Only for plan responses that predate approvalRequest; may never contradict the plan.
   -h, --help                  Show this help and exit.
 
 Environment (--listen):
@@ -129,6 +156,7 @@ Examples:
   honua-devops --bugreport-listen
   honua-devops --mcp
   honua-devops --await-approval 7d2b9f...
+  honua-devops --issue-provision-approval --from-plan-response plan.json --action apply --signing-mode kms-mac --issuer honua-release-approver > approval.json
   honua-devops --eval-blind --provider bedrock --eval-fault-set smoke --eval-output scorecard.json
   honua-devops --eval-blind --eval-fixture eval/fixtures/blind-eval/known-bad-answers.json
 """;
@@ -155,6 +183,15 @@ Examples:
         string? evalCommit = null;
         string? evalPassThreshold = null;
         string? evalFixture = null;
+        bool issueApproval = false;
+        string? fromPlanResponse = null;
+        string? approvalAction = null;
+        string? signingMode = null;
+        string? issuer = null;
+        string? ttlMinutes = null;
+        string? decision = null;
+        string? approvalStack = null;
+        string? approvalEnvironment = null;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -294,6 +331,60 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(IssueProvisionApprovalFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                issueApproval = true;
+                continue;
+            }
+
+            if (argument.Equals(FromPlanResponseFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                fromPlanResponse = RequireValue(args, ref index, FromPlanResponseFlag, "a plan response file path");
+                continue;
+            }
+
+            if (argument.Equals(ActionFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                approvalAction = RequireValue(args, ref index, ActionFlag, "apply or destroy");
+                continue;
+            }
+
+            if (argument.Equals(SigningModeFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                signingMode = RequireValue(args, ref index, SigningModeFlag, "kms-mac or local-hmac-dev");
+                continue;
+            }
+
+            if (argument.Equals(IssuerFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                issuer = RequireValue(args, ref index, IssuerFlag, "an issuer identity");
+                continue;
+            }
+
+            if (argument.Equals(TtlMinutesFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                ttlMinutes = RequireValue(args, ref index, TtlMinutesFlag, "a lifetime in minutes (1-60)");
+                continue;
+            }
+
+            if (argument.Equals(DecisionFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                decision = RequireValue(args, ref index, DecisionFlag, "approved or rejected");
+                continue;
+            }
+
+            if (argument.Equals(StackFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                approvalStack = RequireValue(args, ref index, StackFlag, "a stack id");
+                continue;
+            }
+
+            if (argument.Equals(EnvironmentFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                approvalEnvironment = RequireValue(args, ref index, EnvironmentFlag, "an environment name");
+                continue;
+            }
+
             if (argument.Equals(LimitFlag, StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 >= args.Length || !int.TryParse(args[index + 1], out int parsedLimit) || parsedLimit < 1)
@@ -307,7 +398,39 @@ Examples:
             }
 
             throw new InvalidOperationException(
-                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {BugReportListenFlag}, {McpFlag}, {AwaitApprovalFlag}, {EvalBlindFlag}, or {HelpFlag}.");
+                $"Unknown argument `{argument}`. Use {ProviderFlag}, {PromptFlag}, {PreflightFlag}, {ListToolsFlag}, {ListOperationsFlag}, {ShowOperationFlag}, {LimitFlag}, {ListenFlag}, {IntakeListenFlag}, {BugReportListenFlag}, {McpFlag}, {AwaitApprovalFlag}, {IssueProvisionApprovalFlag}, {EvalBlindFlag}, or {HelpFlag}.");
+        }
+
+        bool anyApprovalOption = fromPlanResponse is not null || approvalAction is not null || signingMode is not null
+            || issuer is not null || ttlMinutes is not null || decision is not null
+            || approvalStack is not null || approvalEnvironment is not null;
+        if (!issueApproval && anyApprovalOption)
+        {
+            throw new InvalidOperationException(
+                $"{FromPlanResponseFlag}, {ActionFlag}, {SigningModeFlag}, {IssuerFlag}, {TtlMinutesFlag}, {DecisionFlag}, {StackFlag} and {EnvironmentFlag} require {IssueProvisionApprovalFlag}.");
+        }
+
+        if (issueApproval && !help)
+        {
+            // The issuer needs no model provider, backend, or operator runtime: it reads a
+            // file, signs, and prints. Resolve it before provider selection.
+            return new CliOptions(
+                ProviderKind.Codex,
+                prompt,
+                preflight,
+                help,
+                listTools,
+                listOperations,
+                showOperation,
+                operationLimit,
+                listen,
+                intakeListen,
+                bugReportListen,
+                mcp,
+                awaitApproval,
+                EvalBlind: null,
+                IssueProvisionApproval: IssueProvisionApprovalCliOptions.Resolve(
+                    fromPlanResponse, approvalAction, signingMode, issuer, ttlMinutes, decision, approvalStack, approvalEnvironment));
         }
 
         if (help || listTools || listOperations || showOperation is not null || mcp)
@@ -479,5 +602,78 @@ internal sealed record BlindEvalCliOptions(
         }
 
         return string.Empty;
+    }
+}
+
+/// <summary>Resolved options for <c>--issue-provision-approval</c>.</summary>
+internal sealed record IssueProvisionApprovalCliOptions(
+    string PlanResponsePath,
+    string Action,
+    string SigningMode,
+    string Issuer,
+    int TtlMinutes,
+    string Decision,
+    string? Stack,
+    string? Environment)
+{
+    internal static IssueProvisionApprovalCliOptions Resolve(
+        string? planResponsePath,
+        string? action,
+        string? signingMode,
+        string? issuer,
+        string? ttlMinutes,
+        string? decision,
+        string? stack,
+        string? environment)
+    {
+        List<string> missing = [];
+        if (string.IsNullOrWhiteSpace(planResponsePath)) missing.Add("--from-plan-response");
+        if (string.IsNullOrWhiteSpace(action)) missing.Add("--action");
+        if (string.IsNullOrWhiteSpace(signingMode)) missing.Add("--signing-mode");
+        if (string.IsNullOrWhiteSpace(issuer)) missing.Add("--issuer");
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{CliOptions.IssueProvisionApprovalFlag} requires {string.Join(", ", missing)}.");
+        }
+
+        string normalizedAction = action!.Trim().ToLowerInvariant();
+        if (normalizedAction is not ("apply" or "destroy"))
+        {
+            throw new InvalidOperationException("--action must be `apply` or `destroy`.");
+        }
+
+        string mode = signingMode!.Trim();
+        if (!ApprovalSigningModes.IsKnown(mode))
+        {
+            throw new InvalidOperationException(
+                $"--signing-mode must be one of: {string.Join(", ", ApprovalSigningModes.All)}.");
+        }
+
+        int ttl = ApprovalReceiptIssuer.DefaultTtlMinutes;
+        if (ttlMinutes is not null
+            && (!int.TryParse(ttlMinutes, NumberStyles.Integer, CultureInfo.InvariantCulture, out ttl)
+                || ttl < 1
+                || ttl > ApprovalReceiptIssuer.MaxTtlMinutes))
+        {
+            throw new InvalidOperationException(
+                $"--ttl-minutes must be an integer between 1 and {ApprovalReceiptIssuer.MaxTtlMinutes}.");
+        }
+
+        string normalizedDecision = string.IsNullOrWhiteSpace(decision) ? "approved" : decision.Trim().ToLowerInvariant();
+        if (normalizedDecision is not ("approved" or "rejected"))
+        {
+            throw new InvalidOperationException("--decision must be `approved` or `rejected`.");
+        }
+
+        return new IssueProvisionApprovalCliOptions(
+            planResponsePath!.Trim(),
+            normalizedAction,
+            mode,
+            issuer!.Trim(),
+            ttl,
+            normalizedDecision,
+            string.IsNullOrWhiteSpace(stack) ? null : stack.Trim(),
+            string.IsNullOrWhiteSpace(environment) ? null : environment.Trim());
     }
 }
