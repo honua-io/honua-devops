@@ -102,6 +102,10 @@ Common CLI modes (all via `dotnet run --project src/Honua.DevOps.Agent -- ...`):
 - `--mcp` — MCP stdio server exposing the full operator toolset 1:1 to MCP
   clients (Claude Code / Codex); same gates and audit, no provider key needed
   (see `docs/QUICKSTART-MCP.md`)
+- `--issue-provision-approval --from-plan-response <plan.json> --action apply|destroy
+  --signing-mode kms-mac|local-hmac-dev --issuer <id> [--ttl-minutes N]` — sign a
+  `honua.devops.provision-approval/v1` receipt as the approving principal (receipt
+  JSON on stdout only; see `docs/QUICKSTART-MCP.md` "Approving a provisioning plan")
 - `--list-tools`, `--help`
 
 Test:

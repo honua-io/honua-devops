@@ -52,9 +52,9 @@ internal sealed record OperationRuntime(
     private const string TerraformLocalPathVariable = "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH";
     private const string DeployTargetIdVariable = "HONUA_DEVOPS_DEPLOY_TARGET_ID";
     private const string ProductionEnvironmentsVariable = "HONUA_DEVOPS_PRODUCTION_ENVIRONMENTS";
-    private const string ProvisionApprovalIssuerKeysVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS";
-    private const string ProvisionApprovalSigningModeVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_SIGNING_MODE";
-    private const string ProvisionApprovalIssuerKeyArnsVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS";
+    internal const string ProvisionApprovalIssuerKeysVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS";
+    internal const string ProvisionApprovalSigningModeVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_SIGNING_MODE";
+    internal const string ProvisionApprovalIssuerKeyArnsVariable = "HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS";
     private const string McpProxyPackageVariable = "HONUA_DEVOPS_MCP_PROXY_PACKAGE";
     private const string McpProxyIntegrityVariable = "HONUA_DEVOPS_MCP_PROXY_INTEGRITY";
     private const string CandidateReferenceVariable = "HONUA_DEVOPS_CANDIDATE_REFERENCE";
@@ -150,6 +150,20 @@ internal sealed record OperationRuntime(
                 $"`{ProvisionApprovalSigningModeVariable}={ApprovalSigningModes.KmsMac}` requires `{ProvisionApprovalIssuerKeyArnsVariable}` issuer=kms-key-arn entries.");
         }
 
+        // A local-hmac-dev verifier can forge every receipt it accepts. Once it holds an
+        // issuer key it is able to accept receipts, so it may only do so in a runtime
+        // whose whole environment allowlist is `dev`; anything wider must use kms-mac.
+        // Without issuer keys the local provider accepts nothing and stays inert.
+        if (approvalSigningMode == ApprovalSigningModes.LocalHmacDev
+            && approvalIssuerKeys.Count > 0
+            && environments.Any(environment => !string.Equals(environment, ApprovalReceiptIssuer.LocalHmacDevEnvironment, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                $"`{ProvisionApprovalSigningModeVariable}={ApprovalSigningModes.LocalHmacDev}` with `{ProvisionApprovalIssuerKeysVariable}` is refused unless "
+                + $"`{EnvironmentsVariable}` is exactly `{ApprovalReceiptIssuer.LocalHmacDevEnvironment}` (configured: {string.Join(",", environments)}). "
+                + $"Use `{ApprovalSigningModes.KmsMac}` for any other environment.");
+        }
+
         return new OperationRuntime(
             mode,
             tier,
@@ -185,7 +199,7 @@ internal sealed record OperationRuntime(
         return mode;
     }
 
-    private static IReadOnlyDictionary<string, string> ParseApprovalIssuerKeyArns(string? value)
+    internal static IReadOnlyDictionary<string, string> ParseApprovalIssuerKeyArns(string? value)
     {
         Dictionary<string, string> issuers = new(StringComparer.Ordinal);
         if (string.IsNullOrWhiteSpace(value))
@@ -218,7 +232,7 @@ internal sealed record OperationRuntime(
         return issuers;
     }
 
-    private static IReadOnlyDictionary<string, string> ParseApprovalIssuerKeys(string? value)
+    internal static IReadOnlyDictionary<string, string> ParseApprovalIssuerKeys(string? value)
     {
         Dictionary<string, string> issuers = new(StringComparer.Ordinal);
         if (string.IsNullOrWhiteSpace(value))

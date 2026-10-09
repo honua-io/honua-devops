@@ -274,8 +274,68 @@ UTF-8 KMS key ARN. No key material is exported.
 The explicitly non-evidentiary development mode `local-hmac-dev` instead uses
 `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEYS` (`issuer=base64-hmac-key`), with
 the key id derived from the decoded key bytes. Its verifier can sign receipts,
-so it cannot qualify the release approval boundary.
+so it cannot qualify the release approval boundary. It is confined to the
+`dev` environment: the agent refuses to start with issuer keys in this mode
+unless `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS=dev`, and both the issuer and the
+verifier refuse a `local-hmac-dev` receipt naming any other environment.
 A one-person shop puts their own provisioning key on that issuer allowlist so the same human signs the plan they reviewed.
+
+### Approving a provisioning plan
+
+Receipts are issued by `honua-devops --issue-provision-approval`, run as the
+**approving principal** — never as the agent process that applies. It reads the
+saved `provision_infrastructure action=plan` response, binds the receipt to that
+response's `approvalRequest` (the `provisioningOperationId`, `planSha256`,
+`planMetadataDigest`, action, stack and environment), signs it, validates it
+against `contracts/honua-devops-provision-approval.v1.schema.json`, and prints
+the receipt JSON — and nothing else — on stdout. Diagnostics go to stderr; exit
+`0` = issued, `1` = refused, `2` = the plan file could not be read.
+
+```bash
+# 1. Agent (cell role, kms:VerifyMac only): plan, and save the tool result.
+#    provision_infrastructure stack=aws-ecs size=small action=plan \
+#      variablesJson='{"environment":"staging"}'            -> plan.json
+
+# 2. Approver (approver role, kms:GenerateMac only), after reviewing plan.json:
+export HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS="honua-release-approver=arn:aws:kms:us-east-1:<acct>:key/<id>"
+honua-devops --issue-provision-approval \
+  --from-plan-response plan.json \
+  --action apply \
+  --signing-mode kms-mac \
+  --issuer honua-release-approver \
+  --ttl-minutes 15 > approval.json
+
+# 3. Agent: apply the SAME saved plan with the receipt.
+#    provision_infrastructure action=apply confirmed=true \
+#      confirmation=<challenge from plan.json> approvalReceiptJson="$(cat approval.json)"
+```
+
+Flags: `--action apply|destroy` must match the plan; `--ttl-minutes` defaults to
+15 and is refused above 60 (the verifier's one-hour ceiling);
+`--decision approved|rejected` defaults to `approved` (a rejected receipt is a
+signed record and authorizes nothing). `--stack`/`--environment` exist only for
+plan responses saved before `approvalRequest` was emitted; they may fill a
+missing value but are refused if they contradict the plan. The file may be the
+bare tool result or a recorded MCP `tools/call` result.
+
+KMS prerequisites (`kms-mac`):
+
+- An HMAC_256 / `GENERATE_VERIFY_MAC` KMS key from honua-iac
+  `bootstrap/aws-exec-identity` with `enable_approval_mac_key=true`,
+  `approval_signer_role_names=["honua-release-approver"]` and
+  `approval_verifier_role_names=[<the role the agent runs as>]`. For the release
+  lane the approver and cell roles come from `bootstrap/aws-release-cells`; see
+  honua-iac `docs/devops/provision-approval-two-principal.md`.
+- The issuer process runs with credentials for the signer role (it needs only
+  `kms:GenerateMac`; it holds no key material and makes no other AWS call).
+- Both sides set `HONUA_DEVOPS_PROVISION_APPROVAL_ISSUER_KEY_ARNS` to the same
+  `issuer=key-arn` entry (honua-iac output `approval_mac_issuer_key_arns`); the
+  agent additionally sets `HONUA_DEVOPS_PROVISION_APPROVAL_SIGNING_MODE=kms-mac`.
+
+`it` is accepted alongside `dev` and `staging` as the small lane's environment:
+it is the disposable integration-test cell environment the honua-release cloud
+harness provisions (`-var=environment=it`). Add it to
+`HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` where that lane runs.
 
 The base64 HMAC-SHA256 signature covers these newline-separated
 UTF-8 fields in order:

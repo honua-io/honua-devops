@@ -35,6 +35,18 @@ try
         return;
     }
 
+    // The approval issuer runs as a separate principal with no backend, provider, or
+    // operator runtime; it must not require any of them to be configured.
+    if (options.IssueProvisionApproval is not null)
+    {
+        Environment.ExitCode = await IssueProvisionApprovalCommand.RunAsync(
+            options.IssueProvisionApproval,
+            Console.Out,
+            Console.Error,
+            cancellationToken: cancellationTokenSource.Token);
+        return;
+    }
+
     if (options.ListTools)
     {
         OperationRuntime listRuntime = OperationRuntime.Load();

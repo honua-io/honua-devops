@@ -352,4 +352,31 @@ internal static class ApprovalSignatureProviders
 
         return new LocalHmacApprovalSignatureProvider(runtime.ProvisionApprovalIssuerKeys);
     }
+
+    /// <summary>
+    /// Resolves the provider an ISSUER uses for <paramref name="signingMode"/>, from the same
+    /// issuer-key variables a verifier reads. Under <c>kms-mac</c> the issuer needs only the
+    /// key ARN (its IAM role grants GenerateMac); it never holds key material.
+    /// </summary>
+    internal static IApprovalSignatureProvider ForIssuer(
+        string signingMode,
+        Func<string, string?> readVariable,
+        IKmsMacClient? kmsMacClient = null)
+    {
+        if (string.Equals(signingMode, ApprovalSigningModes.KmsMac, StringComparison.Ordinal))
+        {
+            return new KmsMacApprovalSignatureProvider(
+                kmsMacClient ?? AwsKmsMacClient.Instance,
+                OperationRuntime.ParseApprovalIssuerKeyArns(readVariable(OperationRuntime.ProvisionApprovalIssuerKeyArnsVariable)));
+        }
+
+        if (string.Equals(signingMode, ApprovalSigningModes.LocalHmacDev, StringComparison.Ordinal))
+        {
+            return new LocalHmacApprovalSignatureProvider(
+                OperationRuntime.ParseApprovalIssuerKeys(readVariable(OperationRuntime.ProvisionApprovalIssuerKeysVariable)));
+        }
+
+        throw new InvalidOperationException(
+            $"Signing mode must be one of: {string.Join(", ", ApprovalSigningModes.All)}.");
+    }
 }
