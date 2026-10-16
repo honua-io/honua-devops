@@ -12,6 +12,28 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class TerraformExactSubstrateTests
 {
     [Fact]
+    public async Task Plan_RefusesProducerWithoutV2OperatorSchemaBeforeStartingTerraform()
+    {
+        using TerraformTestRoot root = new();
+        string schemas = Path.Combine(root.Path, "infrastructure", "terraform", "contracts");
+        File.Move(Path.Combine(schemas, "operator-contract.v2.schema.json"),
+            Path.Combine(schemas, "operator-contract.v1.schema.json"));
+        FakeSubstrateRunner runner = new();
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        HonuaOperationsToolkit toolkit = new(
+            ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
+            gateway,
+            provisioningProcessRunner: runner);
+
+        OperationResponse response = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "plan", "{}", false, string.Empty);
+
+        Assert.Equal("iac-substrate-unavailable", response.Status);
+        Assert.Contains("operator-contract.v2.schema.json", response.Summary, StringComparison.Ordinal);
+        Assert.Empty(runner.Calls);
+    }
+
+    [Fact]
     public async Task Plan_RefusesWhenTheCheckoutPredatesTheExactPlanSubstrate()
     {
         // A honua-iac checkout without the wrappers must fail closed. Falling back to

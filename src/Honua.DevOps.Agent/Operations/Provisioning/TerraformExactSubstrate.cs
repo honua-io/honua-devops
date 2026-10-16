@@ -102,6 +102,13 @@ internal sealed record TerraformExactSubstrate(
             return false;
         }
 
+        if (!File.Exists(Path.Combine(contracts, "operator-contract.v2.schema.json")))
+        {
+            error = "The configured honua-iac checkout does not ship `operator-contract.v2.schema.json`. "
+                + "Upgrade the producer before planning or applying; the consumer cannot fall back to v1.";
+            return false;
+        }
+
         substrate = new TerraformExactSubstrate(iacRoot, planScript, applyScript, backendIdentityScript, contracts);
         return true;
     }
