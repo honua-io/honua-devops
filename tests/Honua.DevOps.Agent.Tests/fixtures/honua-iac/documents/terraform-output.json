@@ -22,17 +22,17 @@
   "operator_contract_digest": {
     "sensitive": false,
     "type": "dynamic",
-    "value": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229"
+    "value": "faa15547bf0cbdf52d740e1e856cab5baf3513a4bf2a0ad53797057f47a9ffab"
   },
   "deployment_contract": {
     "sensitive": false,
     "type": "dynamic",
     "value": {
-      "schema_version": "honua.operator-contract/v1",
+      "schema_version": "honua.operator-contract/v2",
       "kind": "deployment",
       "identity": {
         "status": "qualified",
-        "contract_digest": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229",
+        "contract_digest": "faa15547bf0cbdf52d740e1e856cab5baf3513a4bf2a0ad53797057f47a9ffab",
         "candidate_digest": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
         "manifest_digest": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
         "iac_revision": "9c1e7f0b2d3a4c5e6f708192a3b4c5d6e7f80912",
@@ -142,11 +142,11 @@
     "sensitive": false,
     "type": "dynamic",
     "value": {
-      "schema_version": "honua.operator-contract/v1",
+      "schema_version": "honua.operator-contract/v2",
       "kind": "validation",
       "identity": {
         "status": "qualified",
-        "contract_digest": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229",
+        "contract_digest": "faa15547bf0cbdf52d740e1e856cab5baf3513a4bf2a0ad53797057f47a9ffab",
         "candidate_digest": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
         "manifest_digest": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
         "iac_revision": "9c1e7f0b2d3a4c5e6f708192a3b4c5d6e7f80912",
@@ -245,11 +245,11 @@
     "sensitive": false,
     "type": "dynamic",
     "value": {
-      "schema_version": "honua.operator-contract/v1",
+      "schema_version": "honua.operator-contract/v2",
       "kind": "operations",
       "identity": {
         "status": "qualified",
-        "contract_digest": "6cf053fbb10468d9c242bc04fc8f4d7c8c54c1edaafbdcdbec8efcc6a7ee8229",
+        "contract_digest": "faa15547bf0cbdf52d740e1e856cab5baf3513a4bf2a0ad53797057f47a9ffab",
         "candidate_digest": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
         "manifest_digest": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
         "iac_revision": "9c1e7f0b2d3a4c5e6f708192a3b4c5d6e7f80912",
@@ -328,7 +328,42 @@
         "ingress_deletion_protection": false,
         "ingress_access_logs_enabled": true,
         "database_managed": true,
-        "cache_enabled": true
+        "cache_enabled": true,
+        "protection_profile": {
+          "qualification": "unverified",
+          "execution": null,
+          "availability_class": "single-task",
+          "interruption_guarantee": "interruption-until-replacement-ready",
+          "health_sources": {
+            "functional_check_path": "/healthz/ready",
+            "readiness_check_path": "/healthz/ready",
+            "log_group": "/honua/honuaecs-it",
+            "metrics_namespace": "AWS/ApplicationELB"
+          },
+          "warmup_seconds": 60,
+          "observation": {
+            "interval_seconds": 30,
+            "timeout_seconds": 5,
+            "healthy_threshold": 2,
+            "unhealthy_threshold": 3
+          },
+          "recovery": {
+            "mechanism": "aws-ecs-deployment-circuit-breaker",
+            "executable": true,
+            "scope": "startup-until-ecs-deployment-completes",
+            "requires_prior_completed_deployment": true,
+            "controller_topology": "aws-provider-control-plane",
+            "recovery_time_bound_seconds": null,
+            "primary_rollback_enabled": true,
+            "canary_rollback_enabled": null
+          },
+          "durable_state": {
+            "database_managed": true,
+            "cache_enabled": true,
+            "object_storage_enabled": false
+          },
+          "prior_revision_retention": "unbounded-until-manually-deregistered"
+        }
       },
       "grouping": {
         "resource_group": "honuaecs-it-cluster",

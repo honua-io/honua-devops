@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Honua.DevOps.Agent.Operations;
 
 namespace Honua.DevOps.Agent.Tests;
@@ -525,6 +528,43 @@ public sealed partial class TerraformProvisioningTests
             provisioningOperationId: $"urn:honua:provisioning:{new string('0', 32)}");
 
         Assert.Equal("provisioning-evidence-missing", response.Status);
+    }
+
+    [Theory]
+    [InlineData("honua.operator-contract/v1")]
+    [InlineData(null)]
+    public async Task HandoffAndVerification_RefuseLegacyPersistedContractVersion(string? version)
+    {
+        using TerraformTestRoot root = new();
+        FakeSubstrateRunner runner = new();
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        (HonuaOperationsToolkit toolkit, OperationResponse apply) = await ApplyAsync(root, runner, gateway);
+        string operationId = apply.ProvisioningLineage!.ProvisioningOperationId;
+        string outputDirectory = Path.Combine(root.Path, "versioned-handoff");
+        OperationResponse written = await toolkit.InstallHandoffAsync(
+            "aws-ecs", string.Empty, string.Empty, outputDirectory, false,
+            provisioningOperationId: operationId);
+        Assert.Equal("install-handoff-written", written.Status);
+
+        // Only this test's unique operation record is changed, to model evidence
+        // persisted by the previous consumer before it retained contract versions.
+        string statePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "honua-devops", "provisioning",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(operationId))).ToLowerInvariant() + ".json");
+        JsonNode state = JsonNode.Parse(await File.ReadAllTextAsync(statePath))!;
+        Assert.Equal("honua.operator-contract/v2", state["OperatorContractSchemaVersion"]!.GetValue<string>());
+        state["OperatorContractSchemaVersion"] = version;
+        await File.WriteAllTextAsync(statePath, state.ToJsonString());
+
+        OperationResponse handoff = await toolkit.InstallHandoffAsync(
+            "aws-ecs", string.Empty, string.Empty, Path.Combine(root.Path, "rejected-handoff"), false,
+            provisioningOperationId: operationId);
+        Assert.Equal("operator-contract-version-unsupported", handoff.Status);
+        Assert.False(Directory.Exists(Path.Combine(root.Path, "rejected-handoff")));
+        OperationResponse verification = await toolkit.VerifyInstallHandoffAsync(
+            Path.Combine(outputDirectory, "honua-mcp-proxy.handoff.json"), false);
+        Assert.Equal("operator-contract-version-unsupported", verification.Status);
     }
 
     [Fact]

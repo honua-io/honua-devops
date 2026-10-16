@@ -43,7 +43,7 @@ internal sealed record TerraformExactSubstrate(
     internal const string RequireApprovalVariable = "HONUA_IAC_REQUIRE_APPROVAL";
 
     internal string OperatorContractSchemaPath
-        => Path.Combine(ContractsDirectory, "operator-contract.v1.schema.json");
+        => Path.Combine(ContractsDirectory, "operator-contract.v2.schema.json");
 
     internal string ExactPlanSchemaPath
         => Path.Combine(ContractsDirectory, "terraform-exact-plan.v1.schema.json");

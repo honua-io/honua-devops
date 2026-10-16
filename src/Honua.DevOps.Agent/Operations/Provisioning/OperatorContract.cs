@@ -4,7 +4,7 @@ using Honua.DevOps.Agent.Operations.Eval;
 namespace Honua.DevOps.Agent.Operations;
 
 /// <summary>
-/// The <c>honua.operator-contract/v1</c> projection honua-iac#148 publishes from a
+/// The <c>honua.operator-contract/v2</c> projection honua-iac#148 publishes from a
 /// provisioned stack, read from the three authoritative Terraform outputs.
 /// </summary>
 /// <remarks>
@@ -44,7 +44,7 @@ internal sealed record OperatorContract(
     string Partition,
     string? ImageDigest)
 {
-    internal const string ExpectedSchemaVersion = "honua.operator-contract/v1";
+    internal const string ExpectedSchemaVersion = "honua.operator-contract/v2";
 
     private static readonly string[] ContractOutputNames = ["deployment_contract", "validation_contract", "operations_contract"];
 
@@ -53,7 +53,7 @@ internal sealed record OperatorContract(
     /// document, against the schema shipped by the same honua-iac checkout.
     /// </summary>
     /// <param name="terraformOutputJson">Raw stdout of <c>terraform output -json</c>.</param>
-    /// <param name="schemaJson">Contents of <c>operator-contract.v1.schema.json</c>.</param>
+    /// <param name="schemaJson">Contents of <c>operator-contract.v2.schema.json</c>.</param>
     internal static bool TryRead(
         string terraformOutputJson,
         string schemaJson,
@@ -94,6 +94,16 @@ internal sealed record OperatorContract(
                     return false;
                 }
 
+                // Validate each authoritative output's actual version before building
+                // the convenience envelope. An invented envelope version must never
+                // relabel v1 or mixed-version contents as the credential-free v2 contract.
+                if (!string.Equals(ReadString(value, "schema_version"), ExpectedSchemaVersion, StringComparison.Ordinal))
+                {
+                    error = $"The `{name}` schema_version must be `{ExpectedSchemaVersion}`; "
+                        + "missing, legacy and mixed-version projections are not supported.";
+                    return false;
+                }
+
                 contracts[name] = value;
             }
 
@@ -128,7 +138,7 @@ internal sealed record OperatorContract(
 
             if (schemaErrors.Count > 0)
             {
-                error = "The operator contract does not satisfy `operator-contract.v1.schema.json`: "
+                error = "The operator contract does not satisfy `operator-contract.v2.schema.json`: "
                     + string.Join("; ", schemaErrors.Take(8));
                 return false;
             }

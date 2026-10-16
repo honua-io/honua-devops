@@ -5,8 +5,12 @@ These files are copied from **honua-io/honua-iac** at commit
 honua-devops can test its consumption of the governed execution substrate
 without requiring a honua-iac checkout — or AWS credentials — in CI.
 
-Nothing here is authored by honua-devops. If a test fails after a honua-iac
-contract change, refresh these files rather than editing them to fit.
+The exact-plan, backend identity and execution-receipt schemas retain that
+provenance. The operator-contract v2 schema and all operator output documents
+were refreshed from the coordinated honua-iac GP credential-free producer repair
+on 2026-10-16. These are producer-owned contract fixtures, not live deployment
+evidence. Refresh them from that producer rather than editing their shapes to fit
+this consumer.
 
 ## `contracts/`
 
@@ -28,9 +32,10 @@ The metadata/receipt pair was produced by one offline run of the real wrappers
 (`HONUA_IAC_OFFLINE=1`, fake `terraform`, STS/state fixtures — the same harness
 shape as honua-iac's own `test-terraform-exact-plan.sh`). They are therefore
 genuinely joined: the receipt's `plan_metadata_digest` and `saved_plan_sha256`
-are the ones that run's metadata document actually carried, and the receipt's
-`output_contract.digest` matches `operator_contract_digest` in
-`terraform-output.json`.
+are the ones that run's metadata document actually carried. For the v2 consumer
+repair, only the receipt's `output_contract.digest` was rebound to the copied
+v2 producer fixture's `operator_contract_digest`. This normalized offline receipt
+is not claimed to be a fresh wrapper execution against a v2 deployment.
 
 Two fields were rewritten after capture, because they recorded the ephemeral
 `mktemp` directory of the capture run and would otherwise make the fixture
@@ -43,3 +48,14 @@ Because the capture ran offline, the documents are stamped
 `identity.evidence_mode = "offline-test"` and `posture.release_qualified =
 false`. That is correct and load-bearing: these fixtures prove the consumption
 path, and they can never be mistaken for evidence about a real AWS account.
+
+## v2 operator-contract fixtures
+
+`operator-contract.v2.schema.json` is copied verbatim from the coordinated
+honua-iac producer. `terraform-output.json` is its generated
+`valid-aws-ecs-small.json`. The `valid-aws-cert-credential-free.json` and
+`invalid-*` operator documents are verbatim copies of that producer's fixtures.
+The negative fixtures prove old/mixed contract versions, task IAM roles, direct
+artifact storage and missing credential declarations are refused. The exact producer revision is `b5c07d39a19e01883983c1af7a13ae4eb450f13a`
+(honua-iac PR #253). The copied v2 schema SHA-256 is
+`0fa4492b33a5df397fed3ff72aa8e2efa54f53b30981df942aaf44a98cd6bc50`.
