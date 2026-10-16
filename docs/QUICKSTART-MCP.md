@@ -375,7 +375,7 @@ HONUA_DEVOPS_CANDIDATE_REFERENCE=<exact-server-revision>
 
 `install_handoff` consumes the exact `provisioningOperationId` and locally
 persisted DevOps apply evidence. Leave `baseUrl` and `adminKeySecretRef` empty:
-both come from the stack's own `honua.operator-contract/v1` projection, captured
+both come from the stack's own `honua.operator-contract/v2` projection, captured
 and schema-validated at apply time. Supplying either is still permitted — a
 development cell may sit behind a tunnel — but it is recorded as
 `endpointSource: caller-override` / `adminKeySecretRefSource: caller-override`
@@ -461,3 +461,19 @@ where an unhealthy outcome is recovered by rolling **forward** — never back:
 This server is part of the private operator surface (proprietary license). It
 is not the public geospatial-mcp data-access surface — see
 `docs/contract-boundaries.md`.
+
+### Operator-contract v2 migration
+
+Provisioning requires the coordinated honua-iac checkout that emits
+`honua.operator-contract/v2` and ships `operator-contract.v2.schema.json`.
+All three authoritative Terraform contract outputs must declare v2; missing,
+legacy and mixed versions are refused. Custom-code GP extensions must declare
+Fargate with no task role, no workload credentials, and job-scoped broker artifact
+transport. Built-in GP workloads retain their separate execution contract.
+
+Previously persisted apply evidence without an explicit v2 contract version
+cannot generate or verify a new handoff. Run the governed plan/apply flow with
+the current producer, then create and verify a fresh handoff. The consumer never
+relabels old evidence or silently falls back to the v1 schema. This version
+change does not authorize an infrastructure apply; normal approval controls
+remain in force.

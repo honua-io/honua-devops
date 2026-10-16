@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://honua.io/schemas/honua-mcp-proxy-handoff.v1.json",
   "title": "honua MCP proxy install handoff v1",
-  "description": "The secretless CLI/MCP handoff honua-devops writes after a governed apply. It carries locators only: no admin key, no Terraform secret material. The endpoint and admin-key locator normally come from the stack's own honua.operator-contract/v1 projection; when a caller overrode either, the corresponding *Source field says so, because this document decides where a client will send a resolved admin credential. Emission reports install-handoff-written, never ready.",
+  "description": "The secretless CLI/MCP handoff honua-devops writes after a governed apply. It carries locators only: no admin key, no Terraform secret material. The endpoint and admin-key locator normally come from the stack's own honua.operator-contract/v2 projection; when a caller overrode either, the corresponding *Source field says so, because this document decides where a client will send a resolved admin credential. Emission reports install-handoff-written, never ready.",
   "type": "object",
   "required": [
     "schemaVersion",

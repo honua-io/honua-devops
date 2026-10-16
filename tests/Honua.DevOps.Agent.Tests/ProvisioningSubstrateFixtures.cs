@@ -13,12 +13,14 @@ namespace Honua.DevOps.Agent.Tests;
 /// </summary>
 /// <remarks>
 /// The seam under test is the process runner, so the honua-iac wrappers are faked —
-/// but the DOCUMENTS they hand back are not. `fixtures/honua-iac/documents` holds
+/// while their document shapes come from honua-iac. `fixtures/honua-iac/documents` holds
 /// real output from one offline run of the real `terraform-exact-plan.sh` /
 /// `terraform-exact-apply.sh` pair, and the schemas are honua-iac's own. That keeps
 /// these tests honest about the shapes honua-devops must consume. Plan/receipt hashes
 /// are rebound to the fake runner's explicit plan bytes using Python hashlib (see docs/operation-lineage.md): nothing here is a
-/// shape this repo invented for its own convenience.
+/// shape this repo invented for its own convenience. The v2 output fixture is copied
+/// from the coordinated producer change; the receipt output digest is explicitly
+/// rebound to that fixture (see PROVENANCE.md), not claimed as a fresh cloud apply.
 /// </remarks>
 internal static class ProvisioningSubstrateFixtures
 {
@@ -31,7 +33,7 @@ internal static class ProvisioningSubstrateFixtures
 
     internal static string TerraformOutputJson => ReadFixture(Path.Combine("documents", "terraform-output.json"));
 
-    internal static string OperatorContractSchemaJson => ReadFixture(Path.Combine("contracts", "operator-contract.v1.schema.json"));
+    internal static string OperatorContractSchemaJson => ReadFixture(Path.Combine("contracts", "operator-contract.v2.schema.json"));
 
     internal static string ExactPlanSchemaJson => ReadFixture(Path.Combine("contracts", "terraform-exact-plan.v1.schema.json"));
 
@@ -54,7 +56,7 @@ internal static class ProvisioningSubstrateFixtures
     internal const string ContractAdminSecretRef =
         "arn:aws:secretsmanager:us-east-1:123456789012:secret:honuaecs-it-admin-password-AbCdEf";
 
-    private static string ReadFixture(string relativePath)
+    internal static string ReadFixture(string relativePath)
     {
         string path = Path.Combine(FixtureRoot, relativePath);
         if (!File.Exists(path))
@@ -292,7 +294,7 @@ internal sealed class TerraformTestRoot : IDisposable
             string contracts = System.IO.Path.Combine(Path, "infrastructure", "terraform", "contracts");
             Directory.CreateDirectory(contracts);
             File.WriteAllText(
-                System.IO.Path.Combine(contracts, "operator-contract.v1.schema.json"),
+                System.IO.Path.Combine(contracts, "operator-contract.v2.schema.json"),
                 ProvisioningSubstrateFixtures.OperatorContractSchemaJson);
             File.WriteAllText(
                 System.IO.Path.Combine(contracts, "terraform-exact-plan.v1.schema.json"),

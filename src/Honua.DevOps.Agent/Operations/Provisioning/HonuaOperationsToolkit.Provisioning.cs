@@ -478,7 +478,7 @@ internal sealed partial class HonuaOperationsToolkit
         }
     }
 
-    [Description("Write a secretless Honua CLI/MCP handoff from the stack's honua.operator-contract/v1 endpoint and admin-key secret reference.")]
+    [Description("Write a secretless Honua CLI/MCP handoff from the stack's honua.operator-contract/v2 endpoint and admin-key secret reference.")]
     public async Task<OperationResponse> InstallHandoffAsync(
         string stack,
         string baseUrl,
@@ -535,8 +535,17 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Caller-authored provisioning bindings are not accepted."]);
         }
 
+        if (!string.Equals(provisioningState.OperatorContractSchemaVersion, OperatorContract.ExpectedSchemaVersion, StringComparison.Ordinal))
+        {
+            return ProvisioningRefusal(
+                "operator-contract-version-unsupported",
+                "The recorded apply does not carry the credential-free v2 operator contract.",
+                ["Re-run the governed apply with the current honua-iac v2 producer before creating a handoff."],
+                ["Legacy or missing contract versions are never upgraded by relabeling stored evidence."]);
+        }
+
         // The endpoint and the admin-key locator come from the stack's own
-        // honua.operator-contract/v1 projection, captured at apply time. A caller
+        // honua.operator-contract/v2 projection, captured at apply time. A caller
         // argument is an OVERRIDE — still accepted, because a development cell may
         // legitimately sit behind a tunnel, but recorded as an override in the
         // handoff and the binding so no reader can mistake it for what the stack
@@ -549,7 +558,7 @@ internal sealed partial class HonuaOperationsToolkit
                 "operator-contract-missing",
                 "The recorded apply evidence carries no operator-contract endpoint and admin-key secret reference.",
                 [
-                    "Re-run the governed apply against a root that projects honua.operator-contract/v1.",
+                    "Re-run the governed apply against a root that projects honua.operator-contract/v2.",
                     "Provisioning evidence produced before contract consumption cannot back a handoff."
                 ],
                 ["A handoff built from caller-supplied identity is not evidence about the deployed stack."]);
@@ -855,6 +864,15 @@ internal sealed partial class HonuaOperationsToolkit
                 "provisioning-evidence-missing",
                 "The handoff cannot be joined to DevOps-produced apply evidence.",
                 [], []);
+        }
+
+        if (!string.Equals(state!.OperatorContractSchemaVersion, OperatorContract.ExpectedSchemaVersion, StringComparison.Ordinal))
+        {
+            return ProvisioningRefusal(
+                "operator-contract-version-unsupported",
+                "The handoff's recorded apply predates the credential-free v2 operator contract.",
+                ["Re-run governed provisioning and generate a new handoff before verification."],
+                []);
         }
 
         if (!_spine.TryAuthorizeLocalMutation(
@@ -1610,7 +1628,8 @@ internal sealed partial class HonuaOperationsToolkit
                 Endpoint: operatorContract?.Endpoint,
                 AdminKeySecretRef: operatorContract?.AdminKeySecretRef,
                 OperatorContractDigest: operatorContract?.ContractDigest,
-                OperatorContractStatus: operatorContract?.Status));
+                OperatorContractStatus: operatorContract?.Status,
+                OperatorContractSchemaVersion: operatorContract?.SchemaVersion));
 
             return new OperationResponse(
                 Status: action == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
@@ -1652,7 +1671,7 @@ internal sealed partial class HonuaOperationsToolkit
                     "execution receipt validated against terraform-exec-receipt.v1.schema.json",
                     operatorContract is null
                         ? "operator contract not applicable to this action"
-                        : "operator contract validated against operator-contract.v1.schema.json"
+                        : "operator contract validated against operator-contract.v2.schema.json"
                 ],
                 Risks:
                 [
@@ -1675,7 +1694,7 @@ internal sealed partial class HonuaOperationsToolkit
     }
 
     /// <summary>
-    /// Reads the <c>honua.operator-contract/v1</c> projection from the applied stack.
+    /// Reads the <c>honua.operator-contract/v2</c> projection from the applied stack.
     /// </summary>
     /// <remarks>
     /// <c>terraform output</c> is a read-only projection of state and has no wrapper
@@ -1716,7 +1735,7 @@ internal sealed partial class HonuaOperationsToolkit
             return (null, ProvisioningRefusal(
                 "operator-contract-schema-missing",
                 Redaction.Scrub(exception.Message),
-                ["Use a honua-iac checkout that ships `infrastructure/terraform/contracts/operator-contract.v1.schema.json`."],
+                ["Use a honua-iac checkout that ships `infrastructure/terraform/contracts/operator-contract.v2.schema.json`."],
                 ["An unvalidated contract is not a contract."]));
         }
 
@@ -1725,7 +1744,7 @@ internal sealed partial class HonuaOperationsToolkit
             return (null, ProvisioningRefusal(
                 "operator-contract-invalid",
                 Redaction.Scrub(contractError),
-                ["Update honua-iac so the stack projects a valid honua.operator-contract/v1."],
+                ["Update honua-iac so the stack projects a valid honua.operator-contract/v2."],
                 ["The endpoint and admin-key locator must come from the stack, not from a caller."]));
         }
 
@@ -2232,6 +2251,7 @@ internal sealed partial class HonuaOperationsToolkit
         string? AdminKeySecretRef = null,
         string? OperatorContractDigest = null,
         string? OperatorContractStatus = null,
+        string? OperatorContractSchemaVersion = null,
         ProvisioningEvidenceReference? VerificationReceipt = null,
         ProvisioningEvidenceReference? ProvisionBinding = null);
 

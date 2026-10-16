@@ -12,6 +12,28 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class TerraformExactSubstrateTests
 {
     [Fact]
+    public async Task Plan_RefusesProducerWithoutV2OperatorSchemaBeforeStartingTerraform()
+    {
+        using TerraformTestRoot root = new();
+        string schemas = Path.Combine(root.Path, "infrastructure", "terraform", "contracts");
+        File.Move(Path.Combine(schemas, "operator-contract.v2.schema.json"),
+            Path.Combine(schemas, "operator-contract.v1.schema.json"));
+        FakeSubstrateRunner runner = new();
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        HonuaOperationsToolkit toolkit = new(
+            ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan),
+            gateway,
+            provisioningProcessRunner: runner);
+
+        OperationResponse response = await toolkit.ProvisionInfrastructureAsync(
+            "aws-ecs", "small", "plan", "{}", false, string.Empty);
+
+        Assert.Equal("iac-substrate-unavailable", response.Status);
+        Assert.Contains("operator-contract.v2.schema.json", response.Summary, StringComparison.Ordinal);
+        Assert.Empty(runner.Calls);
+    }
+
+    [Fact]
     public async Task Plan_RefusesWhenTheCheckoutPredatesTheExactPlanSubstrate()
     {
         // A honua-iac checkout without the wrappers must fail closed. Falling back to
@@ -173,6 +195,7 @@ public sealed class TerraformExactSubstrateTests
         Assert.Equal(ProvisioningSubstrateFixtures.ContractEndpoint, contract!.Endpoint);
         Assert.Equal(ProvisioningSubstrateFixtures.ContractAdminSecretRef, contract.AdminKeySecretRef);
         Assert.True(contract.IsQualified);
+        Assert.Equal("honua.operator-contract/v2", contract.SchemaVersion);
         Assert.Equal("c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4", contract.BackendConfigDigest);
         Assert.Equal("8f3b1c2d-4e5a-4b6c-9d7e-0a1b2c3d4e5f", contract.StateLineage);
         Assert.Equal(42, contract.StateSerial);
@@ -225,6 +248,62 @@ public sealed class TerraformExactSubstrateTests
             out _,
             out string error));
         Assert.Contains("does not match `identity.contract_digest`", error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("deployment_contract", "honua.operator-contract/v1")]
+    [InlineData("validation_contract", "honua.operator-contract/v1")]
+    [InlineData("operations_contract", "honua.operator-contract/v1")]
+    [InlineData("deployment_contract", null)]
+    [InlineData("validation_contract", null)]
+    [InlineData("operations_contract", null)]
+    public void OperatorContract_RejectsEachActualLegacyOrMissingVersion(string kind, string? version)
+    {
+        JsonNode outputs = JsonNode.Parse(ProvisioningSubstrateFixtures.TerraformOutputJson)!;
+        outputs[kind]!["value"]!["schema_version"] = version;
+
+        Assert.False(OperatorContract.TryRead(outputs.ToJsonString(),
+            ProvisioningSubstrateFixtures.OperatorContractSchemaJson, out _, out string error));
+        Assert.Contains(kind, error, StringComparison.Ordinal);
+        Assert.Contains("schema_version", error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("invalid-legacy-v1")]
+    [InlineData("invalid-mixed-contract-versions")]
+    [InlineData("invalid-customcode-task-role")]
+    [InlineData("invalid-customcode-direct-storage")]
+    [InlineData("invalid-customcode-missing-credential-mode")]
+    public void OperatorContract_RejectsUnsafeOrLegacyProducerFixtures(string fixture)
+    {
+        Assert.False(OperatorContract.TryRead(
+            ProvisioningSubstrateFixtures.ReadFixture(Path.Combine("documents", fixture + ".json")),
+            ProvisioningSubstrateFixtures.OperatorContractSchemaJson, out _, out string error));
+        Assert.NotEmpty(error);
+    }
+
+    [Fact]
+    public void OperatorContract_AcceptsCredentialFreeGpProducerFixture()
+    {
+        Assert.True(OperatorContract.TryRead(
+            ProvisioningSubstrateFixtures.ReadFixture(Path.Combine("documents", "valid-aws-cert-credential-free.json")),
+            ProvisioningSubstrateFixtures.OperatorContractSchemaJson, out OperatorContract? contract, out string error), error);
+        Assert.Equal(OperatorContract.ExpectedSchemaVersion, contract!.SchemaVersion);
+    }
+
+    [Theory]
+    [InlineData("deployment_contract")]
+    [InlineData("validation_contract")]
+    [InlineData("operations_contract")]
+    public void OperatorContract_EnforcesCredentialFreeBoundaryInEveryProjection(string kind)
+    {
+        JsonNode outputs = JsonNode.Parse(ProvisioningSubstrateFixtures.ReadFixture(
+            Path.Combine("documents", "valid-aws-cert-credential-free.json")))!;
+        outputs[kind]!["value"]!["extensions"]!["customcode_batch"]!["task_role_arn"] =
+            "arn:aws:iam::123456789012:role/unsafe-custom-task";
+        Assert.False(OperatorContract.TryRead(outputs.ToJsonString(),
+            ProvisioningSubstrateFixtures.OperatorContractSchemaJson, out _, out string error));
+        Assert.Contains("task_role_arn", error, StringComparison.Ordinal);
     }
 
     [Fact]

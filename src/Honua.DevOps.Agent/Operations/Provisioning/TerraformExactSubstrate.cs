@@ -43,7 +43,7 @@ internal sealed record TerraformExactSubstrate(
     internal const string RequireApprovalVariable = "HONUA_IAC_REQUIRE_APPROVAL";
 
     internal string OperatorContractSchemaPath
-        => Path.Combine(ContractsDirectory, "operator-contract.v1.schema.json");
+        => Path.Combine(ContractsDirectory, "operator-contract.v2.schema.json");
 
     internal string ExactPlanSchemaPath
         => Path.Combine(ContractsDirectory, "terraform-exact-plan.v1.schema.json");
@@ -99,6 +99,13 @@ internal sealed record TerraformExactSubstrate(
         {
             error = "The configured honua-iac checkout does not ship `infrastructure/terraform/contracts`, "
                 + "so emitted documents cannot be validated against their published schemas.";
+            return false;
+        }
+
+        if (!File.Exists(Path.Combine(contracts, "operator-contract.v2.schema.json")))
+        {
+            error = "The configured honua-iac checkout does not ship `operator-contract.v2.schema.json`. "
+                + "Upgrade the producer before planning or applying; the consumer cannot fall back to v1.";
             return false;
         }
 

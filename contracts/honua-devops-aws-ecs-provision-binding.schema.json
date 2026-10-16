@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://honua.io/schemas/honua-devops-aws-ecs-provision-binding.v1.json",
   "title": "honua-devops aws-ecs provision binding v1",
-  "description": "The DevOps-produced, content-addressed binding for a verified aws-ecs provision. It names the endpoint and secret locator the stack itself reported through honua.operator-contract/v1, and the honua-iac execution facts - backend identity, state lineage/serial and short-lived execution role - under which the claim was produced. Validated before it is written; honua-devops emits no binding that fails this schema.",
+  "description": "The DevOps-produced, content-addressed binding for a verified aws-ecs provision. It names the endpoint and secret locator the stack itself reported through honua.operator-contract/v2, and the honua-iac execution facts - backend identity, state lineage/serial and short-lived execution role - under which the claim was produced. Validated before it is written; honua-devops emits no binding that fails this schema.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -99,7 +99,7 @@
     "verificationReceiptId": { "$ref": "#/$defs/receiptUrn" },
     "verificationReceiptSha256": { "$ref": "#/$defs/sha256" },
     "operatorContract": {
-      "description": "What the stack's own honua.operator-contract/v1 projection reported.",
+      "description": "What the stack's own honua.operator-contract/v2 projection reported.",
       "type": "object",
       "required": ["digest", "status", "endpoint"],
       "properties": {
