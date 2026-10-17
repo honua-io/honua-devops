@@ -122,6 +122,8 @@ internal sealed class ScopedGitOpsAdapter(
             return Refusal("git-scope-rejected", "An immutable base and permitted target environments are required.");
         if (string.IsNullOrWhiteSpace(runtime.DeployTargetId))
             return Refusal("target-unconfigured", "A canonical server deployment target is required.");
+        if (runtime.ExecutionMode != ExecutionMode.Execute || (int)runtime.ExecutionTier < (int)ExecutionTier.Propose)
+            return Refusal("git-plan-only", "Scoped Git writes require execute mode and at least propose tier; no branch or PR was written.");
         if (pullRequests is null && (string.IsNullOrWhiteSpace(configuration.GitHubToken)
             || !Regex.IsMatch(configuration.Repository, @"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")))
             return Refusal("git-configuration-rejected", "GitHub repository and credential must be host-configured before any branch write.");
@@ -129,8 +131,6 @@ internal sealed class ScopedGitOpsAdapter(
             || !Regex.IsMatch(configuration.BaseBranch, @"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
             || configuration.BaseBranch.Contains("..", StringComparison.Ordinal))
             return Refusal("git-configuration-rejected", "Invalid host Git scope or branch policy.");
-        if (runtime.ExecutionMode != ExecutionMode.Execute || (int)runtime.ExecutionTier < (int)ExecutionTier.Propose)
-            return Refusal("git-plan-only", "Scoped Git writes require execute mode and at least propose tier; no branch or PR was written.");
         string digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         { service, environments, expectedBaseCommit, files, revertCommit })))).ToLowerInvariant();
         string branch = $"honua/config-{digest[..24]}";
