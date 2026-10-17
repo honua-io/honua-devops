@@ -45,12 +45,12 @@ internal sealed record ScopedGitReviewEvidence(
 
 internal interface IScopedGitPullRequestClient
 {
-    Task<string> EnsureAsync(string branch, string title, string body, CancellationToken cancellationToken);
+    Task<string> EnsureAsync(string branch, string expectedCommit, string title, string body, CancellationToken cancellationToken);
 }
 
 internal sealed class GitHubScopedPullRequestClient(ScopedGitConfiguration configuration) : IScopedGitPullRequestClient
 {
-    public async Task<string> EnsureAsync(string branch, string title, string body, CancellationToken cancellationToken)
+    public async Task<string> EnsureAsync(string branch, string expectedCommit, string title, string body, CancellationToken cancellationToken)
     {
         if (!Regex.IsMatch(configuration.Repository, @"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
             || string.IsNullOrWhiteSpace(configuration.GitHubToken))
@@ -66,12 +66,21 @@ internal sealed class GitHubScopedPullRequestClient(ScopedGitConfiguration confi
         found.EnsureSuccessStatusCode();
         using JsonDocument existing = JsonDocument.Parse(await found.Content.ReadAsStringAsync(cancellationToken));
         if (existing.RootElement.GetArrayLength() > 0)
-            return existing.RootElement[0].GetProperty("html_url").GetString()!;
+            return VerifiedUrl(existing.RootElement[0], branch, expectedCommit);
         using HttpResponseMessage created = await client.PostAsJsonAsync(api,
             new { head = branch, @base = configuration.BaseBranch, title, body, draft = false }, cancellationToken);
         created.EnsureSuccessStatusCode();
         using JsonDocument payload = JsonDocument.Parse(await created.Content.ReadAsStringAsync(cancellationToken));
-        return payload.RootElement.GetProperty("html_url").GetString()!;
+        return VerifiedUrl(payload.RootElement, branch, expectedCommit);
+    }
+
+    private string VerifiedUrl(JsonElement pullRequest, string branch, string commit)
+    {
+        if (pullRequest.GetProperty("head").GetProperty("sha").GetString() != commit
+            || pullRequest.GetProperty("head").GetProperty("ref").GetString() != branch
+            || pullRequest.GetProperty("base").GetProperty("ref").GetString() != configuration.BaseBranch)
+            throw new InvalidOperationException("PR head/base no longer matches the canonical proposal.");
+        return pullRequest.GetProperty("html_url").GetString()!;
     }
 }
 
@@ -204,7 +213,7 @@ internal sealed class ScopedGitOpsAdapter(
             // Create-only/non-force push. A replay can only push the identical deterministic commit.
             await Git(work, ["push", "--", "origin", $"{commit}:refs/heads/{branch}"], cancellationToken);
             gitEvidence = Persist(new(commit, branch, null, digest, operationId, true, null));
-            string url = await _pullRequests.EnsureAsync(branch, Redaction.Scrub(title),
+            string url = await _pullRequests.EnsureAsync(branch, commit, Redaction.Scrub(title),
                 Redaction.Scrub(body) + $"\n\nCanonical operation: `{operationId}`\nCommit: `{commit}`\nScope digest: `{digest}`\nHuman review and canonical server approval remain required. No deployment executed.", cancellationToken);
             gitEvidence = Persist(gitEvidence with { PullRequestUrl = url });
             List<OperationBackendStep> backendSteps = [.. (proposal.BackendSteps ?? []),

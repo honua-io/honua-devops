@@ -101,7 +101,7 @@ public sealed class ScopedGitOpsAdapterTests
     private sealed class PullRequests : IScopedGitPullRequestClient
     {
         internal string Body = "";
-        public Task<string> EnsureAsync(string branch, string title, string body, CancellationToken cancellationToken)
+        public Task<string> EnsureAsync(string branch, string expectedCommit, string title, string body, CancellationToken cancellationToken)
         { Body = body; return Task.FromResult("https://github.com/honua-io/fixture/pull/1"); }
     }
     private sealed class ProposalHandler(List<string> requests) : HttpMessageHandler
