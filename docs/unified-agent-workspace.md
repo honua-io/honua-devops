@@ -62,7 +62,8 @@ Host configuration is optional and contains no model-selectable paths or command
 `HONUA_DEVOPS_SCOPED_GIT_REMOTE`, `HONUA_DEVOPS_SCOPED_GIT_REPOSITORY` (owner/repo),
 `HONUA_DEVOPS_SCOPED_GIT_BASE_BRANCH` (default trunk),
 `HONUA_DEVOPS_SCOPED_GIT_ALLOWED_PREFIXES` (default desired-state/releases/), and
-`HONUA_DEVOPS_GITHUB_TOKEN` (transport only). Paths are additionally restricted to
+`HONUA_DEVOPS_GITHUB_TOKEN` (transport only), plus explicit service author identity
+`HONUA_DEVOPS_SCOPED_GIT_AUTHOR_NAME` / `HONUA_DEVOPS_SCOPED_GIT_AUTHOR_EMAIL`. Paths are additionally restricted to
 release configuration and Studio version directories. The existing process runner
 and ActuationSpine audit preflight are reused. GitHub API is fixed to api.github.com,
 with redirects disabled. No additional cloud executor or approval inbox is created.

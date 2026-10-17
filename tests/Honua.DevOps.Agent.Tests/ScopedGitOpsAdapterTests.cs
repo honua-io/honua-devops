@@ -43,7 +43,7 @@ public sealed class ScopedGitOpsAdapterTests
             { ExecutionMode = ExecutionMode.Execute, ExecutionTier = ExecutionTier.Propose, DeployTargetId = "ecs-review-target" };
             PullRequests prs = new();
             ScopedGitOpsAdapter adapter = new(runtime, gateway, policy,
-                new(remote, "honua-io/fixture", "trunk", ["desired-state/releases/"], null), pullRequests: prs);
+                new(remote, "honua-io/fixture", "trunk", ["desired-state/releases/"], null, AuthorName: "Mike McDougall", AuthorEmail: "mike@honua.io"), pullRequests: prs);
 
             Assert.Equal("git-scope-rejected", (await adapter.RevertAsync(initial, initial, "roads", "dev")).Status);
             Assert.Empty(requests);

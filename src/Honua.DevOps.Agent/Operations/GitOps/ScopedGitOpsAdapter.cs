@@ -16,7 +16,7 @@ namespace Honua.DevOps.Agent.Operations.GitOps;
 // approval inbox remain the only deployment executor: no main push, merge or cloud rollback.
 internal sealed record ScopedGitConfiguration(
     string Remote, string Repository, string BaseBranch, string[] AllowedPrefixes,
-    string? GitHubToken, string GitExecutable = "git")
+    string? GitHubToken, string GitExecutable = "git", string AuthorName = "", string AuthorEmail = "")
 {
     internal static ScopedGitConfiguration? Load()
     {
@@ -26,7 +26,9 @@ internal sealed record ScopedGitConfiguration(
         string branch = Environment.GetEnvironmentVariable("HONUA_DEVOPS_SCOPED_GIT_BASE_BRANCH") ?? "trunk";
         string[] prefixes = (Environment.GetEnvironmentVariable("HONUA_DEVOPS_SCOPED_GIT_ALLOWED_PREFIXES") ?? "desired-state/releases/")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return new(remote, repository, branch, prefixes, Environment.GetEnvironmentVariable("HONUA_DEVOPS_GITHUB_TOKEN"));
+        return new(remote, repository, branch, prefixes, Environment.GetEnvironmentVariable("HONUA_DEVOPS_GITHUB_TOKEN"),
+            AuthorName: Environment.GetEnvironmentVariable("HONUA_DEVOPS_SCOPED_GIT_AUTHOR_NAME") ?? "",
+            AuthorEmail: Environment.GetEnvironmentVariable("HONUA_DEVOPS_SCOPED_GIT_AUTHOR_EMAIL") ?? "");
     }
 }
 
@@ -136,6 +138,9 @@ internal sealed class ScopedGitOpsAdapter(
         if (pullRequests is null && (string.IsNullOrWhiteSpace(configuration.GitHubToken)
             || !Regex.IsMatch(configuration.Repository, @"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")))
             return Refusal("git-configuration-rejected", "GitHub repository and credential must be host-configured before any branch write.");
+        if (string.IsNullOrWhiteSpace(configuration.AuthorName) || string.IsNullOrWhiteSpace(configuration.AuthorEmail)
+            || configuration.AuthorName.Contains('\n') || configuration.AuthorEmail.Contains('\n'))
+            return Refusal("git-configuration-rejected", "Git author identity must be explicitly host-configured.");
         if (configuration.AllowedPrefixes.Length == 0 || configuration.AllowedPrefixes.Any(prefix => !SafePath(prefix.TrimEnd('/')))
             || !Regex.IsMatch(configuration.BaseBranch, @"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
             || configuration.BaseBranch.Contains("..", StringComparison.Ordinal))
@@ -257,7 +262,7 @@ internal sealed class ScopedGitOpsAdapter(
     private async Task<string> Git(string directory, string[] arguments, CancellationToken cancellationToken)
     {
         ProvisioningProcessResult result = await _runner.RunAsync(configuration.GitExecutable,
-            ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "user.name=Mike McDougall", "-c", "user.email=mike@honua.io", .. arguments],
+            ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "user.name=" + configuration.AuthorName, "-c", "user.email=" + configuration.AuthorEmail, .. arguments],
             directory, TimeSpan.FromMinutes(2), new Dictionary<string, string>
             {
                 ["GIT_TERMINAL_PROMPT"] = "0",
