@@ -17,6 +17,14 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class ProvisioningContractSchemaTests
 {
     [Fact]
+    public void RuntimeFactsSchemaMatchesPinnedCanonicalIacSource()
+    {
+        var schema = ProvisioningContracts.Read(ProvisioningContracts.RuntimeBindingResource);
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(schema))).ToLowerInvariant();
+        Assert.Equal("64a67c6acb45acadf5ccf758b29c05134c50a2a21e9684c94e9e574a8f9cd60c", hash);
+    }
+
+    [Fact]
     public void ProvisionBinding_ValidatesExactEvidenceReferenceShape()
     {
         JsonNode binding = JsonNode.Parse(ValidBindingJson)!;

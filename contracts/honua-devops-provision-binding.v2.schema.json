@@ -615,6 +615,20 @@
                     "format": "uri",
                     "pattern": "^https://",
                     "maxLength": 2048
+                  },
+                  "loadBalancerArn": {
+                    "type": "string",
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws(-us-gov|-cn)?:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/(app|net)/[A-Za-z0-9-]+/[a-f0-9]+$"
+                  },
+                  "dnsZoneId": {
+                    "type": "string",
+                    "pattern": "^(/hostedzone/)?Z[A-Z0-9]+$"
+                  },
+                  "dnsRecordName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 254
                   }
                 },
                 "additionalProperties": false,
@@ -631,7 +645,38 @@
                       "required": [
                         "routeHost",
                         "routePath",
-                        "routePathType"
+                        "routePathType",
+                        "loadBalancerArn",
+                        "dnsZoneId",
+                        "dnsRecordName"
+                      ]
+                    }
+                  },
+                  {
+                    "if": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "loadBalancerArn"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "dnsZoneId"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "dnsRecordName"
+                          ]
+                        }
+                      ]
+                    },
+                    "then": {
+                      "required": [
+                        "loadBalancerArn",
+                        "dnsZoneId",
+                        "dnsRecordName"
                       ]
                     }
                   }
@@ -651,7 +696,10 @@
         "environment",
         "tenantId",
         "runtimeKind",
-        "backend"
+        "backend",
+        "targetName",
+        "resourceParameters",
+        "usesCustomProviderEndpoint"
       ],
       "properties": {
         "serverTargetId": {
@@ -670,9 +718,13 @@
           "maxLength": 128
         },
         "tenantId": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
-          "maxLength": 128
+          "maxLength": 128,
+          "description": "Exact nullable tenant returned explicitly by canonical server authorization; missing is unsupported, null is unbound/disabled, never inferred from request headers."
         },
         "runtimeKind": {
           "enum": [
@@ -685,6 +737,22 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "targetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "resourceParameters": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "usesCustomProviderEndpoint": {
+          "const": false
         }
       }
     }

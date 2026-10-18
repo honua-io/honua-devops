@@ -349,6 +349,20 @@
                 "format": "uri",
                 "pattern": "^https://",
                 "maxLength": 2048
+              },
+              "loadBalancerArn": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^arn:aws(-us-gov|-cn)?:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/(app|net)/[A-Za-z0-9-]+/[a-f0-9]+$"
+              },
+              "dnsZoneId": {
+                "type": "string",
+                "pattern": "^(/hostedzone/)?Z[A-Z0-9]+$"
+              },
+              "dnsRecordName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 254
               }
             },
             "additionalProperties": false,
@@ -365,7 +379,38 @@
                   "required": [
                     "routeHost",
                     "routePath",
-                    "routePathType"
+                    "routePathType",
+                    "loadBalancerArn",
+                    "dnsZoneId",
+                    "dnsRecordName"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "loadBalancerArn"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "dnsZoneId"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "dnsRecordName"
+                      ]
+                    }
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "loadBalancerArn",
+                    "dnsZoneId",
+                    "dnsRecordName"
                   ]
                 }
               }

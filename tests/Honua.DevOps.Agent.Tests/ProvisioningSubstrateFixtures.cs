@@ -247,12 +247,13 @@ internal sealed class TerraformTestRoot : IDisposable
     internal TerraformTestRoot(
         bool withSubstrateScripts = true,
         bool withProviderLock = true,
-        bool withContracts = true)
+        bool withContracts = true,
+        string rootName = "aws")
     {
         Path = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(),
             $"honua-devops-provision-tests-{Guid.NewGuid():n}");
-        AwsRoot = System.IO.Path.Combine(Path, "infrastructure", "terraform", "examples", "aws");
+        AwsRoot = System.IO.Path.Combine(Path, "infrastructure", "terraform", "examples", rootName);
         Directory.CreateDirectory(AwsRoot);
         File.WriteAllText(System.IO.Path.Combine(AwsRoot, "main.tf"), "module \"honua\" {}\n");
         File.WriteAllText(

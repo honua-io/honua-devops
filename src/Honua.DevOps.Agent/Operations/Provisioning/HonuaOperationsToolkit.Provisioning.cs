@@ -103,7 +103,7 @@ internal sealed partial class HonuaOperationsToolkit
             return ProvisioningRefusal(
                 "unsupported-stack",
                 $"Stack `{normalizedStack}` is not available. 2026.1 allows only: {string.Join(", ", ProvisioningStackCatalog.Ids)}.",
-                ["Choose stack=aws-ecs. AWS serverless and Helm remain sequenced follow-ups."],
+                ["Choose the host-authorized ECS or Lambda stack. Native Helm handoff requires actual installed workload evidence."],
                 ["Never resolve a caller-controlled stack directly to a filesystem path."]);
         }
 
@@ -181,7 +181,7 @@ internal sealed partial class HonuaOperationsToolkit
         Dictionary<string, object?> variables;
         try
         {
-            variables = ParseAwsEcsSmallVariables(variablesJson);
+            variables = ParseProvisioningVariables(canonicalStack, variablesJson);
         }
         catch (InvalidOperationException exception)
         {
@@ -193,6 +193,9 @@ internal sealed partial class HonuaOperationsToolkit
         }
 
         string environment = (string)variables["environment"]!;
+        if (canonicalStack == "aws-lambda" && runtime.DeployTargetId !=
+            $"{variables["name_prefix"]}-{environment}-honua-{variables["lambda_alias_name"]}")
+            return ProvisioningRefusal("runtime-target-mismatch", "The proposed Lambda function/alias identity does not match the host-authorized registered plan target.", [], []);
         if (!runtime.AllowedEnvironments.Contains(environment, StringComparer.OrdinalIgnoreCase))
         {
             return ProvisioningRefusal(
@@ -245,6 +248,10 @@ internal sealed partial class HonuaOperationsToolkit
                         [normalizedAction == "destroy" ? "Destroy can permanently remove data." : "Apply creates or changes billable cloud resources."]);
                 }
 
+                if ((runtime.RuntimeKind != "aws-ecs" && savedPlan!.Manifest.VariablesDigest is null) ||
+                    savedPlan!.Manifest.VariablesDigest is { } reviewedVariables && reviewedVariables != ComputeVariablesDigest(variables))
+                    return ProvisioningRefusal("idempotency-conflict", "The apply arguments do not match the exact variables reserved by the reviewed saved plan.", [], []);
+
                 return await ApplySavedPlanAsync(
                     substrate!,
                     provisioningStack,
@@ -256,13 +263,13 @@ internal sealed partial class HonuaOperationsToolkit
             }
         }
 
-        if (!HasSecretInput(terraformRoot))
+        if (!HasSecretInput(terraformRoot, canonicalStack))
         {
             return ProvisioningRefusal(
                 "secret-input-required",
                 "Required Terraform secrets are not configured. No process was started.",
                 [
-                    "Create the gitignored examples/aws/terraform.tfvars from its committed example, or set both TF_VAR_honua_admin_password and TF_VAR_honua_connection_encryption_master_key.",
+                    "Configure the selected root's required secret variables out of band, using its gitignored terraform.tfvars or host TF_VAR inputs; no secret values belong in variablesJson.",
                     "Resolve secret-store references outside this tool; variablesJson never accepts secret material."
                 ],
                 ["Terraform cannot plan this root without the required secret inputs."]);
@@ -393,7 +400,8 @@ internal sealed partial class HonuaOperationsToolkit
                     ComputeSha256(planFile),
                     provisioningStack.TerraformRootName,
                     planMetadataFile,
-                    metadata));
+                    metadata,
+                    VariablesDigest: ComputeVariablesDigest(variables)));
             keepPlanDirectory = true;
             string nextAction = destroyPlan ? "destroy" : "apply";
             string challenge = $"{nextAction}:{canonicalStack}:{environment}:{planToken}";
@@ -408,7 +416,7 @@ internal sealed partial class HonuaOperationsToolkit
                     $"Deployable root: {terraformRoot}.",
                     $"Saved plan token: {planToken} (expires in {SavedPlanLifetimeSeconds / 60} minutes).",
                     "Planned through the honua-iac governed exact-plan substrate (`scripts/terraform-exact-plan.sh`); no hand-rolled Terraform argv was used.",
-                    "Generated variables were restricted to the non-secret aws-ecs/small allowlist.",
+                    "Generated variables were restricted to the selected runtime non-secret small-plan allowlist.",
                     // The value an approval must bind to. Without it in the response the
                     // caller cannot issue an approval the apply wrapper will accept.
                     $"Approval binds to plan_metadata_digest: {metadata.PlanMetadataDigest}.",
@@ -490,15 +498,16 @@ internal sealed partial class HonuaOperationsToolkit
         string provisioningOperationId = "",
         CancellationToken cancellationToken = default)
     {
-        const string canonicalStack = "aws-ecs";
-        if (runtime.RuntimeKind != "aws-ecs")
-            return ProvisioningRefusal("runtime-handoff-unavailable", "This runtime requires a target-aware observed handoff; the legacy ECS handoff cannot be reused.", [], []);
+        var profile = ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind);
+        var canonicalStack = profile.StackId;
+        if (runtime.RuntimeKind is not ("aws-ecs" or "aws-lambda"))
+            return ProvisioningRefusal("runtime-handoff-unavailable", "This runtime requires an actual qualified native workload install and observed handoff; cluster-only facts cannot establish it.", [], []);
         if (!string.Equals(NormalizeToken(stack), canonicalStack, StringComparison.Ordinal))
         {
             return ProvisioningRefusal(
                 "unsupported-stack",
-                "install_handoff currently supports stack=aws-ecs only.",
-                ["Choose the stack that was provisioned by the 2026.1 aws-ecs lane."],
+                "The requested stack does not match the host-authorized install runtime.",
+                ["Choose the exact stack retained in the successful host-authorized apply."],
                 []);
         }
 
@@ -594,6 +603,16 @@ internal sealed partial class HonuaOperationsToolkit
                 "adminKeySecretRef must be an AWS Secrets Manager ARN/URI, Azure Key Vault URI, or secret:// reference. Secret material is not accepted.",
                 ["Pass the cloud secret identifier, never the admin-key value."],
                 ["A literal admin key must not be persisted in the handoff files or audit journal."]);
+        }
+
+        if (runtime.RuntimeKind != "aws-ecs")
+        {
+            if (endpointOverridden || secretRefOverridden || provisioningState.RuntimeFacts is null ||
+                string.IsNullOrWhiteSpace(provisioningState.RuntimeImageDigest))
+                return ProvisioningRefusal("runtime-handoff-evidence-mismatch", "Target-aware handoff requires exact applied operator endpoint/secret reference and runtime facts; overrides cannot establish installation identity.", [], []);
+            try { _ = await gateway.AuthorizeRuntimeHandoffAsync(runtime, provisioningState.RuntimeFacts, "install_handoff", cancellationToken); }
+            catch (Exception exception) when (exception is InvalidDataException or HttpRequestException or JsonException)
+            { return ProvisioningRefusal("registered-runtime-unverified", "The current server cannot authorize the exact applied runtime resource identity.", [], []); }
         }
 
         string proxyPackage = runtime.McpProxyPackage?.Trim() ?? string.Empty;
@@ -870,6 +889,8 @@ internal sealed partial class HonuaOperationsToolkit
                 [], []);
         }
 
+        if (state is null) return ProvisioningRefusal("provisioning-evidence-missing", "Retained apply evidence is unavailable.", [], []);
+
         if (!string.Equals(state!.OperatorContractSchemaVersion, OperatorContract.ExpectedSchemaVersion, StringComparison.Ordinal))
         {
             return ProvisioningRefusal(
@@ -877,6 +898,19 @@ internal sealed partial class HonuaOperationsToolkit
                 "The handoff's recorded apply predates the credential-free v2 operator contract.",
                 ["Re-run governed provisioning and generate a new handoff before verification."],
                 []);
+        }
+
+        RegisteredRuntimeAuthority? registeredAuthority = null;
+        if (state.Stack != ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).StackId)
+            return ProvisioningRefusal("runtime-stack-mismatch", "Retained handoff belongs to a different runtime profile.", [], []);
+        if (runtime.RuntimeKind != "aws-ecs")
+        {
+            if (state.RuntimeFacts is null || state.RuntimeImageDigest is null || request.BaseUrl.TrimEnd('/') != state.Endpoint?.TrimEnd('/') ||
+                request.AdminKeySecretReference != state.AdminKeySecretRef)
+                return ProvisioningRefusal("runtime-handoff-evidence-mismatch", "Target-aware handoff requires exact retained applied runtime and endpoint identity.", [], []);
+            try { registeredAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts, "verify_install_handoff", cancellationToken); }
+            catch (Exception exception) when (exception is InvalidDataException or HttpRequestException or JsonException)
+            { return ProvisioningRefusal("registered-runtime-unverified", "The current server cannot authorize the exact applied runtime resource identity.", [], []); }
         }
 
         if (!_spine.TryAuthorizeLocalMutation(
@@ -909,6 +943,24 @@ internal sealed partial class HonuaOperationsToolkit
             return ProvisioningRefusal("lineage-evidence-invalid", "Retained lineage evidence is missing, substituted, or duplicated; no readiness claim is made.", [], []);
         }
 
+        RuntimeProviderObservation? runtimeObservation = null;
+        if (registeredAuthority is not null)
+        {
+            try
+            {
+                runtimeObservation = await new AwsLambdaRuntimeObservation(provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance)
+                    .ObserveAsync(state.RuntimeFacts!, request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
+                // Recheck credential/grants/registry AFTER waiting for provider reads.
+                var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!, "verify_install_handoff", cancellationToken);
+                if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
+                    return ProvisioningRefusal("registered-runtime-changed", "The registered runtime authority changed while installation was observed.", [], []);
+            }
+            catch (Exception exception) when (exception is IOException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            { return ProvisioningRefusal("runtime-observation-failed", "The actual provider runtime, route, alias or immutable image did not match the approved target; no binding was emitted.", [], []); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { return ProvisioningRefusal("runtime-observation-timeout", "The bounded provider observation did not finish; no binding was emitted.", [], []); }
+        }
+
         IInstallHandoffVerifier verifier = installHandoffVerifier ?? SystemInstallHandoffVerifier.Instance;
         InstallHandoffVerificationResult verification = await verifier.VerifyAsync(request, cancellationToken);
         if (!verification.Succeeded)
@@ -926,7 +978,7 @@ internal sealed partial class HonuaOperationsToolkit
 
         string directory = Path.GetDirectoryName(fullPath)!;
         string receiptPath = Path.Combine(directory, "honua-install-verification.receipt.json");
-        string bindingPath = Path.Combine(directory, "honua-devops-aws-ecs-provision-binding.json");
+        string bindingPath = Path.Combine(directory, ProvisionBindingFileName(state.Stack));
         if (!overwrite && (File.Exists(receiptPath) || File.Exists(bindingPath)))
         {
             return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
@@ -961,6 +1013,17 @@ internal sealed partial class HonuaOperationsToolkit
             evidence = JsonSerializer.Deserialize<JsonElement>(verificationCore)
         }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
 
+        ProvisioningEvidenceReference? runtimeObservationReference = null;
+        if (runtimeObservation is not null && registeredAuthority is not null)
+        {
+            var combinedEvidence = JsonSerializer.Serialize(new
+            {
+                schemaVersion = "honua.devops.registered-runtime-observation/v1",
+                registeredAuthority, provider = JsonSerializer.Deserialize<JsonElement>(runtimeObservation.EvidenceJson)
+            });
+            runtimeObservationReference = GetEvidenceStore().Put("runtime-observation", Encoding.UTF8.GetBytes(combinedEvidence));
+        }
+
         ProvisioningLineage completedLineage = state!.Lineage with
         {
             HandoffReceiptSha256 = handoffSha,
@@ -968,7 +1031,8 @@ internal sealed partial class HonuaOperationsToolkit
             HandoffVerificationReceiptSha256 = verificationSha,
             RootProvisioningOperationId = request.ProvisioningOperationId,
             EvidenceRefs = [.. (state.Lineage.EvidenceRefs ?? []),
-                GetEvidenceStore().Put("verification-evidence", Encoding.UTF8.GetBytes(verificationCore))]
+                GetEvidenceStore().Put("verification-evidence", Encoding.UTF8.GetBytes(verificationCore)),
+                .. (runtimeObservationReference is null ? Array.Empty<ProvisioningEvidenceReference>() : [runtimeObservationReference])]
         };
         if (state.Execution is null)
         {
@@ -1010,10 +1074,33 @@ internal sealed partial class HonuaOperationsToolkit
             teardownHandle = state.TeardownHandle
         }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
 
+        if (runtimeObservation is not null && registeredAuthority is not null)
+        {
+            var binding = System.Text.Json.Nodes.JsonNode.Parse(bindingBytes)!;
+            binding["schemaVersion"] = "honua.devops.provision-binding/v2";
+            binding["runtime"] = JsonSerializer.SerializeToNode(new
+            {
+                kind = registeredAuthority.RuntimeKind, targetKind = state.RuntimeFacts!.TargetKind, backend = registeredAuthority.Backend,
+                resourceIdentity = runtimeObservation.ResourceIdentity,
+                observation = new { evidenceMode = "live-provider-read", observedAt = runtimeObservation.ObservedAtUtc, receiptSha256 = runtimeObservationReference!.Sha256 }
+            });
+            binding["serverTarget"] = JsonSerializer.SerializeToNode(new
+            {
+                serverTargetId = registeredAuthority.ServerTargetId, deployTargetId = registeredAuthority.DeployTargetId,
+                environment = registeredAuthority.Environment, tenantId = registeredAuthority.TenantId,
+                runtimeKind = registeredAuthority.RuntimeKind, backend = registeredAuthority.Backend,
+                targetName = registeredAuthority.TargetName, resourceParameters = registeredAuthority.ResourceParameters,
+                usesCustomProviderEndpoint = registeredAuthority.UsesCustomProviderEndpoint
+            });
+            bindingBytes = binding.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+        }
+
         // Validated against the published contract BEFORE it is written: an evidence
         // artifact that does not satisfy its own schema must never reach the disk,
         // because everything downstream treats its presence as the claim.
-        IReadOnlyList<string> bindingErrors = ProvisioningContracts.ValidateProvisionBinding(bindingBytes);
+        IReadOnlyList<string> bindingErrors = runtimeObservation is null
+            ? ProvisioningContracts.ValidateProvisionBinding(bindingBytes)
+            : ProvisioningContracts.ValidateTargetAwareProvisionBinding(bindingBytes);
         if (bindingErrors.Count > 0)
         {
             return ProvisioningRefusal(
@@ -1049,7 +1136,7 @@ internal sealed partial class HonuaOperationsToolkit
 
         List<OperationBackendStep> steps = [.. verification.Steps,
             new("write-handoff-verification-receipt", receiptPath, true, "content-addressed receipt written", verificationId, true),
-            new("write-aws-ecs-provision-binding", bindingPath, true, "DevOps-produced binding written", verificationSha, true)];
+            new("write-provision-binding", bindingPath, true, "DevOps-produced binding written", verificationSha, true)];
         return new OperationResponse(
             "install-handoff-verified",
             "The exact pinned proxy handoff passed health, auth, MCP roster, and Admin status verification.",
@@ -1191,6 +1278,65 @@ internal sealed partial class HonuaOperationsToolkit
     private const string DefaultProvisioningEnvironment = "dev";
 
     private static string DefaultNamePrefixFor(string environment) => $"honua-{environment}";
+
+    private static Dictionary<string, object?> ParseProvisioningVariables(string stack, string variablesJson)
+    {
+        if (stack == "aws-ecs") return ParseAwsEcsSmallVariables(variablesJson);
+        if (stack != "aws-lambda") throw new InvalidOperationException("No qualified variable contract is available for this runtime.");
+        if (variablesJson.Length > 16384) throw new InvalidOperationException("variablesJson exceeds the bounded Lambda plan scope.");
+        using var document = ParseLambdaVariableDocument(variablesJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("variablesJson must be an object.");
+        var variables = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["environment"] = DefaultProvisioningEnvironment, ["lambda_alias_name"] = "live", ["redis_enabled"] = true,
+            ["db_publicly_accessible"] = false, ["skip_migrations"] = true, ["image_repository_policy_mode"] = "reuse"
+        };
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (!names.Add(property.Name)) throw new InvalidOperationException("Duplicate Lambda variables are not accepted.");
+            variables[property.Name] = property.Name switch
+            {
+                "region" or "environment" or "name_prefix" or "tags" => ValidateVariable(property.Name, property.Value),
+                "honua_image_uri" => ValidateLambdaImage(property.Value),
+                "lambda_alias_name" => ValidateString(property.Name, property.Value, new Regex("^[A-Za-z_][A-Za-z0-9_-]{0,63}$", RegexOptions.CultureInvariant)),
+                "image_repository_policy_mode" => ValidateChoice(property.Name, property.Value, "reuse"),
+                "redis_enabled" or "skip_migrations" => ValidateExactBoolean(property.Name, property.Value, true),
+                "db_publicly_accessible" => ValidateExactBoolean(property.Name, property.Value, false),
+                "lambda_architectures" => ValidateLambdaArchitecture(property.Value),
+                _ => throw new InvalidOperationException("The variable is outside the non-secret Lambda small-plan allowlist.")
+            };
+        }
+        if (!variables.ContainsKey("region") || !variables.ContainsKey("honua_image_uri"))
+            throw new InvalidOperationException("Lambda planning requires an explicit region and immutable published image URI.");
+        if (!variables.ContainsKey("name_prefix")) variables["name_prefix"] = DefaultNamePrefixFor((string)variables["environment"]!);
+        return variables;
+    }
+
+    private static JsonDocument ParseLambdaVariableDocument(string variablesJson)
+    {
+        try { return JsonDocument.Parse(string.IsNullOrWhiteSpace(variablesJson) ? "{}" : variablesJson, new JsonDocumentOptions { MaxDepth = 8 }); }
+        catch (JsonException) { throw new InvalidOperationException("Lambda variablesJson must be a bounded valid JSON object."); }
+    }
+
+    private static string ComputeVariablesDigest(Dictionary<string, object?> variables)
+        => ComputeSha256(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new SortedDictionary<string, object?>(variables, StringComparer.Ordinal))));
+
+    private static string ValidateLambdaImage(JsonElement value)
+    {
+        var image = ValidateImage(value);
+        if (!Regex.IsMatch(image, "^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant))
+            throw new InvalidOperationException("Lambda requires a digest-pinned published image, not a tag.");
+        return image;
+    }
+
+    private static string[] ValidateLambdaArchitecture(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 1 || value[0].ValueKind != JsonValueKind.String ||
+            value[0].GetString() is not ("x86_64" or "arm64"))
+            throw new InvalidOperationException("Lambda requires exactly one explicitly supported architecture.");
+        return [value[0].GetString()!];
+    }
 
     private static Dictionary<string, object?> ParseAwsEcsSmallVariables(string variablesJson)
     {
@@ -1410,13 +1556,15 @@ internal sealed partial class HonuaOperationsToolkit
         }
     }
 
-    private static bool HasSecretInput(string terraformRoot)
+    private static bool HasSecretInput(string terraformRoot, string stack)
     {
         if (File.Exists(Path.Combine(terraformRoot, "terraform.tfvars")))
         {
             return true;
         }
 
+        if (stack == "aws-lambda")
+            return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TF_VAR_honua_admin_password"));
         return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TF_VAR_honua_admin_password"))
             && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TF_VAR_honua_connection_encryption_master_key"));
     }
@@ -1554,6 +1702,7 @@ internal sealed partial class HonuaOperationsToolkit
                     substrate,
                     savedPlan.Manifest.TerraformRoot,
                     steps,
+                    savedPlan.Manifest.Environment,
                     cancellationToken);
                 if (contractRefusal is not null)
                 {
@@ -1633,7 +1782,10 @@ internal sealed partial class HonuaOperationsToolkit
                 AdminKeySecretRef: operatorContract?.AdminKeySecretRef,
                 OperatorContractDigest: operatorContract?.ContractDigest,
                 OperatorContractStatus: operatorContract?.Status,
-                OperatorContractSchemaVersion: operatorContract?.SchemaVersion));
+                OperatorContractSchemaVersion: operatorContract?.SchemaVersion,
+                RuntimeFacts: operatorContract?.RuntimeFacts,
+                RuntimeImageDigest: operatorContract?.ImageDigest,
+                VariablesDigest: savedPlan.Manifest.VariablesDigest));
 
             return new OperationResponse(
                 Status: action == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
@@ -1710,6 +1862,7 @@ internal sealed partial class HonuaOperationsToolkit
         TerraformExactSubstrate substrate,
         string terraformRoot,
         List<OperationBackendStep> steps,
+        string expectedEnvironment,
         CancellationToken cancellationToken)
     {
         ProvisioningProcessResult outputResult = await runner.RunAsync(
@@ -1750,6 +1903,18 @@ internal sealed partial class HonuaOperationsToolkit
                 Redaction.Scrub(contractError),
                 ["Update honua-iac so the stack projects a valid honua.operator-contract/v2."],
                 ["The endpoint and admin-key locator must come from the stack, not from a caller."]));
+        }
+
+        if (runtime.RuntimeKind != "aws-ecs")
+        {
+            var profile = ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind);
+            if (!OperatorContract.TryReadForRuntime(outputResult.StandardOutput, schemaJson, profile,
+                    runtime.DeployTargetId!, expectedEnvironment, out contract, out _) ||
+                !ProvisionedRuntimeFacts.TryReadOutputs(outputResult.StandardOutput, profile, runtime.DeployTargetId!,
+                    expectedEnvironment, out var runtimeFacts, out _) ||
+                runtimeFacts!.AccountId != contract!.AccountId || runtimeFacts.Region != contract.Region || runtimeFacts.Partition != contract.Partition)
+                return (null, ProvisioningRefusal("runtime-contract-invalid", "The same applied output must carry matching target-specific operator and runtime identities for the host-authorized target.", [], []));
+            contract = contract with { RuntimeFacts = runtimeFacts };
         }
 
         // The contract itself states that certified consumers must reject an
@@ -2203,7 +2368,8 @@ internal sealed partial class HonuaOperationsToolkit
         /// re-reads exactly what the plan path validated rather than a re-derivation
         /// of it.
         /// </summary>
-        ExactPlanMetadata Metadata)
+        ExactPlanMetadata Metadata,
+        string? VariablesDigest = null)
     {
         internal string PlanMetadataDigest => Metadata.PlanMetadataDigest;
     }
@@ -2257,7 +2423,10 @@ internal sealed partial class HonuaOperationsToolkit
         string? OperatorContractStatus = null,
         string? OperatorContractSchemaVersion = null,
         ProvisioningEvidenceReference? VerificationReceipt = null,
-        ProvisioningEvidenceReference? ProvisionBinding = null);
+        ProvisioningEvidenceReference? ProvisionBinding = null,
+        ProvisionedRuntimeFacts? RuntimeFacts = null,
+        string? RuntimeImageDigest = null,
+        string? VariablesDigest = null);
 
     private static OperationBackendStep ToBackendStep(
         string name,

@@ -21,12 +21,21 @@ internal sealed partial class HonuaOperationsToolkit
                 if (TryLoadProvisioningState(operation, out ProvisioningState? completed))
                 {
                     string requestedEnvironment;
-                    try { requestedEnvironment = (string)ParseAwsEcsSmallVariables(variablesJson)["environment"]!; }
+                    string requestedVariablesDigest;
+                    try
+                    {
+                        var requestedVariables = ParseProvisioningVariables(NormalizeToken(stack), variablesJson);
+                        requestedEnvironment = (string)requestedVariables["environment"]!;
+                        requestedVariablesDigest = ComputeVariablesDigest(requestedVariables);
+                    }
                     catch (InvalidOperationException)
                     {
                         return ProvisioningRefusal("idempotency-conflict", "The replay does not describe the original apply environment.", [], []);
                     }
-                    if (!confirmed || completed!.Action != NormalizeToken(action)
+                    if (!confirmed || completed!.Stack != NormalizeToken(stack) || completed.Stack != ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).StackId ||
+                        completed.Action != NormalizeToken(action) ||
+                        (runtime.RuntimeKind != "aws-ecs" && completed.VariablesDigest is null) ||
+                        (completed.VariablesDigest is { } previousVariables && previousVariables != requestedVariablesDigest)
                         || completed.Environment != parts[2] || completed.Environment != requestedEnvironment
                         || NormalizeToken(size) != "small"
                         || completed.Lineage.ApprovalReceiptSha256 != ComputeSha256(Encoding.UTF8.GetBytes(approvalReceiptJson)))
@@ -106,6 +115,9 @@ internal sealed partial class HonuaOperationsToolkit
         }
     }
 
+    private static string ProvisionBindingFileName(string stack)
+        => stack == "aws-ecs" ? "honua-devops-aws-ecs-provision-binding.json" : "honua-devops-provision-binding.v2.json";
+
     private static async Task<bool> RestoreVerificationAsync(ProvisioningState state, string directory, bool overwrite, CancellationToken cancellationToken)
     {
         ProvisioningEvidenceStore store = GetEvidenceStore();
@@ -114,7 +126,7 @@ internal sealed partial class HonuaOperationsToolkit
         byte[] receipt = store.Read(state.VerificationReceipt!);
         byte[] binding = store.Read(state.ProvisionBinding!);
         string receiptPath = Path.Combine(directory, "honua-install-verification.receipt.json");
-        string bindingPath = Path.Combine(directory, "honua-devops-aws-ecs-provision-binding.json");
+        string bindingPath = Path.Combine(directory, ProvisionBindingFileName(state.Stack));
         bool receiptExists = File.Exists(receiptPath);
         bool bindingExists = File.Exists(bindingPath);
         // Check both exports before changing either, including a copied handoff's directory.

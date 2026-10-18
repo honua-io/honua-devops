@@ -44,6 +44,7 @@ internal sealed record OperatorContract(
     string Partition,
     string? ImageDigest)
 {
+    internal ProvisionedRuntimeFacts? RuntimeFacts { get; init; }
     internal string? Runtime { get; init; }
     internal string? StackId { get; init; }
     internal string? Environment { get; init; }
