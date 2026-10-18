@@ -108,6 +108,8 @@ internal sealed partial class HonuaOperationsToolkit
         }
 
         string canonicalStack = provisioningStack!.Id;
+        if (canonicalStack != ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).StackId)
+            return ProvisioningRefusal("runtime-stack-mismatch", "The requested stack does not match the host-authorized runtime.", [], []);
         if (!provisioningStack.Sizes.Contains(normalizedSize))
         {
             return ProvisioningRefusal(
@@ -489,6 +491,8 @@ internal sealed partial class HonuaOperationsToolkit
         CancellationToken cancellationToken = default)
     {
         const string canonicalStack = "aws-ecs";
+        if (runtime.RuntimeKind != "aws-ecs")
+            return ProvisioningRefusal("runtime-handoff-unavailable", "This runtime requires a target-aware observed handoff; the legacy ECS handoff cannot be reused.", [], []);
         if (!string.Equals(NormalizeToken(stack), canonicalStack, StringComparison.Ordinal))
         {
             return ProvisioningRefusal(

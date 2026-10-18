@@ -5,6 +5,24 @@ namespace Honua.DevOps.Agent.Tests;
 public class OperationRuntimeTests
 {
     [Fact]
+    public void Load_NonEcsRequiresExactHostBackendAndRegisteredTargetBinding()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetRuntimeVariables(environment);
+        environment.Set("HONUA_DEVOPS_RUNTIME_KIND", "aws-eks");
+        Assert.Throws<InvalidOperationException>(OperationRuntime.Load);
+        environment.Set("HONUA_DEVOPS_RUNTIME_BACKEND", "honua-kubernetes-deployment");
+        environment.Set("HONUA_DEVOPS_SERVER_TARGET_ID", "server-1");
+        environment.Set("HONUA_DEVOPS_DEPLOY_TARGET_ID", "eks-1");
+        var runtime = OperationRuntime.Load();
+        Assert.Equal("aws-eks", runtime.RuntimeKind);
+        Assert.Equal("server-1", runtime.ServerTargetId);
+        Assert.Equal("honua-kubernetes-deployment", runtime.RuntimeBackend);
+        environment.Set("HONUA_DEVOPS_RUNTIME_BACKEND", "honua-gitops-kubernetes");
+        Assert.Throws<InvalidOperationException>(OperationRuntime.Load);
+    }
+
+    [Fact]
     public void Load_ThrowsWhenAllowedEnvironmentListParsesEmpty()
     {
         using TestEnvironmentVariableScope environment = new();
@@ -146,6 +164,7 @@ public class OperationRuntimeTests
             "HONUA_DEVOPS_TERRAFORM_REF",
             "HONUA_DEVOPS_TERRAFORM_TARGETS",
             "HONUA_DEVOPS_TERRAFORM_LOCAL_PATH",
+            "HONUA_DEVOPS_RUNTIME_KIND", "HONUA_DEVOPS_RUNTIME_BACKEND", "HONUA_DEVOPS_SERVER_TARGET_ID",
             "HONUA_DEVOPS_DEPLOY_TARGET_ID"
         ];
 
