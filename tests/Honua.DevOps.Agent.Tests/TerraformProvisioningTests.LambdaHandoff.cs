@@ -63,7 +63,7 @@ public sealed partial class TerraformProvisioningTests
         var apply = await toolkit.ProvisionInfrastructureAsync("aws-lambda", "small", "apply", variables, true,
             ProvisioningSubstrateFixtures.ExtractChallenge(plan, "confirmation="),
             ProvisioningSubstrateFixtures.CreateApprovalReceipt(plan, "apply", stack: "aws-lambda"));
-        Assert.Equal("infrastructure-provisioned", apply.Status);
+        Assert.True(apply.Status == "infrastructure-provisioned", apply.Status + ": " + apply.Summary);
         var directory = Path.Combine(root.Path, "lambda-handoff");
         var handoff = await toolkit.InstallHandoffAsync("aws-lambda", "", "", directory, false, apply.ProvisioningLineage!.ProvisioningOperationId);
         Assert.Equal("install-handoff-written", handoff.Status);

@@ -1,7 +1,7 @@
 {
   "action": "apply",
   "actor_id": "honua-devops:urn:honua:provisioning:00000000000000000000000000000000",
-  "approved_digest": "058307fcb139d9c5c6eb4ed483bc244778972f12e5bf13e351f5e38d9113f4f2",
+  "approved_digest": "89ace46fd5223c79602f492294b6a7cd70c1124559d9f66511e8d8effbb58434",
   "backend_step": {
     "backend_config_digest": "0ea699e4b738a98ed5c9a7ce497ad94b7922fe0d1e86c88e38ba5be3902036a3",
     "backend_kind": "s3",
@@ -18,7 +18,7 @@
     "claim_dir": "/var/tmp/honua-devops-terraform-plans/fixture/honua.tfplan.claim",
     "saved_plan": "/var/tmp/honua-devops-terraform-plans/fixture/honua.tfplan",
     "teardown_action": "destroy",
-    "teardown_root": "infrastructure/terraform/examples/aws"
+    "teardown_root": "infrastructure/terraform/examples/aws-serverless"
   },
   "completed_at_utc": "2026-08-28T21:02:27Z",
   "evidence_scope": "metadata-only-post-execution",
