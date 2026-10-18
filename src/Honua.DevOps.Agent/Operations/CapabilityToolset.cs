@@ -1,4 +1,5 @@
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
+using Honua.DevOps.Agent.Operations.GitOps;
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using Microsoft.Extensions.AI;
@@ -169,6 +170,19 @@ internal static class CapabilityToolset
         if (!runtime.RollbackEnabled)
         {
             tools.RemoveAll(tool => string.Equals(tool.Name, "rollback_gitops_operation", StringComparison.Ordinal));
+        }
+
+        if (ScopedGitConfiguration.Load() is { } gitConfiguration)
+        {
+            ScopedGitOpsAdapter git = new(runtime, gateway, policy ?? OperatorPolicyModel.Default, gitConfiguration, auditSink);
+            tools.Add(CreateTool(
+                (string releasePackageJson, string expectedBaseCommit) => git.CreateAsync(releasePackageJson, expectedBaseCommit),
+                "create_scoped_gitops_pull_request",
+                "Create a configuration-only review commit and GitHub PR from a compatible server metadata release package. Host fixes remote, repo, base branch and allowed config paths. Requires exact current base commit, execute mode, propose tier and durable audit. Records canonical server deployment proposal, never submits/approves it, merges, pushes main or deploys. Repeating identical inputs reconciles the deterministic review branch."));
+            tools.Add(CreateTool(
+                (string commitId, string expectedBaseCommit, string service, string environmentsCsv) => git.RevertAsync(commitId, expectedBaseCommit, service, environmentsCsv),
+                "revert_scoped_gitops_pull_request",
+                "Propose configuration recovery as a new review commit and PR reverting one immutable, single-parent config-only commit on the current configured base. All changed paths must remain in host scope. Uses the same canonical server proposal/human approval inbox; never merges, deploys or performs a direct cloud rollback."));
         }
 
         return tools;

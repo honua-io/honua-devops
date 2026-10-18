@@ -33,6 +33,10 @@ internal sealed record OperationResponse(
     public IReadOnlyList<ServerOperationLineage> ServerOperations { get; init; } =
         BackendSteps?.Where(step => step.ServerLineage is not null).Select(step => step.ServerLineage!).ToArray() ?? [];
 
+    [JsonPropertyName("gitReview")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ScopedGitReviewEvidence? GitReview { get; init; }
+
     [JsonPropertyName("auditEventId")]
     public string AuditEventId { get; init; } = Guid.NewGuid().ToString("n");
 
