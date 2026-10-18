@@ -10,6 +10,7 @@ public sealed partial class TerraformProvisioningTests
     [Theory]
     [InlineData("allowed")]
     [InlineData("revoked")]
+    [InlineData("timeout")]
     [InlineData("tenant-changed")]
     public async Task LambdaActualProducerShapeFlowsThroughReviewedApplyAndRechecksAuthorityAfterPublicProbes(string outcome)
     {
@@ -38,6 +39,8 @@ public sealed partial class TerraformProvisioningTests
         {
             Assert.EndsWith("/api/v1/agent/devops/authorize", request.RequestUri!.AbsolutePath);
             authorizationCalls++;
+            if (publicProbesFinished && outcome == "timeout")
+                throw new TaskCanceledException("Bounded canonical authorization timed out.");
             if (publicProbesFinished && outcome == "revoked")
                 return new HttpResponseMessage(HttpStatusCode.Forbidden);
             return new HttpResponseMessage(HttpStatusCode.OK)
@@ -80,7 +83,7 @@ public sealed partial class TerraformProvisioningTests
         }
         else
         {
-            Assert.Equal(outcome == "revoked" ? "registered-runtime-unverified" : "registered-runtime-changed", result.Status);
+            Assert.Equal(outcome is "revoked" or "timeout" ? "registered-runtime-unverified" : "registered-runtime-changed", result.Status);
             Assert.False(File.Exists(bindingPath));
             Assert.False(File.Exists(Path.Combine(directory, "honua-install-verification.receipt.json")));
         }

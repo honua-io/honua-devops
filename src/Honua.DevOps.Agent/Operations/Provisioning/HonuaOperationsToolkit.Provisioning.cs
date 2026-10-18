@@ -955,7 +955,7 @@ internal sealed partial class HonuaOperationsToolkit
                 if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
                     return ProvisioningRefusal("registered-runtime-changed", "The registered runtime authority changed while installation was observed.", [], []);
             }
-            catch (Exception exception) when (exception is IOException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            catch (Exception exception) when (exception is InvalidDataException or IOException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
             { return ProvisioningRefusal("runtime-observation-failed", "The actual provider runtime, route, alias or immutable image did not match the approved target; no binding was emitted.", [], []); }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             { return ProvisioningRefusal("runtime-observation-timeout", "The bounded provider observation did not finish; no binding was emitted.", [], []); }
@@ -987,8 +987,10 @@ internal sealed partial class HonuaOperationsToolkit
                 if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
                     return ProvisioningRefusal("registered-runtime-changed", "Current registry authority changed during public installation probes; no verified binding was emitted.", [], []);
             }
-            catch (Exception exception) when (exception is IOException or HttpRequestException or JsonException or InvalidOperationException)
+            catch (Exception exception) when (exception is InvalidDataException or IOException or HttpRequestException or JsonException or InvalidOperationException)
             { return ProvisioningRefusal("registered-runtime-unverified", "Current registry authority is unavailable after public installation probes; no verified binding was emitted.", [], []); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { return ProvisioningRefusal("registered-runtime-unverified", "Current registry authority could not be confirmed within its timeout after public installation probes; no verified binding was emitted.", [], []); }
         }
 
         string directory = Path.GetDirectoryName(fullPath)!;
