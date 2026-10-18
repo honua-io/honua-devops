@@ -273,6 +273,25 @@ internal sealed class ScopedGitOpsAdapter(
             string observed = await Git(work, ["show", $"{commit}:{file.Path}"], cancellationToken);
             if (!string.Equals(observed, file.Content.TrimEnd(), StringComparison.Ordinal)) return false;
         }
+        string parent = (await Git(work, ["rev-parse", commit + "^"], cancellationToken)).Trim();
+        string priorPackagePath = await Git(work, ["ls-tree", "--name-only", parent, "--", packages[0]], cancellationToken);
+        if (priorPackagePath.Length == 0)
+        {
+            // An initial package may only add files: never restore untyped pre-existing content.
+            string added = await Git(work, ["diff-tree", "--no-commit-id", "--name-only", "--diff-filter=A", "-r", commit], cancellationToken);
+            return changed.Order(StringComparer.Ordinal).SequenceEqual(SplitPaths(added).Order(StringComparer.Ordinal));
+        }
+        string priorPackage = await Git(work, ["show", $"{parent}:{packages[0]}"], cancellationToken);
+        if (priorPackage.Length > 1024 * 1024 || !MetadataReleaseChangeSetBuilder.TryBuild(priorPackage, out MetadataReleaseChangeSet prior, out _)
+            || prior.Service != service || !prior.TargetEnvironments.Order(StringComparer.OrdinalIgnoreCase)
+                .SequenceEqual(environments.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase)) return false;
+        IReadOnlyList<MetadataReleaseFile> priorFiles = WithReviewPackage(prior, priorPackage);
+        if (priorFiles.Count > 64 || priorFiles.Sum(file => (long)file.Content.Length) > 1024 * 1024) return false;
+        foreach (MetadataReleaseFile file in priorFiles)
+        {
+            string observed = await Git(work, ["show", $"{parent}:{file.Path}"], cancellationToken);
+            if (!string.Equals(observed, file.Content.TrimEnd(), StringComparison.Ordinal)) return false;
+        }
         return true;
     }
 
