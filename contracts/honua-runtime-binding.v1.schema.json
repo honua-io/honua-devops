@@ -264,7 +264,9 @@
               "containerName",
               "serviceName",
               "routeKind",
-              "routeName"
+              "routeName",
+              "servicePort",
+              "targetPort"
             ],
             "properties": {
               "clusterArn": {
@@ -313,9 +315,54 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 1024
+              },
+              "servicePort": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "targetPort": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "routeHost": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "routePath": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "routePathType": {
+                "enum": [
+                  "Exact",
+                  "Prefix",
+                  "ImplementationSpecific"
+                ]
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "routeKind": {
+                      "const": "Ingress"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "routeHost",
+                    "routePath",
+                    "routePathType"
+                  ]
+                }
+              }
+            ]
           }
         }
       }
