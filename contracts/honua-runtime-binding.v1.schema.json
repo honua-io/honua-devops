@@ -251,7 +251,7 @@
             "const": "Kubernetes"
           },
           "backend": {
-            "const": "honua-kubernetes-argo-rollouts"
+            "const": "honua-kubernetes-deployment"
           },
           "resourceIdentity": {
             "type": "object",
@@ -260,13 +260,11 @@
               "apiServer",
               "caSha256",
               "namespace",
-              "rolloutName",
+              "deploymentName",
               "containerName",
               "serviceName",
               "routeKind",
-              "routeName",
-              "controllerNamespace",
-              "controllerDeploymentName"
+              "routeName"
             ],
             "properties": {
               "clusterArn": {
@@ -285,11 +283,6 @@
                 "$ref": "#/$defs/sha256"
               },
               "namespace": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 1024
-              },
-              "rolloutName": {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 1024
@@ -316,17 +309,10 @@
                 "maxLength": 253,
                 "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
               },
-              "controllerNamespace": {
+              "deploymentName": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 253,
-                "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
-              },
-              "controllerDeploymentName": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 253,
-                "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                "maxLength": 1024
               }
             },
             "additionalProperties": false

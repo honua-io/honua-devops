@@ -467,7 +467,7 @@
                 "const": "Kubernetes"
               },
               "backend": {
-                "const": "honua-kubernetes-argo-rollouts"
+                "const": "honua-kubernetes-deployment"
               },
               "resourceIdentity": {
                 "type": "object",
@@ -476,19 +476,20 @@
                   "apiServer",
                   "caSha256",
                   "namespace",
-                  "rolloutName",
-                  "rolloutUid",
+                  "deploymentName",
+                  "deploymentUid",
                   "containerName",
                   "serviceName",
                   "serviceUid",
                   "routeKind",
                   "routeUid",
-                  "controllerDeploymentUid",
-                  "controllerImage",
-                  "rolloutCrdUid",
                   "routeName",
-                  "controllerNamespace",
-                  "controllerDeploymentName"
+                  "clusterUid",
+                  "replicaSetUid",
+                  "imageDigest",
+                  "observedGeneration",
+                  "availableReplicas",
+                  "updatedReplicas"
                 ],
                 "properties": {
                   "clusterArn": {
@@ -507,16 +508,6 @@
                     "$ref": "#/$defs/sha256"
                   },
                   "namespace": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1024
-                  },
-                  "rolloutName": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1024
-                  },
-                  "rolloutUid": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 1024
@@ -547,38 +538,47 @@
                     "minLength": 1,
                     "maxLength": 1024
                   },
-                  "controllerDeploymentUid": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1024
-                  },
-                  "controllerImage": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1024
-                  },
-                  "rolloutCrdUid": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1024
-                  },
                   "routeName": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 253,
                     "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
                   },
-                  "controllerNamespace": {
+                  "deploymentName": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 253,
-                    "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                    "maxLength": 1024
                   },
-                  "controllerDeploymentName": {
+                  "deploymentUid": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 253,
-                    "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                    "maxLength": 1024
+                  },
+                  "clusterUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "replicaSetUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "imageDigest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "observedGeneration": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "availableReplicas": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "updatedReplicas": {
+                    "type": "integer",
+                    "minimum": 0
                   }
                 },
                 "additionalProperties": false
@@ -982,7 +982,7 @@
                 "const": "aws-eks"
               },
               "backend": {
-                "const": "honua-kubernetes-argo-rollouts"
+                "const": "honua-kubernetes-deployment"
               }
             }
           }

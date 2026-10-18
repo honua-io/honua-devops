@@ -8,7 +8,7 @@ public sealed class ProvisionedRuntimeFactsTests
     [Theory]
     [InlineData("aws-ecs", "ecs", "aws", "AwsEcs", "honua-aws-ecs-alb")]
     [InlineData("aws-lambda", "lambda", "aws-serverless", "AwsLambda", "honua-gitops-aws-lambda")]
-    [InlineData("aws-eks", "eks", "aws-eks", "Kubernetes", "honua-kubernetes-argo-rollouts")]
+    [InlineData("aws-eks", "eks", "aws-eks", "Kubernetes", "honua-kubernetes-deployment")]
     public void HostRuntimeSelectsExactKnownRootAndActualBackend(string kind, string target, string root, string targetKind, string backend)
     {
         var profile = ProvisioningRuntimeProfile.Resolve(kind);
