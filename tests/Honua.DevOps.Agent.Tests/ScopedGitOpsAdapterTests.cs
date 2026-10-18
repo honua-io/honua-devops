@@ -77,9 +77,16 @@ public sealed class ScopedGitOpsAdapterTests
             Assert.Equal("", await Git(root, "--git-dir", remote, "diff", "--name-only", initial, revertedCommit));
             Assert.Equal(commit, await Git(root, "--git-dir", remote, "rev-parse", "refs/heads/trunk"));
             Assert.Equal("unrelated user content", await Git(root, "--git-dir", remote, "show", $"{revertedCommit}:notes.md"));
+            OperationResponse upgraded = await adapter.CreateAsync(Package.Replace("v1.0.0", "v2.0.0", StringComparison.Ordinal), commit);
+            Assert.Equal("git-review-created", upgraded.Status);
+            string upgradedCommit = upgraded.GitReview!.CommitId;
+            await Git(root, "--git-dir", remote, "update-ref", "refs/heads/trunk", upgradedCommit, commit);
+            OperationResponse restored = await adapter.RevertAsync(upgradedCommit, upgradedCommit, "roads", "dev");
+            Assert.Equal("git-review-created", restored.Status);
+            Assert.Equal("", await Git(root, "--git-dir", remote, "diff", "--name-only", commit, restored.GitReview!.CommitId));
             // A typed package alone is insufficient: every committed manifest must match its rendering.
             await Git(seed, "fetch", "origin", "trunk");
-            await Git(seed, "checkout", "--detach", commit);
+            await Git(seed, "checkout", "--detach", upgradedCommit);
             string releaseDirectory = Path.Combine(seed, "desired-state", "releases", "roads");
             await File.AppendAllTextAsync(Path.Combine(releaseDirectory, "review-package.json"), "\n");
             await File.AppendAllTextAsync(Path.Combine(releaseDirectory, "dev.platformrelease.yaml"), "\nspec:\n  service: 'other-service'\n");
