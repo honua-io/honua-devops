@@ -79,21 +79,9 @@ internal sealed class AwsLambdaRuntimeObservation(IProvisioningProcessRunner run
         }
         else
         {
-            using var domain = await ReadAsync(facts, ["apigatewayv2", "get-domain-name", "--domain-name", publicUrl.IdnHost,
-                "--query", "{name:DomainName,configurations:DomainNameConfigurations[*].{status:DomainNameStatus,type:EndpointType}}"], bounded.Token);
-            if (Text(domain.RootElement, "name") != publicUrl.IdnHost ||
-                !domain.RootElement.TryGetProperty("configurations", out var configurations) || configurations.ValueKind != JsonValueKind.Array ||
-                !configurations.EnumerateArray().Any(configuration => Text(configuration, "status") == "AVAILABLE" && Text(configuration, "type") == "REGIONAL")) Refuse();
-            using var mappings = await ReadAsync(facts, ["apigatewayv2", "get-api-mappings", "--domain-name", publicUrl.IdnHost,
-                "--query", "{items:Items[*].{api:ApiId,stage:Stage,key:ApiMappingKey},next:NextToken}"], bounded.Token);
-            if (mappings.RootElement.TryGetProperty("next", out var next) && next.ValueKind != JsonValueKind.Null && !string.IsNullOrEmpty(next.GetString())) Refuse();
-            var mappingKey = publicUrl.AbsolutePath.Trim('/');
-            var matches = mappings.RootElement.GetProperty("items").EnumerateArray().Where(mapping =>
-                (mapping.GetProperty("key").GetString() ?? "") == mappingKey).ToArray();
-            if (matches.Length != 1 || Text(matches[0], "api") != apiId || Text(matches[0], "stage") != stage ||
-                mappings.RootElement.GetProperty("items").EnumerateArray().Any(mapping =>
-                    mapping.GetProperty("key").GetString() is { Length: > 0 } key && key != mappingKey &&
-                    (mappingKey.Length == 0 || key.StartsWith(mappingKey + "/", StringComparison.Ordinal)))) Refuse();
+            // A configured API Gateway mapping alone cannot prove public DNS serves it.
+            // Initial v2 qualification supports only the observed default execute-api host.
+            Refuse();
         }
         var observedAt = DateTimeOffset.UtcNow;
         var evidence = JsonSerializer.Serialize(new

@@ -976,6 +976,21 @@ internal sealed partial class HonuaOperationsToolkit
                 ProvisioningLineage: state!.Lineage);
         }
 
+        if (registeredAuthority is not null)
+        {
+            try
+            {
+                // Public readiness/auth/MCP probes may wait or perform network retries.
+                // Current principal, tenant and registered identity must still authorize
+                // the exact observation immediately before a verified binding is persisted.
+                var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!, "verify_install_handoff", cancellationToken);
+                if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
+                    return ProvisioningRefusal("registered-runtime-changed", "Current registry authority changed during public installation probes; no verified binding was emitted.", [], []);
+            }
+            catch (Exception exception) when (exception is IOException or HttpRequestException or JsonException or InvalidOperationException)
+            { return ProvisioningRefusal("registered-runtime-unverified", "Current registry authority is unavailable after public installation probes; no verified binding was emitted.", [], []); }
+        }
+
         string directory = Path.GetDirectoryName(fullPath)!;
         string receiptPath = Path.Combine(directory, "honua-install-verification.receipt.json");
         string bindingPath = Path.Combine(directory, ProvisionBindingFileName(state.Stack));

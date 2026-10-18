@@ -46,12 +46,12 @@ public sealed class AwsLambdaRuntimeObservationTests
     }
 
     [Fact]
-    public async Task ForeignEndpointRequiresActualCustomDomainMappingInsteadOfReusingApiId()
+    public async Task CustomDomainCannotQualifyFromUnusedApiMappingWithoutPublicDnsProof()
     {
         var runner = new Reader("valid");
         await Assert.ThrowsAsync<InvalidDataException>(() => new AwsLambdaRuntimeObservation(runner)
             .ObserveAsync(Facts(), "https://other.example.test", Digest, CancellationToken.None));
-        Assert.Contains(runner.Commands, command => command.Contains("get-domain-name"));
+        Assert.DoesNotContain(runner.Commands, command => command.Contains("get-domain-name"));
     }
 
     private static ProvisionedRuntimeFacts Facts() => new("aws-lambda", "AwsLambda", "honua-gitops-aws-lambda",

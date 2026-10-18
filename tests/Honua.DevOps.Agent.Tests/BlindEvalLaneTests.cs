@@ -118,7 +118,6 @@ public class BlindEvalLaneTests
 
     [Theory]
     [InlineData("oneOf", "[{\"type\":\"string\"}]")]
-    [InlineData("anyOf", "[{\"type\":\"string\"}]")]
     [InlineData("not", "{\"type\":\"integer\"}")]
     // `format` is enforced only for the values the validator implements; any other
     // value must still fail closed rather than pass unchecked.

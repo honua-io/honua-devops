@@ -23,7 +23,7 @@ public sealed partial class TerraformProvisioningTests
         Assert.Equal("terraform-plan-ready", response.Status);
         var plan = Assert.Single(runner.Calls, call => call.Operation == "terraform-exact-plan.sh");
         Assert.Equal(root.AwsRoot, plan.Option("--root"));
-        Assert.Equal("aws-lambda:dev", plan.Option("--target-id"));
+        Assert.Equal("honua-dev-dev-honua-live", plan.Option("--target-id"));
         Assert.DoesNotContain(runner.Calls, call => call.Operation is "init" or "plan" or "apply");
     }
 

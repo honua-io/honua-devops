@@ -14,7 +14,7 @@ namespace Honua.DevOps.Agent.Operations.Eval;
 /// Supported keywords: <c>$ref</c> (local <c>#/...</c> pointers only), <c>$defs</c>,
 /// <c>type</c> (string or array of strings), <c>const</c>, <c>enum</c>,
 /// <c>required</c>, <c>properties</c>, <c>additionalProperties</c> (boolean and
-/// subschema forms), <c>propertyNames</c>, <c>allOf</c>, <c>if</c>/<c>then</c>/<c>else</c>,
+/// subschema forms), <c>propertyNames</c>, <c>maxProperties</c>, <c>allOf</c>, <c>anyOf</c>, <c>if</c>/<c>then</c>/<c>else</c>,
 /// <c>items</c>, <c>minItems</c>, <c>minLength</c>, <c>maxLength</c>,
 /// <c>minimum</c>, <c>maximum</c>, <c>pattern</c>, and <c>format</c>
 /// (<c>date-time</c> and <c>uri</c> only, enforced rather than annotated).
@@ -33,7 +33,7 @@ namespace Honua.DevOps.Agent.Operations.Eval;
 /// non-validating annotation on the explicit allowlist (<c>$schema</c>, <c>$id</c>,
 /// <c>$comment</c>, <c>title</c>, <c>description</c>, <c>examples</c>,
 /// <c>default</c>, <c>deprecated</c>, <c>readOnly</c>, <c>writeOnly</c>). Anything
-/// else — <c>oneOf</c>, <c>anyOf</c>, <c>not</c>, <c>exclusiveMinimum</c>, an
+/// else — <c>oneOf</c>, <c>not</c>, <c>exclusiveMinimum</c>, an
 /// unrecognized <c>format</c>, a <c>then</c> without an <c>if</c>, a <c>$ref</c>
 /// with validation siblings —
 /// is reported as a validation error and the instance check does not run. The
@@ -61,6 +61,8 @@ internal static class JsonSchemaValidator
         "additionalProperties",
         "propertyNames",
         "allOf",
+        "anyOf",
+        "maxProperties",
         "if",
         "then",
         "else",
@@ -208,9 +210,10 @@ internal static class JsonSchemaValidator
                     break;
 
                 case "allOf":
-                    if (property.Value.ValueKind != JsonValueKind.Array)
+                case "anyOf":
+                    if (property.Value.ValueKind != JsonValueKind.Array || property.Value.GetArrayLength() == 0)
                     {
-                        errors.Add($"`allOf` at {path} must be an array of subschemas.");
+                        errors.Add($"`{name}` at {path} must be a nonempty array of subschemas.");
                         break;
                     }
 
@@ -221,6 +224,11 @@ internal static class JsonSchemaValidator
                         branch++;
                     }
 
+                    break;
+
+                case "maxProperties":
+                    if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt32(out int maximumProperties) || maximumProperties < 0)
+                        errors.Add($"`maxProperties` at {path} must be a nonnegative integer.");
                     break;
 
                 case "format":
@@ -313,6 +321,18 @@ internal static class JsonSchemaValidator
             }
         }
 
+        if (schema.TryGetProperty("anyOf", out JsonElement anyOf))
+        {
+            bool matched = false;
+            foreach (var branchSchema in anyOf.EnumerateArray())
+            {
+                List<string> branchErrors = [];
+                ValidateNode(instance, branchSchema, root, path, branchErrors);
+                if (branchErrors.Count == 0) { matched = true; break; }
+            }
+            if (!matched) errors.Add($"{path}: no anyOf branch matched.");
+        }
+
         if (schema.TryGetProperty("if", out JsonElement conditionSchema))
         {
             // The `if` branch is evaluated for its outcome only; its own errors are
@@ -350,6 +370,10 @@ internal static class JsonSchemaValidator
         string path,
         List<string> errors)
     {
+        if (schema.TryGetProperty("maxProperties", out var maximumProperties) &&
+            instance.EnumerateObject().Count() > maximumProperties.GetInt32())
+            errors.Add($"{path}: too many properties.");
+
         if (schema.TryGetProperty("required", out JsonElement requiredElement) &&
             requiredElement.ValueKind == JsonValueKind.Array)
         {
