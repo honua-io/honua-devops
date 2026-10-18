@@ -491,7 +491,8 @@
                   "availableReplicas",
                   "updatedReplicas",
                   "servicePort",
-                  "targetPort"
+                  "targetPort",
+                  "publicUrl"
                 ],
                 "properties": {
                   "clusterArn": {
@@ -507,7 +508,8 @@
                     "format": "uri"
                   },
                   "caSha256": {
-                    "$ref": "#/$defs/sha256"
+                    "$ref": "#/$defs/sha256",
+                    "description": "SHA-256 of the single cluster CA certificate DER bytes; PEM/base64 text hashing is not equivalent."
                   },
                   "namespace": {
                     "type": "string",
@@ -605,9 +607,14 @@
                   "routePathType": {
                     "enum": [
                       "Exact",
-                      "Prefix",
-                      "ImplementationSpecific"
+                      "Prefix"
                     ]
+                  },
+                  "publicUrl": {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https://",
+                    "maxLength": 2048
                   }
                 },
                 "additionalProperties": false,
