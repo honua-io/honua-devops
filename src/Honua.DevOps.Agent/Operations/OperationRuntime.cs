@@ -28,6 +28,9 @@ internal sealed record OperationRuntime(
     // Off by default for the same reason: it stays off until an environment is qualified.
     bool ProtectedRecoveryEnabled = false)
 {
+    /// <summary>Host-selected target runtime. ECS remains the legacy configuration default.</summary>
+    internal string RuntimeKind { get; init; } = "aws-ecs";
+
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
     private static readonly string[] DefaultProductionEnvironments = ["prod", "production", "prd"];
 
@@ -183,7 +186,11 @@ internal sealed record OperationRuntime(
             candidateReference,
             approvalSigningMode,
             approvalIssuerKeyArns,
-            protectedRecoveryEnabled);
+            protectedRecoveryEnabled)
+        {
+            RuntimeKind = ProvisioningRuntimeProfile.Resolve(Environment.GetEnvironmentVariable(
+                ProvisioningRuntimeProfile.EnvironmentVariable)).RuntimeKind
+        };
     }
 
     private static string ParseApprovalSigningMode(string? value)

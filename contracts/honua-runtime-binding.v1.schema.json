@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/schemas/honua-runtime-binding.v1.json",
+  "title": "Applied IaC runtime identity facts",
+  "description": "Configured facts from the exact applied Terraform output. These facts do not claim provider observation or deployment/recovery qualification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runtimeKind",
+    "targetKind",
+    "backend",
+    "targetId",
+    "environment",
+    "platform",
+    "resourceIdentity"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "honua.runtime-binding/v1"
+    },
+    "runtimeKind": {
+      "enum": [
+        "aws-ecs",
+        "aws-lambda",
+        "aws-eks"
+      ]
+    },
+    "targetKind": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "backend": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "targetId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accountId",
+        "region",
+        "partition"
+      ],
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "pattern": "^[0-9]{12}$"
+        },
+        "region": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(-gov)?-[a-z]+-[0-9]$"
+        },
+        "partition": {
+          "enum": [
+            "aws",
+            "aws-cn",
+            "aws-us-gov"
+          ]
+        }
+      }
+    },
+    "resourceIdentity": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtimeKind": {
+            "const": "aws-ecs"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "targetKind": {
+            "const": "AwsEcs"
+          },
+          "backend": {
+            "const": "honua-aws-ecs-alb"
+          },
+          "resourceIdentity": {
+            "type": "object",
+            "required": [
+              "clusterArn",
+              "serviceArn",
+              "taskDefinitionArn"
+            ],
+            "properties": {
+              "clusterArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:cluster/.+"
+              },
+              "serviceArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:service/.+"
+              },
+              "taskDefinitionArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/.+:[0-9]+$"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtimeKind": {
+            "const": "aws-lambda"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "targetKind": {
+            "const": "AwsLambda"
+          },
+          "backend": {
+            "const": "honua-gitops-aws-lambda"
+          },
+          "resourceIdentity": {
+            "type": "object",
+            "required": [
+              "functionArn",
+              "aliasArn",
+              "publishedVersion",
+              "apiGatewayId",
+              "apiGatewayIntegrationId",
+              "apiGatewayIntegrationAliasArn",
+              "apiGatewayStage"
+            ],
+            "properties": {
+              "functionArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[^:]+$"
+              },
+              "aliasArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[^:]+:[^:]+$"
+              },
+              "publishedVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^[1-9][0-9]*$"
+              },
+              "apiGatewayId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "apiGatewayIntegrationId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "apiGatewayIntegrationAliasArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "apiGatewayStage": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtimeKind": {
+            "const": "aws-eks"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "targetKind": {
+            "const": "Kubernetes"
+          },
+          "backend": {
+            "const": "honua-kubernetes-argo-rollouts"
+          },
+          "resourceIdentity": {
+            "type": "object",
+            "required": [
+              "clusterArn",
+              "apiServer",
+              "caSha256",
+              "namespace",
+              "rolloutName",
+              "containerName",
+              "serviceName",
+              "routeKind",
+              "routeName",
+              "controllerNamespace",
+              "controllerDeploymentName"
+            ],
+            "properties": {
+              "clusterArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:eks:[a-z0-9-]+:[0-9]{12}:cluster/.+"
+              },
+              "apiServer": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "format": "uri"
+              },
+              "caSha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "rolloutName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "containerName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "serviceName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "routeKind": {
+                "enum": [
+                  "Ingress",
+                  "LoadBalancerService"
+                ]
+              },
+              "routeName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+              },
+              "controllerNamespace": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+              },
+              "controllerDeploymentName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  ]
+}

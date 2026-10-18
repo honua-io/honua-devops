@@ -25,6 +25,12 @@ internal static class ProvisioningContracts
     internal const string ProvisionBindingResource =
         "Honua.DevOps.Agent.contracts.honua-devops-aws-ecs-provision-binding.schema.json";
 
+    internal const string TargetAwareProvisionBindingResource =
+        "Honua.DevOps.Agent.contracts.honua-devops-provision-binding.v2.schema.json";
+
+    internal const string RuntimeBindingResource =
+        "Honua.DevOps.Agent.contracts.honua-runtime-binding.v1.schema.json";
+
     internal const string ProxyHandoffResource =
         "Honua.DevOps.Agent.contracts.honua-mcp-proxy-handoff.v1.schema.json";
 
@@ -38,6 +44,8 @@ internal static class ProvisioningContracts
     internal static IReadOnlyList<string> AllResources =>
     [
         ProvisionBindingResource,
+        TargetAwareProvisionBindingResource,
+        RuntimeBindingResource,
         ProxyHandoffResource,
         VerificationReceiptResource,
         ProvisionApprovalResource
@@ -58,6 +66,12 @@ internal static class ProvisioningContracts
 
     internal static IReadOnlyList<string> ValidateProvisionBinding(string documentJson)
         => Validate(documentJson, ProvisionBindingResource);
+
+    internal static IReadOnlyList<string> ValidateTargetAwareProvisionBinding(string documentJson)
+        => Validate(documentJson, TargetAwareProvisionBindingResource);
+
+    internal static IReadOnlyList<string> ValidateRuntimeBinding(string documentJson)
+        => Validate(documentJson, RuntimeBindingResource);
 
     internal static IReadOnlyList<string> ValidateProxyHandoff(string documentJson)
         => Validate(documentJson, ProxyHandoffResource);
