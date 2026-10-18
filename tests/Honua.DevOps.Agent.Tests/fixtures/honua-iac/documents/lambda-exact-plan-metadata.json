@@ -46,7 +46,6 @@
     "path": "honua.tfplan",
     "sha256": "3a691c59f9c8be1eb1ce3e7642643a7aedfa7a0314c8d01750546ea83efca6fe"
   },
-  "plan_metadata_digest": "89ace46fd5223c79602f492294b6a7cd70c1124559d9f66511e8d8effbb58434",
   "posture": {
     "dirty_source_allowed": false,
     "local_state_allowed": false,
@@ -69,5 +68,6 @@
     "provider_lock_digest": "abba0b4b7705414a674e111af76e99600390b3483f3a6e5084fee8235e58e08e",
     "terraform_version": "1.10.5"
   },
-  "workload_identity_contract_digest": null
+  "workload_identity_contract_digest": null,
+  "plan_metadata_digest": "89ace46fd5223c79602f492294b6a7cd70c1124559d9f66511e8d8effbb58434"
 }

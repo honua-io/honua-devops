@@ -25,7 +25,7 @@
   "exit_status": 0,
   "kind": "honua.iac.exec-receipt",
   "output_contract": {
-    "digest": "8732c21de2beeeaa731123e8d70d7945dbef215f3c7dddc23e438cd594c1c9e8",
+    "digest": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
     "output_name": "operator_contract_digest"
   },
   "plan_metadata_digest": "89ace46fd5223c79602f492294b6a7cd70c1124559d9f66511e8d8effbb58434",

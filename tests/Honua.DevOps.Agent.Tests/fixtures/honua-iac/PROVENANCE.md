@@ -62,15 +62,17 @@ artifact storage and missing credential declarations are refused. The exact prod
 
 ## Lambda ordinary-root producer shape (2026-10-18)
 
-`lambda-qualified-producer-output.json` extracts exactly five outputs explicitly
-marked `sensitive:false` from the actual `qualified_lambda_contract` Terraform
-mock-apply `test_state` at honua-iac `684a25271a0396ebbb6c331ab77e448f0f1d483c`.
-That run emitted `test_run` complete/status `pass`. The whole producer suite
-failed later: two passed, one errored, five skipped, due to a negative
-expected-failure test phase mismatch. This is producer-shape evidence, not a full
-suite pass, real AWS apply, migration, public DNS or installed Honua qualification.
-Extracted file SHA-256:
-`4eb78b0372ab244a4b8e580201525ce80af13cbc32fdcc7c61fb451f4b574449`.
+`lambda-qualified-producer-output.json` extracts exactly six outputs explicitly
+marked `sensitive:false` from actual `qualified_lambda_contract` Terraform
+mock-apply `test_state` at honua-iac `a61ce04`. The full Lambda example suite passed
+41/41, including all eight operator scenarios; the focused module suite passed
+14/14. All four actual applied contract bundles independently passed the
+producer's schema, digest and identity validator. Original test JSONL SHA-256:
+`1bd07d5eb5ee7a2cdbd87b846a310e88b8bebcc5fac0a9320a70a723f9504cc3`.
+Extracted bundle SHA-256:
+`6174ccecedad8a4e8c541cedef49d66a9dd1b9f9b60794b89d5d478f6edea1d8`.
+This is mock-provider contract evidence, not real AWS apply, migration, public
+DNS or installed Honua qualification. No secret-bearing outputs were extracted.
 
 `lambda-exact-plan-metadata.json` and `lambda-exec-receipt.json` reuse the
 existing offline wrapper fixture (including explicit fake saved-plan bytes),
