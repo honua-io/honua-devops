@@ -67,12 +67,29 @@ public sealed class ScopedGitOpsAdapterTests
             // Simulate separate human-reviewed merge on this isolated bare fixture only.
             await Git(root, "--git-dir", remote, "update-ref", "refs/heads/trunk", commit, initial);
             Assert.Equal("git-base-conflict", (await adapter.CreateAsync(Package, initial)).Status);
+            int proposalsBeforeRefusal = requests.Count;
+            Assert.Equal("git-scope-rejected", (await adapter.RevertAsync(commit, commit, "other-service", "dev")).Status);
+            Assert.Equal("git-scope-rejected", (await adapter.RevertAsync(commit, commit, "roads", "staging")).Status);
+            Assert.Equal(proposalsBeforeRefusal, requests.Count);
             OperationResponse reverted = await adapter.RevertAsync(commit, commit, "roads", "dev");
             Assert.Equal("git-review-created", reverted.Status);
             string revertedCommit = reverted.Findings.Single(value => value.StartsWith("Commit: ", StringComparison.Ordinal))[8..];
             Assert.Equal("", await Git(root, "--git-dir", remote, "diff", "--name-only", initial, revertedCommit));
             Assert.Equal(commit, await Git(root, "--git-dir", remote, "rev-parse", "refs/heads/trunk"));
             Assert.Equal("unrelated user content", await Git(root, "--git-dir", remote, "show", $"{revertedCommit}:notes.md"));
+            // A typed package alone is insufficient: every committed manifest must match its rendering.
+            await Git(seed, "fetch", "origin", "trunk");
+            await Git(seed, "checkout", "--detach", commit);
+            string releaseDirectory = Path.Combine(seed, "desired-state", "releases", "roads");
+            await File.AppendAllTextAsync(Path.Combine(releaseDirectory, "review-package.json"), "\n");
+            await File.AppendAllTextAsync(Path.Combine(releaseDirectory, "dev.platformrelease.yaml"), "\nspec:\n  service: 'other-service'\n");
+            await Git(seed, "add", ".");
+            await Git(seed, "commit", "-m", "Tampered manifest and package");
+            string tampered = await Git(seed, "rev-parse", "HEAD");
+            await Git(seed, "push", "origin", "HEAD:trunk");
+            int beforeTampered = requests.Count;
+            Assert.Equal("git-scope-rejected", (await adapter.RevertAsync(tampered, tampered, "roads", "dev")).Status);
+            Assert.Equal(beforeTampered, requests.Count);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

@@ -106,11 +106,14 @@ internal sealed class ScopedGitOpsAdapter(
         if (!MetadataReleaseChangeSetBuilder.TryBuild(releasePackageJson, out MetadataReleaseChangeSet changeSet, out _)
             || changeSet.Readiness is MetadataChangeSetReadiness.Blocked or MetadataChangeSetReadiness.Unknown)
             return Refusal("git-changeset-blocked", "A compatible server metadata release package is required.");
-        if (changeSet.Files.Count > 64 || changeSet.Files.Sum(file => (long)file.Content.Length) > 1024 * 1024
-            || changeSet.Files.Any(file => !Allowed(file.Path)))
+        if (Redaction.Scrub(releasePackageJson) != releasePackageJson)
+            return Refusal("git-secret-or-size-rejected", "Review package contains secret-like material.");
+        IReadOnlyList<MetadataReleaseFile> scopedFiles = WithReviewPackage(changeSet, releasePackageJson);
+        if (scopedFiles.Count > 64 || scopedFiles.Sum(file => (long)file.Content.Length) > 1024 * 1024
+            || scopedFiles.Any(file => !Allowed(file.Path)))
             return Refusal("git-scope-rejected", "Generated files exceed the host-configured configuration scope.");
         return await WriteAsync(changeSet.Service, changeSet.TargetEnvironments, expectedBaseCommit,
-            changeSet.CommitMessage, changeSet.PrTitle, changeSet.PrBody, changeSet.Files, null, cancellationToken);
+            changeSet.CommitMessage, changeSet.PrTitle, changeSet.PrBody, scopedFiles, null, cancellationToken);
     }
 
     internal Task<OperationResponse> RevertAsync(string commitId, string expectedBaseCommit, string service,
@@ -171,6 +174,8 @@ internal sealed class ScopedGitOpsAdapter(
                 string changed = await Git(work, ["diff-tree", "--no-commit-id", "--name-only", "-r", revertCommit], cancellationToken);
                 if (SplitPaths(changed).Length == 0 || SplitPaths(changed).Any(file => !Allowed(file)))
                     return Refusal("git-scope-rejected", "Revert includes files outside the configured configuration scope.");
+                if (!await RevertScopeMatchesAsync(work, revertCommit, SplitPaths(changed), service, environments, cancellationToken))
+                    return Refusal("git-scope-rejected", "Revert manifests do not prove the requested service and exact environment scope.");
                 await Git(work, ["revert", "--no-commit", revertCommit], cancellationToken);
             }
             else
@@ -240,6 +245,35 @@ internal sealed class ScopedGitOpsAdapter(
         {
             try { Directory.Delete(scratch, recursive: true); } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    private static IReadOnlyList<MetadataReleaseFile> WithReviewPackage(MetadataReleaseChangeSet changeSet, string package)
+    {
+        string directory = changeSet.Files[0].Path[..changeSet.Files[0].Path.LastIndexOf('/')];
+        return [.. changeSet.Files, new MetadataReleaseFile(directory + "/review-package.json", "review-package", package)];
+    }
+
+    private async Task<bool> RevertScopeMatchesAsync(string work, string commit, string[] changed,
+        string service, IReadOnlyList<string> environments, CancellationToken cancellationToken)
+    {
+        // The original typed package binds immutable Git content to the proposal's scope.
+        // Never infer authority from caller labels or commit-message trailers.
+        string[] packages = changed.Where(path => path.EndsWith("/review-package.json", StringComparison.Ordinal)).ToArray();
+        if (packages.Length != 1 || changed.Length > 64) return false;
+        string package = await Git(work, ["show", $"{commit}:{packages[0]}"], cancellationToken);
+        if (package.Length > 1024 * 1024 || !MetadataReleaseChangeSetBuilder.TryBuild(package, out MetadataReleaseChangeSet changeSet, out _)
+            || changeSet.Readiness is MetadataChangeSetReadiness.Blocked or MetadataChangeSetReadiness.Unknown
+            || changeSet.Service != service || !changeSet.TargetEnvironments.Order(StringComparer.OrdinalIgnoreCase)
+                .SequenceEqual(environments.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase)) return false;
+        IReadOnlyList<MetadataReleaseFile> expected = WithReviewPackage(changeSet, package);
+        if (expected.Sum(file => (long)file.Content.Length) > 1024 * 1024 ||
+            changed.Any(path => !expected.Any(file => file.Path == path))) return false;
+        foreach (MetadataReleaseFile file in expected)
+        {
+            string observed = await Git(work, ["show", $"{commit}:{file.Path}"], cancellationToken);
+            if (!string.Equals(observed, file.Content.TrimEnd(), StringComparison.Ordinal)) return false;
+        }
+        return true;
     }
 
     private static ScopedGitReviewEvidence Persist(ScopedGitReviewEvidence evidence)

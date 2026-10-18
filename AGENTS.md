@@ -19,9 +19,15 @@ submit, or roll back deploy operations on its own.
 
 ## 2026.1 supported surface
 
-For 2026.1 honua-devops is the **provisioning executor only** (owner ruling
-2026-10-08: the retired ops loop is deleted, not flag-gated). The supported
-agent surface is:
+For the published 2026.1 profile honua-devops remains the provisioning executor;
+the retired ops loop stays deleted. The explicitly authorized unified workspace
+preview additionally supports host-configured scoped configuration review PRs
+and reviewed configuration reverts through `create_scoped_gitops_pull_request`
+and `revert_scoped_gitops_pull_request`. These optional tools create a canonical
+server proposal before a non-force review-branch push; they never merge, approve,
+submit a deployment, or execute cloud recovery. The server remains the sole
+Day-2 executor and approval inbox. No automatic ops loop is reintroduced.
+The supported agent surface is:
 
 - `describe_environment`, `provision_infrastructure`, `install_handoff`,
   `verify_install_handoff`, `find_recent_operations`;

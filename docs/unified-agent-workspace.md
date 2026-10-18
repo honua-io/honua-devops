@@ -57,6 +57,12 @@ It never pushes the base branch, force-pushes, merges, approves or submits deplo
 A retry produces the same commit/branch and reconciles an existing PR. A single-parent
 configuration commit may be reverted through a new reviewed branch/PR; all paths
 and the resulting diff are checked against the same scope and secret guards.
+Each new review commit includes a bounded, secret-checked `review-package.json`.
+Before reverting, the adapter rebuilds manifests from that immutable package,
+checks their committed contents and every changed path, and rejects a requested
+service or environment set that differs from the package. Older or arbitrary
+commits without this verifiable package require ordinary human review; they
+cannot be automatically reverted by this adapter.
 
 Host configuration is optional and contains no model-selectable paths or commands:
 `HONUA_DEVOPS_SCOPED_GIT_REMOTE`, `HONUA_DEVOPS_SCOPED_GIT_REPOSITORY` (owner/repo),
