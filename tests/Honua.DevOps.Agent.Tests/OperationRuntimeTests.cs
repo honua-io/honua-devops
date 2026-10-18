@@ -18,6 +18,12 @@ public class OperationRuntimeTests
         Assert.Equal("aws-eks", runtime.RuntimeKind);
         Assert.Equal("server-1", runtime.ServerTargetId);
         Assert.Equal("honua-kubernetes-deployment", runtime.RuntimeBackend);
+        foreach (var controller in new[] { "argocd", "flux", "argo-rollouts" })
+        {
+            environment.Set("HONUA_DEVOPS_GITOPS_TOOL", controller);
+            Assert.Throws<InvalidOperationException>(OperationRuntime.Load);
+        }
+        environment.Set("HONUA_DEVOPS_GITOPS_TOOL", "honua-gitops");
         environment.Set("HONUA_DEVOPS_RUNTIME_BACKEND", "honua-gitops-kubernetes");
         Assert.Throws<InvalidOperationException>(OperationRuntime.Load);
     }

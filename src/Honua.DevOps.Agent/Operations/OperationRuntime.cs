@@ -131,6 +131,8 @@ internal sealed record OperationRuntime(
             DeployTargetIdVariable);
 
         var runtimeProfile = ProvisioningRuntimeProfile.Resolve(Environment.GetEnvironmentVariable(ProvisioningRuntimeProfile.EnvironmentVariable));
+        if (runtimeProfile.RuntimeKind == "aws-eks" && !string.Equals(gitOpsTool, "honua-gitops", StringComparison.Ordinal))
+            throw new InvalidOperationException("Native EKS deployment uses Honua approval and Kubernetes Deployment APIs without any external GitOps controller.");
         var runtimeBackend = Environment.GetEnvironmentVariable("HONUA_DEVOPS_RUNTIME_BACKEND")?.Trim();
         var serverTargetId = NormalizeOptionalIdentifier(Environment.GetEnvironmentVariable("HONUA_DEVOPS_SERVER_TARGET_ID"), "HONUA_DEVOPS_SERVER_TARGET_ID");
         if ((!string.IsNullOrEmpty(runtimeBackend) && runtimeBackend != runtimeProfile.Backend) ||

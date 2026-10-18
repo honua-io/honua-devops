@@ -110,7 +110,7 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_WEBHOOK_PORT` (`8090` default; localhost listener port)
 - `HONUA_DEVOPS_WEBHOOK_PATH` (`/escalations` default; signed POST path)
 - `HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE` (`true` default; when true, accepted webhooks trigger read-only ticket triage output)
-- `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default; also supports `flux`, `argocd`)
+- `HONUA_DEVOPS_GITOPS_TOOL` (`honua-gitops` default). Unified native EKS setup, status, deployment and recovery require no Argo, Flux or other GitOps controller; they use the canonical `honua-kubernetes-deployment` backend and Honua approval/reconciliation. Controller-selected legacy configurations are refused in that runtime profile.
 - `HONUA_DEVOPS_ALLOWED_ENVIRONMENTS` (comma-separated, default `dev,staging,prod`; must be exactly `dev` when `HONUA_DEVOPS_PROVISION_APPROVAL_SIGNING_MODE=local-hmac-dev` with issuer keys configured). The `provision_infrastructure` small lane accepts `dev`, `staging` and `it` (the release harness's disposable cell environment).
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-iac`)
 - `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `trunk`)
