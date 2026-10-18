@@ -62,8 +62,15 @@ public sealed class AwsLambdaRuntimeObservationTests
             apiGatewayStage = "$default", apiGatewayRouteId = "route123", apiGatewayRouteKey = "ANY /{proxy+}"
         }));
 
-    private sealed class Reader(string scenario) : IProvisioningProcessRunner
+    internal sealed class Reader(string scenario, ProvisionedRuntimeFacts? facts = null, string endpoint = Endpoint) : IProvisioningProcessRunner
     {
+        private string Function => facts?.ResourceIdentity.GetProperty("functionArn").GetString() ?? AwsLambdaRuntimeObservationTests.Function;
+        private string Alias => facts?.ResourceIdentity.GetProperty("aliasArn").GetString() ?? AwsLambdaRuntimeObservationTests.Alias;
+        private string Version => facts?.ResourceIdentity.GetProperty("publishedVersion").GetString() ?? "42";
+        private string Region => facts?.Region ?? "us-west-2";
+        private string Api => facts?.ResourceIdentity.GetProperty("apiGatewayId").GetString() ?? "api123";
+        private string Integration => facts?.ResourceIdentity.GetProperty("apiGatewayIntegrationId").GetString() ?? "int123";
+        private string Route => facts?.ResourceIdentity.GetProperty("apiGatewayRouteId").GetString() ?? "route123";
         public List<IReadOnlyList<string>> Commands { get; } = [];
         public List<string> Executables { get; } = [];
         public bool CanRun(string fileName) => fileName == "aws";
@@ -76,15 +83,15 @@ public sealed class AwsLambdaRuntimeObservationTests
             object response = arguments[1] switch
             {
                 "get-caller-identity" => new { account = scenario == "wrong-account" ? "999999999999" : "123456789012", arn = "arn:aws:sts::123456789012:assumed-role/host/session" },
-                "get-alias" => new { arn = Alias, version = scenario == "wrong-version" ? "43" : "42",
+                "get-alias" => new { arn = Alias, version = scenario == "wrong-version" ? "43" : Version,
                     weights = scenario == "weighted-alias" ? new Dictionary<string, double> { ["43"] = 0.1 } : [] },
-                "get-function" => new { arn = Function + ":42", version = "42", state = "Active", lastUpdateStatus = "Successful",
+                "get-function" => new { arn = Function + ":" + Version, version = Version, state = "Active", lastUpdateStatus = "Successful",
                     image = "registry.example/honua@" + (scenario == "wrong-image" ? "sha256:" + new string('b', 64) : Digest),
                     secret = "DO_NOT_PERSIST_PROVIDER_SECRET" },
-                "get-route" => new { id = "route123", key = "ANY /{proxy+}", target = scenario == "wrong-route" ? "integrations/other" : "integrations/int123" },
-                "get-integration" => new { id = "int123", type = "AWS_PROXY", uri = scenario == "wrong-integration" ? Function + ":other" :
-                    "arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/" + Alias + "/invocations" },
-                "get-api" => new { id = "api123", endpoint = Endpoint, disabled = scenario == "disabled-endpoint" },
+                "get-route" => new { id = Route, key = "ANY /{proxy+}", target = scenario == "wrong-route" ? "integrations/other" : "integrations/" + Integration },
+                "get-integration" => new { id = Integration, type = "AWS_PROXY", uri = scenario == "wrong-integration" ? Function + ":other" :
+                    "arn:aws:apigateway:" + Region + ":lambda:path/2015-03-31/functions/" + Alias + "/invocations" },
+                "get-api" => new { id = Api, endpoint, disabled = scenario == "disabled-endpoint" },
                 "get-stage" => new { name = "$default", autoDeploy = scenario != "wrong-stage" },
                 _ => new { incomplete = true }
             };

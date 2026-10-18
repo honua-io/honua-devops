@@ -59,3 +59,26 @@ The negative fixtures prove old/mixed contract versions, task IAM roles, direct
 artifact storage and missing credential declarations are refused. The exact producer revision is `b5c07d39a19e01883983c1af7a13ae4eb450f13a`
 (honua-iac PR #253). The copied v2 schema SHA-256 is
 `0fa4492b33a5df397fed3ff72aa8e2efa54f53b30981df942aaf44a98cd6bc50`.
+
+## Lambda ordinary-root producer shape (2026-10-18)
+
+`lambda-qualified-producer-output.json` extracts exactly five outputs explicitly
+marked `sensitive:false` from the actual `qualified_lambda_contract` Terraform
+mock-apply `test_state` at honua-iac `684a25271a0396ebbb6c331ab77e448f0f1d483c`.
+That run emitted `test_run` complete/status `pass`. The whole producer suite
+failed later: two passed, one errored, five skipped, due to a negative
+expected-failure test phase mismatch. This is producer-shape evidence, not a full
+suite pass, real AWS apply, migration, public DNS or installed Honua qualification.
+Extracted file SHA-256:
+`4eb78b0372ab244a4b8e580201525ce80af13cbc32fdcc7c61fb451f4b574449`.
+
+`lambda-exact-plan-metadata.json` and `lambda-exec-receipt.json` reuse the
+existing offline wrapper fixture (including explicit fake saved-plan bytes),
+rebinding only the Lambda root/target, canonical plan-metadata digest and output
+contract digest. The metadata SHA follows the producer's
+`json.dumps(document, sort_keys=True, separators=(",", ":"))` over the document
+without `plan_metadata_digest`. These rebound files are test scaffolding, not new
+Terraform execution evidence. No ECS contract was relabelled as a Lambda output.
+The combined test fakes provider/public probes and uses a current registered
+full-ARN authority response; old producer short-name registry configuration is not
+claimed to satisfy that newer server contract.

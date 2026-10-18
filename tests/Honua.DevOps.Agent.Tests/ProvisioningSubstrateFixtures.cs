@@ -133,7 +133,8 @@ internal static class ProvisioningSubstrateFixtures
         IApprovalSignatureProvider? signatureProvider = null,
         string? issuer = null,
         string? declaredSigningMode = null,
-        bool omitSigningMode = false)
+        bool omitSigningMode = false,
+        string stack = "aws-ecs")
     {
         ProvisioningLineage lineage = Assert.IsType<ProvisioningLineage>(plan.ProvisioningLineage);
         DateTimeOffset issued = DateTimeOffset.UtcNow.AddSeconds(-1);
@@ -158,7 +159,7 @@ internal static class ProvisioningSubstrateFixtures
             lineage.PlanSha256!,
             planMetadataDigest,
             action,
-            "aws-ecs",
+            stack,
             environment,
             "approved",
             issued,
@@ -176,7 +177,7 @@ internal static class ProvisioningSubstrateFixtures
             ["planSha256"] = lineage.PlanSha256,
             ["planMetadataDigest"] = planMetadataDigest,
             ["action"] = action,
-            ["stack"] = "aws-ecs",
+            ["stack"] = stack,
             ["environment"] = environment,
             ["decision"] = "approved",
             ["signingMode"] = signingMode,
