@@ -320,7 +320,10 @@
                 "required": [
                   "clusterArn",
                   "serviceArn",
-                  "taskDefinitionArn"
+                  "taskDefinitionArn",
+                  "listenerRuleArn",
+                  "stableTargetGroupArn",
+                  "canaryTargetGroupArn"
                 ],
                 "properties": {
                   "clusterArn": {
@@ -340,6 +343,24 @@
                     "minLength": 1,
                     "maxLength": 1024,
                     "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/.+:[0-9]+$"
+                  },
+                  "listenerRuleArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener-rule/.+"
+                  },
+                  "stableTargetGroupArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:targetgroup/.+"
+                  },
+                  "canaryTargetGroupArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:targetgroup/.+"
                   }
                 },
                 "additionalProperties": false
@@ -372,7 +393,9 @@
                   "apiGatewayId",
                   "apiGatewayIntegrationId",
                   "apiGatewayIntegrationAliasArn",
-                  "apiGatewayStage"
+                  "apiGatewayStage",
+                  "apiGatewayRouteId",
+                  "apiGatewayRouteKey"
                 ],
                 "properties": {
                   "functionArn": {
@@ -385,7 +408,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 1024,
-                    "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[^:]+:[^:]+$"
+                    "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$"
                   },
                   "publishedVersion": {
                     "type": "string",
@@ -406,12 +429,23 @@
                   "apiGatewayIntegrationAliasArn": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 1024
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$"
                   },
                   "apiGatewayStage": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 1024
+                  },
+                  "apiGatewayRouteId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "apiGatewayRouteKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
                   }
                 },
                 "additionalProperties": false
@@ -561,7 +595,9 @@
         "serverTargetId",
         "deployTargetId",
         "environment",
-        "tenantId"
+        "tenantId",
+        "runtimeKind",
+        "backend"
       ],
       "properties": {
         "serverTargetId": {
@@ -580,6 +616,18 @@
           "maxLength": 128
         },
         "tenantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "runtimeKind": {
+          "enum": [
+            "aws-ecs",
+            "aws-lambda",
+            "aws-eks"
+          ]
+        },
+        "backend": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
@@ -858,5 +906,88 @@
       "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "kind": {
+                "const": "aws-ecs"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "serverTarget": {
+            "properties": {
+              "runtimeKind": {
+                "const": "aws-ecs"
+              },
+              "backend": {
+                "const": "honua-aws-ecs-alb"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "kind": {
+                "const": "aws-lambda"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "serverTarget": {
+            "properties": {
+              "runtimeKind": {
+                "const": "aws-lambda"
+              },
+              "backend": {
+                "const": "honua-gitops-aws-lambda"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "kind": {
+                "const": "aws-eks"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "serverTarget": {
+            "properties": {
+              "runtimeKind": {
+                "const": "aws-eks"
+              },
+              "backend": {
+                "const": "honua-kubernetes-argo-rollouts"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

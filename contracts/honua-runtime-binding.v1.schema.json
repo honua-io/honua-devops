@@ -104,7 +104,10 @@
             "required": [
               "clusterArn",
               "serviceArn",
-              "taskDefinitionArn"
+              "taskDefinitionArn",
+              "listenerRuleArn",
+              "stableTargetGroupArn",
+              "canaryTargetGroupArn"
             ],
             "properties": {
               "clusterArn": {
@@ -124,6 +127,24 @@
                 "minLength": 1,
                 "maxLength": 1024,
                 "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/.+:[0-9]+$"
+              },
+              "listenerRuleArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener-rule/.+"
+              },
+              "stableTargetGroupArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:targetgroup/.+"
+              },
+              "canaryTargetGroupArn": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:targetgroup/.+"
               }
             },
             "additionalProperties": false
@@ -156,7 +177,9 @@
               "apiGatewayId",
               "apiGatewayIntegrationId",
               "apiGatewayIntegrationAliasArn",
-              "apiGatewayStage"
+              "apiGatewayStage",
+              "apiGatewayRouteId",
+              "apiGatewayRouteKey"
             ],
             "properties": {
               "functionArn": {
@@ -169,7 +192,7 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 1024,
-                "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[^:]+:[^:]+$"
+                "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$"
               },
               "publishedVersion": {
                 "type": "string",
@@ -190,12 +213,23 @@
               "apiGatewayIntegrationAliasArn": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 1024
+                "maxLength": 1024,
+                "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$"
               },
               "apiGatewayStage": {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 1024
+              },
+              "apiGatewayRouteId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "apiGatewayRouteKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
               }
             },
             "additionalProperties": false

@@ -52,6 +52,13 @@ public sealed class ProvisionedRuntimeFactsTests
         projection = LambdaProjection();
         projection["resourceIdentity"]!["publishedVersion"] = "$LATEST";
         Assert.False(Read(projection, out _));
+        foreach (var suffix in new[] { "$LATEST", "42", "bad:alias", "with space" })
+        {
+            projection = LambdaProjection();
+            projection["resourceIdentity"]!["aliasArn"] = "arn:aws:lambda:us-west-2:123456789012:function:honua-dev:" + suffix;
+            projection["resourceIdentity"]!["apiGatewayIntegrationAliasArn"] = projection["resourceIdentity"]!["aliasArn"]!.DeepClone();
+            Assert.False(Read(projection, out _));
+        }
         projection = LambdaProjection();
         projection["observation"] = new JsonObject { ["verified"] = true };
         Assert.False(Read(projection, out _));
@@ -74,6 +81,7 @@ public sealed class ProvisionedRuntimeFactsTests
          "resourceIdentity":{"functionArn":"arn:aws:lambda:us-west-2:123456789012:function:honua-dev",
            "aliasArn":"arn:aws:lambda:us-west-2:123456789012:function:honua-dev:live","publishedVersion":"42",
            "apiGatewayId":"abc123","apiGatewayIntegrationId":"def456","apiGatewayStage":"$default",
+           "apiGatewayRouteId":"route123","apiGatewayRouteKey":"ANY /{proxy+}",
            "apiGatewayIntegrationAliasArn":"arn:aws:lambda:us-west-2:123456789012:function:honua-dev:live"}}
         """)!;
 }
