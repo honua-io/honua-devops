@@ -16,6 +16,23 @@ namespace Honua.DevOps.Agent.Tests;
 /// </remarks>
 public sealed class ApprovalReceiptSigningTests
 {
+    [Fact]
+    public void RecoveryCanonicalPayload_PreservesOrdinaryBytesAndBindsExactContext()
+    {
+        DateTimeOffset issued = DateTimeOffset.Parse("2026-10-20T15:00:00Z");
+        DateTimeOffset expires = issued.AddMinutes(30);
+        string Payload(string? context = null) => ApprovalReceiptCanonicalization.Payload(
+            "schema", "receipt", "issuer", "key", "operation", new string('A', 64),
+            new string('B', 64), "destroy", "aws-ecs", "test", "approve", issued, expires,
+            ApprovalSigningModes.KmsMac, context);
+        string original = string.Join('\n', "schema", "receipt", "issuer", "key", "operation",
+            new string('a', 64), new string('b', 64), "destroy", "aws-ecs", "test", "approve",
+            issued.ToString("O"), expires.ToString("O"), ApprovalSigningModes.KmsMac);
+        Assert.Equal(original, Payload());
+        Assert.Equal(original + "\nrecovery-context-sha256:" + new string('c', 64), Payload(new string('C', 64)));
+        Assert.NotEqual(Payload(new string('c', 64)), Payload(new string('d', 64)));
+    }
+
     private const string Issuer = ProvisioningSubstrateFixtures.ApprovalIssuer;
     private const string KeyArn = ProvisioningSubstrateFixtures.ApprovalKeyArn;
     private const string OtherKeyArn = ProvisioningSubstrateFixtures.OtherApprovalKeyArn;

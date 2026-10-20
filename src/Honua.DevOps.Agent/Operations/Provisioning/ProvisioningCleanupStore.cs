@@ -16,7 +16,9 @@ internal sealed record ProvisioningCleanupObligation(
     string SchemaVersion, string ProvisioningOperationId, string Stack, string Environment,
     string HostBinding, string PlanPath, string IacRoot, string ApplyScript,
     string ApplyScriptSha256, string? HelperSha256, string ClaimDirectory,
-    ExactPlanMetadata Metadata, IReadOnlyList<ProvisioningEvidenceReference> EvidenceRefs);
+    ExactPlanMetadata Metadata, IReadOnlyList<ProvisioningEvidenceReference> EvidenceRefs,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    ProvisioningEvidenceReference? Recovery = null);
 
 internal sealed record ProvisioningCleanupTerminal(
     int? ExitCode, bool Exited, ProvisioningEvidenceReference? Receipt,
@@ -67,6 +69,15 @@ internal sealed class ProvisioningCleanupStore(string root, ProvisioningEvidence
             || value.ApplyScript != Path.Combine(value.IacRoot, "scripts", "terraform-exact-apply.sh"))
             throw new InvalidDataException("Cleanup origin identity mismatch.");
         evidence.Validate(value.EvidenceRefs);
+        if (value.Recovery is not null)
+        {
+            DestroyRecoveryContext recovery = new ProvisioningRecoveryStore("", evidence).ReadContext(value.Recovery);
+            if (recovery.ProvisioningOperationId != value.ProvisioningOperationId
+                || recovery.PlanMetadataDigest != value.Metadata.PlanMetadataDigest
+                || recovery.HostBinding != value.HostBinding
+                || value.EvidenceRefs.Single(row => row.Kind == "destroy-recovery") != value.Recovery)
+                throw new InvalidDataException("Cleanup recovery relationship differs.");
+        }
         byte[] ReadKind(string kind) => evidence.Read(value.EvidenceRefs.Single(row => row.Kind == kind));
         if (!ExactPlanMetadata.TryRead(Encoding.UTF8.GetString(ReadKind("plan-metadata")),
                 Encoding.UTF8.GetString(ReadKind("cleanup-plan-schema")), out ExactPlanMetadata? metadata, out _)

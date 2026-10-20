@@ -12,6 +12,8 @@ internal sealed partial class HonuaOperationsToolkit
     {
         if (NormalizeToken(action) == "inspect-cleanup")
             return await InspectProvisioningCleanupAsync(stack, provisioningOperationId);
+        if (NormalizeToken(action) == "destroy" && !confirmed && !string.IsNullOrWhiteSpace(provisioningOperationId))
+            return await PrepareDestroyRecoveryAsync(stack, size, variablesJson, provisioningOperationId, idempotencyKey, cancellationToken);
         if (NormalizeToken(action) == "apply" || (NormalizeToken(action) == "destroy" && confirmed))
         {
             string[] parts = confirmation.Split(':');
@@ -52,10 +54,11 @@ internal sealed partial class HonuaOperationsToolkit
                     return new(NormalizeToken(action) == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
                         "Recovered the original apply receipt; no mutation was repeated.", [], [],
                         ["retained evidence digests verified"], ["Historical execution evidence; not a fresh health check."],
-                        ProvisioningLineage: completed.Lineage);
+                        ProvisioningLineage: completed.Lineage)
+                    { ProvisioningRecovery = completed.Recovery is null ? null : RecoveryProjection(completed.Recovery) };
                 }
-                return await ProvisionInfrastructureCoreAsync(stack, size, action, variablesJson, confirmed,
-                    confirmation, approvalReceiptJson, cancellationToken);
+                return await ExecuteDestroyRecoveryIfBoundAsync(stack, size, action, variablesJson, confirmed,
+                    confirmation, approvalReceiptJson, operation, cancellationToken);
             }
         }
         // An unkeyed plan explicitly starts new work. A keyed plan reserves its identity

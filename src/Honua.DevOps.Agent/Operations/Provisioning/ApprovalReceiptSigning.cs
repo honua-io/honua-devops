@@ -70,8 +70,10 @@ internal static class ApprovalReceiptCanonicalization
         string decision,
         DateTimeOffset issuedAtUtc,
         DateTimeOffset expiresAtUtc,
-        string signingMode)
-        => string.Join('\n',
+        string signingMode,
+        string? recoveryContextSha256 = null)
+    {
+        string payload = string.Join('\n',
             schemaVersion,
             approvalReceiptId,
             issuer,
@@ -86,6 +88,12 @@ internal static class ApprovalReceiptCanonicalization
             issuedAtUtc.ToUniversalTime().ToString("O"),
             expiresAtUtc.ToUniversalTime().ToString("O"),
             signingMode);
+        // Ordinary existing receipts retain their exact canonical bytes. A
+        // recovery approval additionally commits to the protected root/parent
+        // relationship, never merely to a caller-selected successor plan.
+        return recoveryContextSha256 is null ? payload
+            : payload + "\nrecovery-context-sha256:" + recoveryContextSha256.ToLowerInvariant();
+    }
 }
 
 internal sealed record ApprovalSignature(string KeyId, string Signature, string SigningMode);

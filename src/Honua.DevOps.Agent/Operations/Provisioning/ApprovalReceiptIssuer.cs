@@ -21,6 +21,10 @@ internal sealed record ProvisionApprovalRequest(
 {
     [JsonPropertyName("receiptSchemaVersion")]
     public string ReceiptSchemaVersion { get; init; } = ApprovalReceiptIssuer.SchemaVersion;
+
+    [JsonPropertyName("recoveryContextSha256")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RecoveryContextSha256 { get; init; }
 }
 
 /// <summary>What the approving principal asked for. Everything not named here is read from the plan.</summary>
@@ -162,7 +166,8 @@ internal static class ApprovalReceiptIssuer
             decision,
             issued,
             expires,
-            request.SigningMode);
+            request.SigningMode,
+            binding.RecoveryContextSha256);
 
         ApprovalSignature signature;
         try
@@ -200,6 +205,8 @@ internal static class ApprovalReceiptIssuer
             ["expiresAtUtc"] = expires.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
             ["signature"] = signature.Signature,
         };
+        if (binding.RecoveryContextSha256 is not null)
+            receipt["recoveryContextSha256"] = binding.RecoveryContextSha256;
         string receiptJson = JsonSerializer.Serialize(receipt, new JsonSerializerOptions { WriteIndented = true });
 
         IReadOnlyList<string> findings = ProvisioningContracts.ValidateProvisionApproval(receiptJson);
@@ -219,7 +226,8 @@ internal static class ApprovalReceiptIssuer
         string PlanMetadataDigest,
         string? Action,
         string? Stack,
-        string? Environment);
+        string? Environment,
+        string? RecoveryContextSha256);
 
     /// <summary>
     /// Reads the binding from a saved plan response. Accepts the bare tool result
@@ -282,13 +290,23 @@ internal static class ApprovalReceiptIssuer
                     action = status == "terraform-destroy-plan-ready" ? "destroy" : "apply";
                 }
 
+                string? recoveryDigest = ReadString(request, "recoveryContextSha256");
+                JsonElement? recovery = Property(response, "provisioningRecovery");
+                string? projectedRecovery = ReadString(recovery, "contextSha256");
+                RequireAgreement("recoveryContextSha256", recoveryDigest, projectedRecovery);
+                if ((recoveryDigest is null) != (projectedRecovery is null)
+                    || recoveryDigest is not null && (action != "destroy" || recoveryDigest.Length != 64
+                        || recoveryDigest.Any(c => !char.IsAsciiHexDigit(c))))
+                    throw Refuse("recovery-context-invalid", "The destroy recovery projections must agree on an exact SHA-256 context.");
+
                 return new PlanBinding(
                     operationId,
                     planSha.ToLowerInvariant(),
                     metadataDigest.ToLowerInvariant(),
                     action,
                     ReadString(request, "stack"),
-                    ReadString(request, "environment"));
+                    ReadString(request, "environment"),
+                    recoveryDigest?.ToLowerInvariant());
             }
         }
     }

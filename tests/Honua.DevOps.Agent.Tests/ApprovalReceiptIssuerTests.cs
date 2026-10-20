@@ -22,6 +22,40 @@ public sealed class ApprovalReceiptIssuerTests
     private static Dictionary<string, string> IssuerKeyArns()
         => new(StringComparer.Ordinal) { [Issuer] = KeyArn };
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecoveryApproval_FromSamePlanResponse_BindsContextOrRefusesMismatch(bool mismatch)
+    {
+        (OperationResponse plan, _, TerraformTestRoot root, _, BackendGateway gateway) = await PlanAsync("dev");
+        using (root)
+        using (gateway)
+        {
+            string digest = new('c', 64);
+            ProvisioningEvidenceReference reference = new("destroy-recovery", "urn:sha256:" + digest, digest, 1);
+            plan = plan with
+            {
+                Status = "terraform-destroy-plan-ready",
+                ApprovalRequest = plan.ApprovalRequest! with { Action = "destroy", RecoveryContextSha256 = digest },
+                ProvisioningRecovery = new("urn:honua:provisioning:" + new string('1', 32),
+                    "urn:honua:provisioning:" + new string('2', 32), plan.ProvisioningLineage!.ProvisioningOperationId,
+                    mismatch ? new string('d', 64) : digest, reference)
+            };
+            KmsMacApprovalSignatureProvider signer = new(RecordedKmsMacClient.Signer(), IssuerKeyArns());
+            if (mismatch)
+            {
+                await Assert.ThrowsAsync<ApprovalIssueRefusedException>(() => ApprovalReceiptIssuer.IssueAsync(
+                    new ApprovalIssueRequest(SerializeLikeMcp(plan), "destroy", Issuer, ApprovalSigningModes.KmsMac), signer));
+                return;
+            }
+            IssuedApprovalReceipt issued = await ApprovalReceiptIssuer.IssueAsync(
+                new ApprovalIssueRequest(SerializeLikeMcp(plan), "destroy", Issuer, ApprovalSigningModes.KmsMac), signer);
+            using JsonDocument receipt = JsonDocument.Parse(issued.ReceiptJson);
+            Assert.Equal(digest, receipt.RootElement.GetProperty("recoveryContextSha256").GetString());
+            Assert.Empty(ProvisioningContracts.ValidateProvisionApproval(issued.ReceiptJson));
+        }
+    }
+
     [Fact]
     public async Task KmsMac_IssuedReceiptIsAcceptedByTheVerifierAndIsEvidence()
     {

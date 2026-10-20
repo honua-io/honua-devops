@@ -38,7 +38,9 @@ internal sealed partial class HonuaOperationsToolkit
             store.ClaimFor(saved.Manifest.ProvisioningOperationId), saved.Manifest.Metadata,
             [.. originals,
                 GetEvidenceStore().Put("cleanup-plan-schema", File.ReadAllBytes(substrate.ExactPlanSchemaPath)),
-                GetEvidenceStore().Put("cleanup-exec-schema", File.ReadAllBytes(substrate.ExecReceiptSchemaPath))]);
+                GetEvidenceStore().Put("cleanup-exec-schema", File.ReadAllBytes(substrate.ExecReceiptSchemaPath)),
+                .. (saved.Manifest.Recovery is null ? Array.Empty<ProvisioningEvidenceReference>() : [saved.Manifest.Recovery])],
+            Recovery: saved.Manifest.Recovery);
         store.Create(origin); // Durable failure here prevents the wrapper from starting.
         return origin;
     }
