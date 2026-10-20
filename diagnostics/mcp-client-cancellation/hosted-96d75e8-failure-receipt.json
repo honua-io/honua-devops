@@ -1,0 +1,65 @@
+{
+  "run": 39415143266,
+  "job": 118602235018,
+  "head": "96d75e8879d4f8e2e69a2f822814c87b2f46fa84",
+  "counters": {
+    "total": "1244",
+    "executed": "1244",
+    "passed": "1243",
+    "failed": "1",
+    "error": "0",
+    "timeout": "0",
+    "aborted": "0",
+    "inconclusive": "0",
+    "passedButRunAborted": "0",
+    "notRunnable": "0",
+    "notExecuted": "0",
+    "disconnected": "0",
+    "warning": "0",
+    "completed": "0",
+    "inProgress": "0",
+    "pending": "0"
+  },
+  "owned": [
+    {
+      "testId": "0a561295-b923-96b6-85f9-ea8459735f51",
+      "method": "PublicApplyWithoutPlanOrApproval_StillStartsNoChild",
+      "outcome": "Passed",
+      "output": ""
+    },
+    {
+      "testId": "e60c3545-91fc-9402-7adc-2ca27bf05b84",
+      "method": "WrongProcessBirth_NeverCountsOrTerminatesTheLiveProcess",
+      "outcome": "Passed",
+      "output": ""
+    },
+    {
+      "testId": "f240d695-b9b6-2012-3c05-1d831eadb355",
+      "method": "UncancelledPublicProvisionCall_PreservesNormalChildResultAndPrivateTokenSchema",
+      "outcome": "Passed",
+      "output": ""
+    },
+    {
+      "testId": "63ee50f8-6045-5536-ce8e-9eae4fb58548",
+      "method": "RegisteredProvisionFunction_ForwardsTokenToActualPlanProcessTree",
+      "outcome": "Passed",
+      "output": "Registered function original/current process census: original=OwnedProcessIdentity { Pid = 4421, StartTicks = 6278, ParentPid = 2514, State = S }; current=absent; original=OwnedProcessIdentity { Pid = 4424, StartTicks = 6279, ParentPid = 4421, State = S }; current=absent"
+    },
+    {
+      "testId": "768adc3f-88aa-6995-5a18-6b4dcc786b49",
+      "method": "CancelledPublicProvisionCall_StopsItsActualPlanProcessTree",
+      "outcome": "Failed",
+      "output": "Public MCP original/current process census: original=OwnedProcessIdentity { Pid = 4452, StartTicks = 6313, ParentPid = 4435, State = S }; current=OwnedProcessIdentity { Pid = 4452, StartTicks = 6313, ParentPid = 4435, State = S }; original=OwnedProcessIdentity { Pid = 4456, StartTicks = 6313, ParentPid = 4452, State = S }; current=OwnedProcessIdentity { Pid = 4456, StartTicks = 6313, ParentPid = 4452, State = S }\nOwned MCP server stderr: honua-devops MCP stdio server ready (tools=27, mode=plan, tier=plan, approval=pr-first, audit=file:/tmp/honua-devops-mcp-testEBSuvk/audit.jsonl, edition=enterprise, session=f069f2c9def8493caa83f74aa8bc9da5).\nhonua-api=http://127.0.0.1:46537/ otel=http://127.0.0.1:46537/"
+    }
+  ],
+  "files": [
+    {
+      "path": "/home/mike/honua-io/artifacts/devops183-mcp-cancellation-20261020/hosted-96d75e8-trx/devops-agent-tests.trx",
+      "sha256": "3c56197533da6a6ddfc4d1ea3f95df85e2344661695bb02f4ab0d2304048fbef"
+    },
+    {
+      "path": "/home/mike/honua-io/artifacts/devops183-mcp-cancellation-20261020/hosted-96d75e8-failed.log",
+      "sha256": "cd684ca4fb4a98f70a8e99cc2e12cdd9af49228789ba60a17e2551d8286dd405"
+    }
+  ]
+}

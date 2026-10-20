@@ -1,0 +1,84 @@
+{
+  "run": 39415941911,
+  "job": 118604844475,
+  "head": "9507c1a671eaf6c8c8fa11928766e7dc7dbdd0fb",
+  "counters": {
+    "total": "1245",
+    "executed": "1245",
+    "passed": "1243",
+    "failed": "2",
+    "error": "0",
+    "timeout": "0",
+    "aborted": "0",
+    "inconclusive": "0",
+    "passedButRunAborted": "0",
+    "notRunnable": "0",
+    "notExecuted": "0",
+    "disconnected": "0",
+    "warning": "0",
+    "completed": "0",
+    "inProgress": "0",
+    "pending": "0"
+  },
+  "owned": [
+    {
+      "testId": "f240d695-b9b6-2012-3c05-1d831eadb355",
+      "testName": "Honua.DevOps.Agent.Tests.McpProvisionCancellationTests.UncancelledPublicProvisionCall_PreservesNormalChildResultAndPrivateTokenSchema",
+      "method": "UncancelledPublicProvisionCall_PreservesNormalChildResultAndPrivateTokenSchema",
+      "outcome": "Passed",
+      "output": ""
+    },
+    {
+      "testId": "e60c3545-91fc-9402-7adc-2ca27bf05b84",
+      "testName": "Honua.DevOps.Agent.Tests.McpProvisionCancellationTests.WrongProcessBirth_NeverCountsOrTerminatesTheLiveProcess",
+      "method": "WrongProcessBirth_NeverCountsOrTerminatesTheLiveProcess",
+      "outcome": "Passed",
+      "output": ""
+    },
+    {
+      "testId": "63ee50f8-6045-5536-ce8e-9eae4fb58548",
+      "testName": "Honua.DevOps.Agent.Tests.McpProvisionCancellationTests.RegisteredProvisionFunction_ForwardsTokenToActualPlanProcessTree",
+      "method": "RegisteredProvisionFunction_ForwardsTokenToActualPlanProcessTree",
+      "outcome": "Passed",
+      "output": "Registered function original/current process census: original=OwnedProcessIdentity { Pid = 3037, StartTicks = 7417, ParentPid = 3011, State = S }; current=absent; original=OwnedProcessIdentity { Pid = 3040, StartTicks = 7418, ParentPid = 3037, State = S }; current=absent"
+    },
+    {
+      "testId": "0a561295-b923-96b6-85f9-ea8459735f51",
+      "testName": "Honua.DevOps.Agent.Tests.McpProvisionCancellationTests.PublicApplyWithoutPlanOrApproval_StillStartsNoChild",
+      "method": "PublicApplyWithoutPlanOrApproval_StillStartsNoChild",
+      "outcome": "Passed",
+      "output": ""
+    },
+    {
+      "testId": "9b2e5d8b-1226-6770-d32d-fc7b3a5c3a50",
+      "testName": "Honua.DevOps.Agent.Tests.McpProvisionCancellationTests.CancelledPublicProvisionCall_StopsItsActualPlanProcessTree(traceProtocol: False)",
+      "method": "CancelledPublicProvisionCall_StopsItsActualPlanProcessTree",
+      "outcome": "Failed",
+      "output": "Public MCP traceProtocol=False, original/current process census: original=OwnedProcessIdentity { Pid = 3165, StartTicks = 10200, ParentPid = 3144, State = S }; current=OwnedProcessIdentity { Pid = 3165, StartTicks = 10200, ParentPid = 3144, State = S }; original=OwnedProcessIdentity { Pid = 3169, StartTicks = 10200, ParentPid = 3165, State = S }; current=OwnedProcessIdentity { Pid = 3169, StartTicks = 10200, ParentPid = 3165, State = S }\nOwned MCP server stderr: honua-devops MCP stdio server ready (tools=27, mode=plan, tier=plan, approval=pr-first, audit=file:/tmp/honua-devops-mcp-test5Ra4xt/audit.jsonl, edition=enterprise, session=0651b2bc63bc44b2abff2bc65c1c6992).\nhonua-api=http://127.0.0.1:41237/ otel=http://127.0.0.1:41237/\nOwned MCP SDK protocol trace:"
+    },
+    {
+      "testId": "633319f2-d461-0115-4949-91d6ac83f40b",
+      "testName": "Honua.DevOps.Agent.Tests.McpProvisionCancellationTests.CancelledPublicProvisionCall_StopsItsActualPlanProcessTree(traceProtocol: True)",
+      "method": "CancelledPublicProvisionCall_StopsItsActualPlanProcessTree",
+      "outcome": "Failed",
+      "output": "Public MCP traceProtocol=True, original/current process census: original=OwnedProcessIdentity { Pid = 3122, StartTicks = 8635, ParentPid = 3105, State = S }; current=OwnedProcessIdentity { Pid = 3122, StartTicks = 8635, ParentPid = 3105, State = S }; original=OwnedProcessIdentity { Pid = 3126, StartTicks = 8635, ParentPid = 3122, State = S }; current=OwnedProcessIdentity { Pid = 3126, StartTicks = 8635, ParentPid = 3122, State = S }\nOwned MCP server stderr: honua-devops MCP stdio server ready (tools=27, mode=plan, tier=plan, approval=pr-first, audit=file:/tmp/honua-devops-mcp-test6e1CP7/audit.jsonl, edition=enterprise, session=ad7c6e03722f4e8182193eb85011f577).\nhonua-api=http://127.0.0.1:42455/ otel=http://127.0.0.1:42455/\nOwned MCP SDK protocol trace: honua-devops session cd74ac93656f43b3817edd79e4d51492 created with transport pipe\nhonua-devops sending method 'initialize' request. Request: '{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"testhost\",\"version\":\"15.0.0.0\"}},\"id\":1,\"jsonrpc\":\"2.0\"}'.\nhonua-devops waiting for response to request '1' for method 'initialize'.\nhonua-devops read JsonRpcResponse message from channel.\nhonua-devops Request response received for method initialize. Response: '{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"honua-devops\",\"title\":\"Honua AI DevOps operator\",\"version\":\"1.0.0\"},\"instructions\":\"honua-devops operator tools for the connected Honua environment. Execution mode is \\u0060plan\\u0060 (tier \\u0060plan\\u0060, approval \\u0060pr-first\\u0060). The operator defaults to plan-only behavior: planning tools emit evidence bundles and never apply manifests, submit, or roll back deploy operations. honua-devops is the 2026.1 provisioning executor (provision_infrastructure, install_handoff, verify_install_handoff); call describe_environment first when the request lacks an explicit service, environment, or edition. Day-2 observe/diagnose/propose is not served here: use the installed honua-server /mcp endpoint (honua_ops_* and honua_propose_* tools); a server proposal executes only after a separate principal approves it via POST /api/v1/admin/proposals/{id}/approve.\"}'.\nClient (testhost 15.0.0.0) client received server '{\"name\":\"honua-devops\",\"title\":\"Honua AI DevOps operator\",\"version\":\"1.0.0\"}' capabilities: '{\"logging\":{},\"tools\":{\"listChanged\":true}}'.\nhonua-devops sending message. Message: '{\"method\":\"notifications/initialized\",\"params\":{},\"jsonrpc\":\"2.0\"}'.\nClient (testhost 15.0.0.0) client created and connected.\nhonua-devops sending method 'tools/call' request. Request: '{\"method\":\"tools/call\",\"params\":{\"name\":\"provision_infrastructure\",\"arguments\":{\"stack\":\"aws-ecs\",\"size\":\"small\",\"action\":\"plan\",\"variablesJson\":\"{}\",\"confirmed\":false,\"confirmation\":\"\",\"approvalReceiptJson\":\"\"}},\"id\":2,\"jsonrpc\":\"2.0\"}'.\nhonua-devops waiting for response to request '2' for method 'tools/call'."
+    }
+  ],
+  "observedProtocol": {
+    "requestId": 2,
+    "tool": "provision_infrastructure",
+    "traceBelow100RowCap": true,
+    "cancellationNotificationLogged": false,
+    "inference": "No client cancellation notification emission observed by pinnedSDK trace; exact internal cause unproved. Local client OCE is not server cancellation proof."
+  },
+  "files": [
+    {
+      "path": "/home/mike/honua-io/artifacts/devops183-mcp-cancellation-20261020/hosted-9507c1a-trx/devops-agent-tests.trx",
+      "sha256": "79acecc0e7f7c8bc53b55e79decd983a8ae52fcbe1208a958abb1c3d56938ab5"
+    },
+    {
+      "path": "/home/mike/honua-io/artifacts/devops183-mcp-cancellation-20261020/hosted-9507c1a-failed.log",
+      "sha256": "7058420c7571c3d4fbe8714bd3b25819a98fc375605aefdd19f82dc58631a3df"
+    }
+  ]
+}

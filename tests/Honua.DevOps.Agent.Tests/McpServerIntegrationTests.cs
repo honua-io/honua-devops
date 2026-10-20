@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Client;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 
 namespace Honua.DevOps.Agent.Tests;
@@ -23,8 +24,16 @@ public sealed class McpServerFixture : IAsyncLifetime
     private Task? _backendLoop;
     private string? _workingDirectory;
 
+    // Explicit owned substrate overrides for public-protocol process controls only.
+    // Existing shared integration fixture keeps its original defaults.
+    internal string? TerraformFixtureRoot { get; init; }
+    internal string? TerraformFixtureExecutable { get; init; }
+    internal bool TraceOwnedProtocol { get; init; }
+
     public McpClient Client { get; private set; } = null!;
     public ConcurrentQueue<string> CapturedBackendRequests { get; } = new();
+    internal ConcurrentQueue<string> CapturedOwnedServerErrors { get; } = new();
+    internal ConcurrentQueue<string> CapturedOwnedProtocolTrace { get; } = new();
     public string AuditFilePath { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()
@@ -44,12 +53,15 @@ public sealed class McpServerFixture : IAsyncLifetime
         string agentDllPath = Path.Combine(AppContext.BaseDirectory, "Honua.DevOps.Agent.dll");
         Assert.True(File.Exists(agentDllPath), $"Expected agent assembly at {agentDllPath}.");
 
+        ILoggerFactory? protocolLogger = TerraformFixtureRoot is not null && TraceOwnedProtocol
+            ? new OwnedProtocolLoggerFactory(CapturedOwnedProtocolTrace) : null;
         StdioClientTransport transport = new(new StdioClientTransportOptions
         {
             Name = "honua-devops",
             Command = "dotnet",
             Arguments = [agentDllPath, "--mcp"],
             WorkingDirectory = _workingDirectory,
+            StandardErrorLines = TerraformFixtureRoot is null ? null : CapturedOwnedServerErrors.Enqueue,
             EnvironmentVariables = new Dictionary<string, string?>
             {
                 ["HONUA_DEVOPS_HONUA_API_BASE_URL"] = baseUrl,
@@ -62,15 +74,16 @@ public sealed class McpServerFixture : IAsyncLifetime
                 ["HONUA_DEVOPS_AUDIT_HOOK_TARGET"] = $"file://{AuditFilePath}",
                 ["HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS"] = "10",
                 ["HONUA_DEVOPS_ALLOWED_ENVIRONMENTS"] = "dev,staging,prod",
-                ["HONUA_DEVOPS_TERRAFORM_TARGETS"] = "lambda,eks",
-                ["HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"] = _workingDirectory,
+                ["HONUA_DEVOPS_TERRAFORM_TARGETS"] = TerraformFixtureRoot is null ? "lambda,eks" : "ecs",
+                ["HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"] = TerraformFixtureRoot ?? _workingDirectory,
+                ["HONUA_DEVOPS_TERRAFORM_BIN"] = TerraformFixtureExecutable,
                 ["HONUA_DEVOPS_DEPLOY_TARGET_ID"] = "",
                 ["HONUA_DEVOPS_SUPPORT_API_BASE_URL"] = ""
             }
         });
 
         using CancellationTokenSource startupCts = new(TimeSpan.FromMinutes(2));
-        Client = await McpClient.CreateAsync(transport, cancellationToken: startupCts.Token);
+        Client = await McpClient.CreateAsync(transport, loggerFactory: protocolLogger, cancellationToken: startupCts.Token);
     }
 
     public async Task DisposeAsync()
@@ -115,6 +128,28 @@ public sealed class McpServerFixture : IAsyncLifetime
             {
                 // best effort cleanup
             }
+        }
+    }
+
+    // Test-owned plan requests carry no credentials/approval material. Retain a finite
+    // pinned-SDK trace to distinguish local task cancellation from notification delivery.
+    private sealed class OwnedProtocolLoggerFactory(ConcurrentQueue<string> lines) : ILoggerFactory
+    {
+        public ILogger CreateLogger(string categoryName) => new OwnedProtocolLogger(lines);
+        public void AddProvider(ILoggerProvider provider) => throw new NotSupportedException();
+        public void Dispose() { }
+    }
+
+    private sealed class OwnedProtocolLogger(ConcurrentQueue<string> lines) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (lines.Count >= 100) return;
+            string value = formatter(state, exception);
+            lines.Enqueue(value.Length <= 4096 ? value : value[..4096]);
         }
     }
 
