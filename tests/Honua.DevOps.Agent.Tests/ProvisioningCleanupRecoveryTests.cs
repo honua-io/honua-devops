@@ -82,7 +82,7 @@ public sealed class ProvisioningCleanupRecoveryTests
         await File.WriteAllTextAsync(Path.Combine(runner.ClaimDirectory!, "phase"), finalPhase + "\n");
         Directory.Delete(Path.GetDirectoryName(runner.PlanPath!)!, recursive: true);
         HonuaOperationsToolkit restarted = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path,
-            ExecutionMode.Observe, ExecutionTier.Observe), gateway, provisioningProcessRunner: runner);
+            ExecutionMode.Plan, ExecutionTier.Observe), gateway, provisioningProcessRunner: runner);
         OperationResponse result = await restarted.ProvisionInfrastructureAsync("aws-ecs", "small", "inspect-cleanup", "{}", false, "",
             provisioningOperationId: plan.ProvisioningLineage!.ProvisioningOperationId);
         Assert.Equal(finalPhase == "preflight" ? "cleanup-evidence-invalid"
