@@ -17,7 +17,7 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class ProvisioningContractSchemaTests
 {
     [Fact]
-    public void RuntimeFactsSchemaMatchesPinnedCanonicalIacSource()
+    public void RuntimeFactsSchemaMatchesPinnedCanonicalDevOpsSource()
     {
         var schema = ProvisioningContracts.Read(ProvisioningContracts.RuntimeBindingResource);
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(schema))).ToLowerInvariant();

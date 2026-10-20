@@ -988,7 +988,7 @@ internal sealed partial class HonuaOperationsToolkit
                             request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
                         var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!,
                             "verify_install_handoff", cancellationToken);
-                        if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
+                        if (!currentAuthority.HasSameAuthorityAs(registeredAuthority))
                             return ProvisioningRefusal("registered-runtime-changed", "The registered EKS target changed before recovery; no binding was restored.", [], []);
                     }
                     catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception or KeyNotFoundException or FormatException)
@@ -1015,7 +1015,7 @@ internal sealed partial class HonuaOperationsToolkit
                     request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
                 // Recheck credential/grants/registry AFTER waiting for provider reads.
                 var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!, "verify_install_handoff", cancellationToken);
-                if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
+                if (!currentAuthority.HasSameAuthorityAs(registeredAuthority))
                     return ProvisioningRefusal("registered-runtime-changed", "The registered runtime authority changed while installation was observed.", [], []);
             }
             catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception or KeyNotFoundException or FormatException)
@@ -1063,7 +1063,7 @@ internal sealed partial class HonuaOperationsToolkit
                 // Current principal, tenant and registered identity must still authorize
                 // the exact observation immediately before a verified binding is persisted.
                 var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!, "verify_install_handoff", cancellationToken);
-                if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
+                if (!currentAuthority.HasSameAuthorityAs(registeredAuthority))
                     return ProvisioningRefusal("registered-runtime-changed", "Current registry authority changed during public installation probes; no verified binding was emitted.", [], []);
             }
             catch (Exception exception) when (exception is InvalidDataException or IOException or HttpRequestException or JsonException or InvalidOperationException)

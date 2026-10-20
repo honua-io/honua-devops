@@ -192,7 +192,7 @@ internal sealed class AwsEksRuntimeObservation(IProvisioningProcessRunner runner
             {
                 if (routeZone.Length is < 2 or > 64 || routeZone.TrimStart('/').Any(c => !char.IsAsciiLetterOrDigit(c) && c != '/') ||
                     routeRecord.TrimEnd('.') != publicUrl.IdnHost ||
-                    Text(identity, "routeHost").TrimEnd('.') != publicUrl.IdnHost) Refuse();
+                    identity.TryGetProperty("routeHost", out _) && Text(identity, "routeHost").TrimEnd('.') != publicUrl.IdnHost) Refuse();
                 using var hostedZone = await AwsAsync(facts, ["route53", "get-hosted-zone", "--id", routeZone,
                     "--query", "{id:HostedZone.Id,private:HostedZone.Config.PrivateZone}"], bounded.Token);
                 if (Text(hostedZone.RootElement, "id").Split('/').Last() != routeZone.Split('/').Last() ||

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Honua.DevOps.Agent.Operations;
 
 namespace Honua.DevOps.Agent.Tests;
@@ -54,6 +55,34 @@ public sealed class AwsEksRuntimeObservationTests
         else
             await Assert.ThrowsAsync<InvalidDataException>(() => observer.ObserveAsync(facts, Authority(caSha), Endpoint, Digest, CancellationToken.None));
         Assert.DoesNotContain(runner.Commands.SelectMany(command => command), arg => arg is "apply" or "patch" or "update-service" or "create-role");
+    }
+
+    [Theory]
+    [InlineData(null, "honua.example.com", true)]
+    [InlineData("other.example.com", "honua.example.com", false)]
+    [InlineData(null, "other.example.com", false)]
+    public async Task RegistryOnlyDnsUsesPublicUrlAndChecksOptionalRouteHost(string? routeHost, string record, bool accepted)
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=EKS observation test", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        var ca = Convert.ToBase64String(Encoding.ASCII.GetBytes(certificate.ExportCertificatePem()));
+        var caSha = Convert.ToHexStringLower(SHA256.HashData(certificate.RawData));
+        var identity = JsonNode.Parse(Facts(caSha).ResourceIdentity.GetRawText())!;
+        identity.AsObject().Remove("dnsZoneId");
+        identity.AsObject().Remove("dnsRecordName");
+        if (routeHost is null) identity.AsObject().Remove("routeHost");
+        else identity["routeHost"] = routeHost;
+        var facts = Facts(caSha) with { ResourceIdentity = JsonSerializer.SerializeToElement(identity) };
+        var parameters = Authority(caSha).ResourceParameters.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        parameters["kubernetes.dns_zone_id"] = "Z123456";
+        parameters["kubernetes.dns_record_name"] = record;
+        var authority = Authority(caSha) with { ResourceParameters = parameters };
+        var observer = new AwsEksRuntimeObservation(new Reader("valid", ca));
+        if (accepted)
+            Assert.NotNull(await observer.ObserveAsync(facts, authority, Endpoint, Digest, CancellationToken.None));
+        else
+            await Assert.ThrowsAsync<InvalidDataException>(() => observer.ObserveAsync(facts, authority, Endpoint, Digest, CancellationToken.None));
     }
 
     private static ProvisionedRuntimeFacts Facts(string caSha) => new("aws-eks", "Kubernetes", "honua-kubernetes-deployment",

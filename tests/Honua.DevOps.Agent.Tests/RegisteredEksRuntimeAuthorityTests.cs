@@ -69,6 +69,20 @@ public sealed class RegisteredEksRuntimeAuthorityTests
         Assert.False(result.UsesCustomProviderEndpoint);
     }
 
+    [Fact]
+    public void AuthorityComparisonIgnoresParameterOrderButDetectsEveryChangedPin()
+    {
+        var original = Read(Response());
+        var reversed = original with { ResourceParameters = original.ResourceParameters.Reverse()
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal) };
+        Assert.True(original.HasSameAuthorityAs(reversed));
+        Assert.True(reversed.HasSameAuthorityAs(original));
+        Assert.False(original.HasSameAuthorityAs(reversed with { TargetName = "different" }));
+        var changed = reversed.ResourceParameters.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        changed["kubernetes.cluster_uid"] = Guid.NewGuid().ToString("D");
+        Assert.False(original.HasSameAuthorityAs(reversed with { ResourceParameters = changed }));
+    }
+
     [Theory]
     [InlineData("kubernetes.cluster_arn")]
     [InlineData("kubernetes.api_server")]

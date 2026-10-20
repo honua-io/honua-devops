@@ -1,9 +1,14 @@
-The embedded `honua-runtime-binding.v1.schema.json` is copied byte for byte from
-`honua-iac` commit `1bc09db`,
-`infrastructure/terraform/contracts/runtime-binding.v1.schema.json`.
-SHA-256: `64a67c6acb45acadf5ccf758b29c05134c50a2a21e9684c94e9e574a8f9cd60c`.
-The contract test pins these bytes; updates must review the canonical producer
-and consumer together and update this receipt and test.
+The canonical `honua-runtime-binding.v1.schema.json` is now owned by
+`honua-devops` at `contracts/honua-runtime-binding.v1.schema.json` (introduced
+in commit `b9695ccc229b6c925603c9bc2f349a6ddcb838cb`). SHA-256:
+`638682e765247de4d5d1918729c9172bf9d23af2b0c684e357b21a35ad300604`.
+The contract test pins these bytes. Future changes must update the schema,
+consumer, receipt, and digest together.
+
+The original embedded schema was copied from `honua-iac` commit `1bc09db`,
+`infrastructure/terraform/contracts/runtime-binding.v1.schema.json`, with
+SHA-256 `64a67c6acb45acadf5ccf758b29c05134c50a2a21e9684c94e9e574a8f9cd60c`.
+That is historical provenance, not the current canonical identity.
 
 Terraform facts describe declared resource identity. They are not live provider
 observations. Lambda handoff v2 additionally requires current canonical registered
