@@ -7,8 +7,8 @@ internal sealed partial record RegisteredRuntimeAuthority(string ServerTargetId,
     string? TenantId, string RuntimeKind, string Backend, string TargetName,
     IReadOnlyDictionary<string, string> ResourceParameters, bool UsesCustomProviderEndpoint)
 {
-    internal bool HasSameAuthorityAs(RegisteredRuntimeAuthority other)
-        => ServerTargetId == other.ServerTargetId && DeployTargetId == other.DeployTargetId &&
+    internal bool HasSameAuthorityAs(RegisteredRuntimeAuthority? other)
+        => other is not null && ServerTargetId == other.ServerTargetId && DeployTargetId == other.DeployTargetId &&
             Environment == other.Environment && TenantId == other.TenantId &&
             RuntimeKind == other.RuntimeKind && Backend == other.Backend && TargetName == other.TargetName &&
             UsesCustomProviderEndpoint == other.UsesCustomProviderEndpoint &&
