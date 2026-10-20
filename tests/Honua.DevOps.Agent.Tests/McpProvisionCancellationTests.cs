@@ -4,11 +4,13 @@ using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using Microsoft.Extensions.AI;
+using Xunit.Abstractions;
 
 namespace Honua.DevOps.Agent.Tests;
 
 /// <summary>Production stdio MCP dispatch and System runner; no cloud, Terraform or approval mutation.</summary>
-public sealed class McpProvisionCancellationTests
+public sealed class McpProvisionCancellationTests(ITestOutputHelper output)
 {
     [Fact]
     public async Task CancelledPublicProvisionCall_StopsItsActualPlanProcessTree()
@@ -25,9 +27,17 @@ public sealed class McpProvisionCancellationTests
             Task<CallToolResult> call = InvokeAsync();
             async Task<CallToolResult> InvokeAsync() => await server.Client.CallToolAsync("provision_infrastructure", Arguments("plan"), cancellationToken: request.Token);
             owned = await ObserveAdmittedProcessTreeAsync(root, call);
-            request.Cancel(); // Real MCP client emits notifications/cancelled for the exact request.
+            request.Cancel(); // Client cancellation; cessation below must independently prove server-side cancellation.
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
-            await WaitUntilAsync(() => owned.All(pid => !IsExecuting(pid)), "The public MCP cancellation did not stop the owned plan process tree.");
+            try
+            {
+                await WaitUntilAsync(() => owned.All(pid => !IsExecuting(pid)), "The public MCP cancellation did not stop the owned plan process tree.");
+            }
+            finally
+            {
+                output.WriteLine("Public MCP original/current process census: " + DescribeProcesses(owned));
+                output.WriteLine("Owned MCP server stderr: " + string.Join("\n", server.CapturedOwnedServerErrors.Take(40)));
+            }
             Assert.False(File.Exists(Path.Combine(root.Path, "plan-completed")));
             // Cancelling one request must not terminate the server or cancel unrelated requests.
             IList<McpClientTool> tools = await server.Client.ListToolsAsync();
@@ -84,6 +94,44 @@ public sealed class McpProvisionCancellationTests
         }
         finally { await server.DisposeAsync(); }
     }
+
+    [Fact]
+    public async Task RegisteredProvisionFunction_ForwardsTokenToActualPlanProcessTree()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using TerraformTestRoot root = new();
+        WriteOwnedPlanFixture(root, block: true);
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        AIFunction function = Assert.Single(CapabilityToolset.Create(
+            ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan), gateway)
+            .OfType<AIFunction>(), candidate => candidate.Name == "provision_infrastructure");
+        // CanRun requires a present Terraform executable; the actual subprocess here
+        // is the owned bash plan fixture. No Terraform binary or cloud action is invoked.
+        string? previous = Environment.GetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable);
+        Environment.SetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable, root.PlanScript);
+        OwnedProcessIdentity[] owned = [];
+        try
+        {
+            using CancellationTokenSource request = new();
+            Task<object?> call = function.InvokeAsync(new AIFunctionArguments(Arguments("plan")), request.Token).AsTask();
+            owned = await ObserveAdmittedProcessTreeAsync(root, call);
+            request.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+            try
+            {
+                await WaitUntilAsync(() => owned.All(identity => !IsExecuting(identity)), "The registered function did not cancel its owned process tree.");
+            }
+            finally { output.WriteLine("Registered function original/current process census: " + DescribeProcesses(owned)); }
+        }
+        finally
+        {
+            await StopOwnedFixtureProcessesAsync(owned);
+            Environment.SetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable, previous);
+        }
+    }
+
+    private static string DescribeProcesses(OwnedProcessIdentity[] identities) =>
+        string.Join("; ", identities.Select(identity => $"original={identity}; current={ReadProcess(identity.Pid)?.ToString() ?? "absent"}"));
 
     private static Dictionary<string, object?> Arguments(string action) => new()
     {

@@ -30,6 +30,7 @@ public sealed class McpServerFixture : IAsyncLifetime
 
     public McpClient Client { get; private set; } = null!;
     public ConcurrentQueue<string> CapturedBackendRequests { get; } = new();
+    internal ConcurrentQueue<string> CapturedOwnedServerErrors { get; } = new();
     public string AuditFilePath { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()
@@ -55,6 +56,7 @@ public sealed class McpServerFixture : IAsyncLifetime
             Command = "dotnet",
             Arguments = [agentDllPath, "--mcp"],
             WorkingDirectory = _workingDirectory,
+            StandardErrorLines = TerraformFixtureRoot is null ? null : CapturedOwnedServerErrors.Enqueue,
             EnvironmentVariables = new Dictionary<string, string?>
             {
                 ["HONUA_DEVOPS_HONUA_API_BASE_URL"] = baseUrl,
