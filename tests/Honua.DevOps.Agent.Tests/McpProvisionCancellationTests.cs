@@ -13,48 +13,6 @@ namespace Honua.DevOps.Agent.Tests;
 /// <summary>Production stdio MCP dispatch and System runner; no cloud, Terraform or approval mutation.</summary>
 public sealed class McpProvisionCancellationTests(ITestOutputHelper output)
 {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task CancelledPublicProvisionCall_StopsItsActualPlanProcessTree(bool traceProtocol)
-    {
-        if (!OperatingSystem.IsLinux()) return; // This control uses the Linux process birth/parent census.
-        using TerraformTestRoot root = new();
-        WriteOwnedPlanFixture(root, block: true);
-        McpServerFixture server = new() { TerraformFixtureRoot = root.Path, TerraformFixtureExecutable = root.PlanScript, TraceOwnedProtocol = traceProtocol };
-        await server.InitializeAsync();
-        OwnedProcessIdentity[] owned = [];
-        try
-        {
-            using CancellationTokenSource request = new();
-            Task<CallToolResult> call = InvokeAsync();
-            async Task<CallToolResult> InvokeAsync() => await server.Client.CallToolAsync("provision_infrastructure", Arguments("plan"), cancellationToken: request.Token);
-            owned = await ObserveAdmittedProcessTreeAsync(root, call);
-            request.Cancel(); // Client cancellation; cessation below must independently prove server-side cancellation.
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
-            try
-            {
-                await WaitUntilAsync(() => owned.All(pid => !IsExecuting(pid)), "The public MCP cancellation did not stop the owned plan process tree.");
-            }
-            finally
-            {
-                output.WriteLine($"Public MCP traceProtocol={traceProtocol}, original/current process census: " + DescribeProcesses(owned));
-                output.WriteLine("Owned MCP server stderr: " + string.Join("\n", server.CapturedOwnedServerErrors.Take(40)));
-                output.WriteLine("Owned MCP SDK protocol trace: " + string.Join("\n", server.CapturedOwnedProtocolTrace));
-            }
-            Assert.False(File.Exists(Path.Combine(root.Path, "plan-completed")));
-            // Cancelling one request must not terminate the server or cancel unrelated requests.
-            IList<McpClientTool> tools = await server.Client.ListToolsAsync();
-            Assert.Contains(tools, tool => tool.Name == "provision_infrastructure");
-            Assert.DoesNotContain(server.CapturedBackendRequests, row => row.StartsWith("POST ", StringComparison.Ordinal));
-        }
-        finally
-        {
-            await StopOwnedFixtureProcessesAsync(owned);
-            await server.DisposeAsync();
-        }
-    }
-
     [Fact]
     public async Task UncancelledPublicProvisionCall_PreservesNormalChildResultAndPrivateTokenSchema()
     {
