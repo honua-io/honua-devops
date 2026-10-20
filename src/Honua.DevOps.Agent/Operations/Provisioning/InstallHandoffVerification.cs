@@ -16,7 +16,49 @@ internal sealed record InstallHandoffVerificationRequest(
     string ProxyIntegrity,
     string ProvisioningOperationId,
     IReadOnlyList<string> RequiredTools,
-    TimeSpan? VerificationDeadline = null);
+    TimeSpan? VerificationDeadline = null,
+    AppliedInstallHandoffAuthority? AppliedAuthority = null);
+
+/// <summary>Internal authority from validated retained apply evidence, never from handoff JSON.</summary>
+internal sealed record AppliedInstallHandoffAuthority(
+    string ProvisioningOperationId, string ContractDigest, string BaseUrl, string AdminKeySecretReference)
+{
+    internal bool Matches(InstallHandoffVerificationRequest request) =>
+        !string.IsNullOrWhiteSpace(ContractDigest)
+        && ProvisioningOperationId == request.ProvisioningOperationId
+        && EndpointMatches(BaseUrl, request.BaseUrl)
+        && AdminKeySecretReference == request.AdminKeySecretReference
+        && IsAllowedSecretReference(AdminKeySecretReference)
+        && request.Environment.Count == 2
+        && request.Environment.TryGetValue("HONUA_BASE_URL", out string? baseUrl)
+        && EndpointMatches(BaseUrl, baseUrl)
+        && request.Environment.TryGetValue("HONUA_MCP_REMOTE_URL", out string? remoteUrl)
+        && string.Equals(new Uri(new Uri(BaseUrl.TrimEnd('/') + "/"), "mcp").AbsoluteUri,
+            remoteUrl, StringComparison.Ordinal);
+
+    internal static bool EndpointMatches(string? expected, string? observed) =>
+        IsSafeEndpoint(expected) && IsSafeEndpoint(observed)
+        && string.Equals(expected!.TrimEnd('/'), observed!.TrimEnd('/'), StringComparison.Ordinal);
+
+    private static bool IsSafeEndpoint(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+        && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query)
+        && string.IsNullOrEmpty(uri.Fragment)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback);
+
+    internal static bool IsAllowedSecretReference(string value) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= 1024
+        && !value.Any(character => char.IsWhiteSpace(character) || char.IsControl(character))
+        && (value == "secret://HONUA_ADMIN_KEY"
+            || value.StartsWith("arn:aws:secretsmanager:", StringComparison.Ordinal)
+            || value.StartsWith("aws-secretsmanager://", StringComparison.Ordinal)
+            || value.StartsWith("azure-key-vault://", StringComparison.Ordinal)
+            || Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+                && uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.UserInfo)
+                && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment)
+                && uri.Host.EndsWith(".vault.azure.net", StringComparison.OrdinalIgnoreCase)
+                && uri.AbsolutePath.StartsWith("/secrets/", StringComparison.Ordinal));
+}
 
 internal sealed record InstallHandoffVerificationResult(
     bool Succeeded,
@@ -78,6 +120,8 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
         deadline.CancelAfter(request.VerificationDeadline ?? TimeSpan.FromSeconds(45));
         CancellationToken verificationToken = deadline.Token;
         List<OperationBackendStep> steps = [];
+        if (request.AppliedAuthority is null || !request.AppliedAuthority.Matches(request))
+            return Failed("runtime-handoff-evidence-mismatch", "The verifier requires the exact retained applied endpoint and allowed secret locator.", steps);
         string? adminKey;
         try
         {
@@ -123,7 +167,7 @@ internal sealed class SystemInstallHandoffVerifier : IInstallHandoffVerifier
             return Failed("proxy-integrity-mismatch", "The pinned proxy package integrity could not be verified.", steps);
         }
 
-        using HttpClient http = new() { Timeout = Timeout.InfiniteTimeSpan };
+        using HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
         Uri baseUri = new(request.BaseUrl.TrimEnd('/') + "/");
         HttpResponseMessage health;
         try

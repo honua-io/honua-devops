@@ -511,6 +511,9 @@ internal sealed partial class HonuaOperationsToolkit
                 []);
         }
 
+        OperationResponse? entryPolicy = AuthorizeTerraformMutation("install-handoff", DefaultProvisioningEnvironment);
+        if (entryPolicy is not null) return entryPolicy;
+
         List<OperationBackendStep> steps = [];
 
         string rootProvisioningOperationId = provisioningOperationId.Trim();
@@ -557,12 +560,7 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Legacy or missing contract versions are never upgraded by relabeling stored evidence."]);
         }
 
-        // The endpoint and the admin-key locator come from the stack's own
-        // honua.operator-contract/v2 projection, captured at apply time. A caller
-        // argument is an OVERRIDE — still accepted, because a development cell may
-        // legitimately sit behind a tunnel, but recorded as an override in the
-        // handoff and the binding so no reader can mistake it for what the stack
-        // reported.
+        // Both runtime profiles use only the endpoint and locator retained by the applied contract.
         string contractEndpoint = provisioningState.Endpoint ?? string.Empty;
         string contractSecretRef = provisioningState.AdminKeySecretRef ?? string.Empty;
         if (string.IsNullOrWhiteSpace(contractEndpoint) || string.IsNullOrWhiteSpace(contractSecretRef))
@@ -584,8 +582,13 @@ internal sealed partial class HonuaOperationsToolkit
         bool secretRefOverridden = callerSecretRef.Length > 0
             && !string.Equals(callerSecretRef, contractSecretRef, StringComparison.Ordinal);
 
-        string normalizedBaseUrl = endpointOverridden ? callerBaseUrl : contractEndpoint;
-        string normalizedSecretRef = secretRefOverridden ? callerSecretRef : contractSecretRef;
+        if (endpointOverridden || secretRefOverridden)
+            return ProvisioningRefusal("runtime-handoff-evidence-mismatch", "Handoff endpoint and secret locator must exactly match the retained applied operator contract.", [], []);
+        OperationResponse? handoffPolicy = AuthorizeRetainedHandoff("install-handoff", provisioningState.Environment);
+        if (handoffPolicy is not null) return handoffPolicy;
+
+        string normalizedBaseUrl = contractEndpoint;
+        string normalizedSecretRef = contractSecretRef;
 
         if (!TryValidateBaseUrl(normalizedBaseUrl, out Uri? parsedBaseUrl, out string urlError))
         {
@@ -607,7 +610,7 @@ internal sealed partial class HonuaOperationsToolkit
 
         if (runtime.RuntimeKind != "aws-ecs")
         {
-            if (endpointOverridden || secretRefOverridden || provisioningState.RuntimeFacts is null ||
+            if (provisioningState.RuntimeFacts is null ||
                 string.IsNullOrWhiteSpace(provisioningState.RuntimeImageDigest))
                 return ProvisioningRefusal("runtime-handoff-evidence-mismatch", "Target-aware handoff requires exact applied operator endpoint/secret reference and runtime facts; overrides cannot establish installation identity.", [], []);
             try { _ = await gateway.AuthorizeRuntimeHandoffAsync(runtime, provisioningState.RuntimeFacts, "install_handoff", cancellationToken); }
@@ -834,6 +837,9 @@ internal sealed partial class HonuaOperationsToolkit
         }
 
         InstallHandoffVerificationRequest request;
+        OperationResponse? entryPolicy = AuthorizeTerraformMutation("verify-install-handoff", DefaultProvisioningEnvironment);
+        if (entryPolicy is not null) return entryPolicy;
+
         string configBytes;
         try
         {
@@ -902,6 +908,13 @@ internal sealed partial class HonuaOperationsToolkit
                 []);
         }
 
+        OperationResponse? verificationPolicy = AuthorizeRetainedHandoff("verify-install-handoff", state.Environment);
+        if (verificationPolicy is not null) return verificationPolicy;
+        AppliedInstallHandoffAuthority appliedAuthority = new(state.Lineage.ProvisioningOperationId,
+            state.OperatorContractDigest ?? string.Empty, state.Endpoint ?? string.Empty, state.AdminKeySecretRef ?? string.Empty);
+        if (!appliedAuthority.Matches(request))
+            return ProvisioningRefusal("runtime-handoff-evidence-mismatch", "Verification requires the exact retained applied endpoint and allowed secret locator.", [], []);
+
         RegisteredRuntimeAuthority? registeredAuthority = null;
         if (state.Stack != ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).StackId)
             return ProvisioningRefusal("runtime-stack-mismatch", "Retained handoff belongs to a different runtime profile.", [], []);
@@ -965,6 +978,10 @@ internal sealed partial class HonuaOperationsToolkit
             { return ProvisioningRefusal("runtime-observation-timeout", "The bounded provider observation did not finish; no binding was emitted.", [], []); }
         }
 
+        request = request with
+        {
+            AppliedAuthority = appliedAuthority
+        };
         IInstallHandoffVerifier verifier = installHandoffVerifier ?? SystemInstallHandoffVerifier.Instance;
         InstallHandoffVerificationResult verification = await verifier.VerifyAsync(request, cancellationToken);
         if (!verification.Succeeded)
@@ -1254,6 +1271,15 @@ internal sealed partial class HonuaOperationsToolkit
             ValidationChecks: ["the substrate refused before any process mutated state"],
             Risks: ["Nothing was mutated by this call."],
             BackendSteps: steps);
+    }
+
+    private OperationResponse? AuthorizeRetainedHandoff(string action, string environment)
+    {
+        OperationResponse? refusal = AuthorizeTerraformMutation(action, environment);
+        if (refusal is not null) return refusal;
+        return runtime.AllowedEnvironments.Contains(environment, StringComparer.OrdinalIgnoreCase)
+            ? null
+            : ProvisioningRefusal("environment-not-allowed", "The retained apply environment is not in this operator session's environment allowlist.", [], []);
     }
 
     private OperationResponse? AuthorizeTerraformMutation(string action, string environment)
@@ -2638,23 +2664,7 @@ internal sealed partial class HonuaOperationsToolkit
         return true;
     }
 
-    private static bool IsSecretReference(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value)
-            || value.Length > 1024
-            || value.Any(char.IsWhiteSpace)
-            || value.Any(char.IsControl))
-        {
-            return false;
-        }
-
-        return value.StartsWith("arn:aws:secretsmanager:", StringComparison.Ordinal)
-            || value.StartsWith("aws-secretsmanager://", StringComparison.Ordinal)
-            || value.StartsWith("azure-key-vault://", StringComparison.Ordinal)
-            || value.StartsWith("https://", StringComparison.Ordinal)
-                && value.Contains(".vault.azure.net/secrets/", StringComparison.OrdinalIgnoreCase)
-            || value.StartsWith("secret://", StringComparison.Ordinal);
-    }
+    private static bool IsSecretReference(string value) => AppliedInstallHandoffAuthority.IsAllowedSecretReference(value);
 
     private static string ResolveHandoffDirectory(string configured, string stack)
     {

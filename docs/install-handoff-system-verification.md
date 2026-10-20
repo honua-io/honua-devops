@@ -5,12 +5,32 @@ test path launches an executable MCP proxy child and a live loopback candidate
 server; it does not substitute `IInstallHandoffVerifier` with the provisioning
 test fake.
 
+Handoff generation and verification require the existing execute mode,
+execute-lower-env or break-glass write tier, direct-allowed approval policy, and a
+non-production retained apply environment still permitted by the current session
+environment allowlist. These checks also apply when restoring
+previous verification files. ECS and Lambda both require the exact endpoint and
+secret locator from the retained applied operator contract; caller overrides are
+refused even when older handoff bytes have valid recorded hashes. Readiness and
+authenticated identity probes never follow HTTP redirects, including redirects to
+a different origin; the admin-key header remains bound to the retained endpoint. Lambda's
+additional registered-runtime and provider observations remain required.
+
+The verifier receives applied authority internally after retained lineage checks,
+not from handoff JSON. Before secret lookup, subprocesses, or HTTP, it checks the
+operation, contract digest, endpoint, and exact proxy environment (base URL plus
+the endpoint-derived `/mcp` URL). The only environment-backed locator is
+`secret://HONUA_ADMIN_KEY`. AWS Secrets Manager and Azure Key Vault references
+must match the exact retained contract; they do not authorize caller-selected
+secrets. Refusal emits neither a verification receipt nor a provision binding.
+
 The matrix covers the complete happy path (pinned package integrity, readiness,
 authenticated structured candidate identity, initialize, two-page roster, and
 Admin tool call) and these fail-closed boundaries:
 
 | Boundary | Qualified result |
 | --- | --- |
+| Missing/mismatched applied authority or disallowed locator | `runtime-handoff-evidence-mismatch` |
 | Missing/denied secret resolution | `secret-resolution-failed` |
 | Registry command unavailable | `proxy-registry-unavailable` |
 | Package integrity mismatch | `proxy-integrity-mismatch` |

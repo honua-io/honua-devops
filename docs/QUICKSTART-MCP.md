@@ -376,10 +376,14 @@ HONUA_DEVOPS_CANDIDATE_REFERENCE=<exact-server-revision>
 `install_handoff` consumes the exact `provisioningOperationId` and locally
 persisted DevOps apply evidence. Leave `baseUrl` and `adminKeySecretRef` empty:
 both come from the stack's own `honua.operator-contract/v2` projection, captured
-and schema-validated at apply time. Supplying either is still permitted — a
-development cell may sit behind a tunnel — but it is recorded as
-`endpointSource: caller-override` / `adminKeySecretRefSource: caller-override`
-in both the handoff and the binding, alongside what the stack actually reported.
+and schema-validated at apply time. Nonempty values must exactly match that
+retained contract; endpoint and secret overrides, including tunnel substitutions,
+are refused. Both handoff generation and verification require execute mode, an
+authorized write tier, direct-allowed policy, and a retained non-production
+environment still allowed by the current operator session. The only
+environment-backed secret locator is `secret://HONUA_ADMIN_KEY`; cloud secret
+references must match the retained contract. Readiness and authenticated identity
+probes do not follow redirects.
 A root that projects no operator contract is refused rather than falling back to
 a scalar URL output, and an `unqualified` contract is refused outright.
 
