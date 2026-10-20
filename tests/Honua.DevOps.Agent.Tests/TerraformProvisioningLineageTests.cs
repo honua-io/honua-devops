@@ -128,7 +128,14 @@ public sealed partial class TerraformProvisioningTests
         File.Delete(binding);
         FakeInstallHandoffVerifier unavailable = new(false);
         HonuaOperationsToolkit restarted = new(ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan), gateway, installHandoffVerifier: unavailable);
-        OperationResponse recovered = await restarted.VerifyInstallHandoffAsync(config, false);
+        OperationResponse gated = await restarted.VerifyInstallHandoffAsync(config, false);
+        Assert.Equal("execution-mode-gated", gated.Status);
+        Assert.False(File.Exists(receipt));
+        Assert.False(File.Exists(binding));
+        HonuaOperationsToolkit authorizedRestart = new(
+            ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Execute, ExecutionTier.ExecuteLowerEnv),
+            gateway, ProvisioningSubstrateFixtures.DirectAllowedPolicy(), installHandoffVerifier: unavailable);
+        OperationResponse recovered = await authorizedRestart.VerifyInstallHandoffAsync(config, false);
         Assert.Equal("install-handoff-verified", recovered.Status);
         Assert.Equal(0, unavailable.Calls);
         Assert.Equal(receiptBytes, await File.ReadAllBytesAsync(receipt));

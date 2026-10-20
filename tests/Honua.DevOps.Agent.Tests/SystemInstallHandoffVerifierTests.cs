@@ -18,6 +18,61 @@ public sealed class SystemInstallHandoffVerifierTests
     private const string Integrity = "sha512-dGVzdC1pbnRlZ3JpdHk=";
     private const string AdminKey = "system-verifier-secret-do-not-print";
 
+    [LinuxTheory]
+    [InlineData("/healthz/ready", "handoff-health-failed")]
+    [InlineData("/api/v1/admin/version", "handoff-auth-failed")]
+    public async Task Redirects_NeverContactTheSecondOriginOrForwardTheKey(string path, string expected)
+    {
+        using VerifierFixture fixture = new();
+        await using LocalCandidateServer target = await LocalCandidateServer.StartAsync(Candidate, AdminKey);
+        await using LocalCandidateServer source = await LocalCandidateServer.StartAsync(Candidate, AdminKey,
+            redirectPath: path, redirectUrl: target.BaseUrl + path);
+
+        InstallHandoffVerificationResult result = await fixture.VerifyAsync(source.BaseUrl, "happy");
+
+        Assert.Equal(expected, result.Status);
+        Assert.False(result.Succeeded);
+        Assert.True(source.RequestCount > 0);
+        Assert.Equal(0, target.RequestCount);
+        Assert.False(target.SawCredential);
+        Assert.False(fixture.ChildStarted);
+    }
+
+    [LinuxTheory]
+    [InlineData("missing-authority")]
+    [InlineData("endpoint")]
+    [InlineData("operation")]
+    [InlineData("secret://UNRELATED_CREDENTIAL")]
+    [InlineData("arn:aws:secretsmanager:us-east-1:123456789012:secret:foreign")]
+    public async Task UnboundAuthority_RefusesBeforeSecretProcessOrNetwork(string mutation)
+    {
+        using VerifierFixture fixture = new();
+        InstallHandoffVerificationRequest request = fixture.Request("https://never-contact.invalid/", "happy");
+        request = mutation switch
+        {
+            "missing-authority" => request with { AppliedAuthority = null },
+            "endpoint" => request with { BaseUrl = "https://foreign.invalid/" },
+            "operation" => request with { ProvisioningOperationId = "foreign-operation" },
+            "secret://UNRELATED_CREDENTIAL" => request with
+            {
+                AdminKeySecretReference = mutation,
+                AppliedAuthority = request.AppliedAuthority! with { AdminKeySecretReference = mutation }
+            },
+            _ => request with { AdminKeySecretReference = mutation }
+        };
+        // A tripwire process would run before HTTP if admission accidentally succeeded.
+        string tripwire = Path.Combine(fixture.Root, "npm-started");
+        string npm = Path.Combine(fixture.Root, "npm-tripwire");
+        await File.WriteAllTextAsync(npm, "#!/usr/bin/env bash\ntouch '" + tripwire + "'\nexit 99\n");
+        File.SetUnixFileMode(npm, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        InstallHandoffVerificationResult result = await new SystemInstallHandoffVerifier(npm).VerifyAsync(request);
+        Assert.Equal("runtime-handoff-evidence-mismatch", result.Status);
+        Assert.False(result.Succeeded);
+        Assert.Empty(result.Steps);
+        Assert.False(File.Exists(tripwire));
+        Assert.False(fixture.ChildStarted);
+    }
+
     [LinuxFact]
     public async Task RealVerifier_ProvesLiveServerAndMultiPageProxyAndReapsChild()
     {
@@ -168,7 +223,8 @@ public sealed class SystemInstallHandoffVerifierTests
     {
         private readonly TimeSpan deadline;
         internal string Root { get; } = Path.Combine(Path.GetTempPath(), $"honua-handoff-system-{Guid.NewGuid():n}");
-        internal string SecretVariable { get; } = $"HONUA_HANDOFF_TEST_{Guid.NewGuid():N}";
+        internal string SecretVariable { get; } = "HONUA_ADMIN_KEY";
+        private readonly string? originalAdminKey = Environment.GetEnvironmentVariable("HONUA_ADMIN_KEY");
         private string Marker => Path.Combine(Root, "child.pid");
         internal bool ChildStarted => File.Exists(Marker);
 
@@ -181,10 +237,16 @@ public sealed class SystemInstallHandoffVerifierTests
         }
 
         internal InstallHandoffVerificationRequest Request(string baseUrl, string mode) => new(
-            Path.Combine(Root, "proxy"), [mode, Marker], new Dictionary<string, string>(),
+            Path.Combine(Root, "proxy"), [mode, Marker], new Dictionary<string, string>
+            {
+                ["HONUA_BASE_URL"] = baseUrl,
+                ["HONUA_MCP_REMOTE_URL"] = new Uri(new Uri(baseUrl.TrimEnd('/') + "/"), "mcp").AbsoluteUri
+            },
             "secret://" + SecretVariable, baseUrl, Candidate, "@honua/mcp-server@2026.1.1",
             Integrity, $"urn:honua:provisioning:{new string('a', 32)}",
-            ["honua_admin_server_status", "honua_buffer_features"], deadline);
+            ["honua_admin_server_status", "honua_buffer_features"], deadline,
+            new AppliedInstallHandoffAuthority($"urn:honua:provisioning:{new string('a', 32)}",
+                new string('b', 64), baseUrl, "secret://" + SecretVariable));
 
         internal async Task<InstallHandoffVerificationResult> VerifyAsync(string baseUrl, string mode, bool setSecret = true)
         {
@@ -214,7 +276,7 @@ public sealed class SystemInstallHandoffVerifierTests
 
         public void Dispose()
         {
-            Environment.SetEnvironmentVariable(SecretVariable, null);
+            Environment.SetEnvironmentVariable(SecretVariable, originalAdminKey);
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
         }
 
@@ -259,10 +321,14 @@ done
         private readonly CancellationTokenSource stop = new();
         private readonly Task loop;
         internal string BaseUrl { get; }
+        private int requestCount;
+        private int sawCredential;
+        internal int RequestCount => Volatile.Read(ref requestCount);
+        internal bool SawCredential => Volatile.Read(ref sawCredential) != 0;
 
         private LocalCandidateServer(
             HttpListener listener, string baseUrl, string candidate, string key,
-            HttpStatusCode authStatus, HttpStatusCode healthStatus)
+            HttpStatusCode authStatus, HttpStatusCode healthStatus, string? redirectPath, string? redirectUrl)
         {
             this.listener = listener;
             BaseUrl = baseUrl;
@@ -273,8 +339,15 @@ done
                     HttpListenerContext context;
                     try { context = await listener.GetContextAsync().WaitAsync(stop.Token); }
                     catch (OperationCanceledException) { break; }
+                    Interlocked.Increment(ref requestCount);
+                    if (context.Request.Headers["X-API-Key"] is not null) Interlocked.Exchange(ref sawCredential, 1);
                     string path = context.Request.Url!.AbsolutePath;
-                    if (path == "/healthz/ready")
+                    if (path == redirectPath)
+                    {
+                        context.Response.StatusCode = (int)HttpStatusCode.Redirect;
+                        context.Response.RedirectLocation = redirectUrl;
+                    }
+                    else if (path == "/healthz/ready")
                     {
                         context.Response.StatusCode = (int)healthStatus;
                     }
@@ -296,7 +369,7 @@ done
 
         internal static Task<LocalCandidateServer> StartAsync(
             string candidate, string key, HttpStatusCode authStatus = HttpStatusCode.OK,
-            HttpStatusCode healthStatus = HttpStatusCode.OK)
+            HttpStatusCode healthStatus = HttpStatusCode.OK, string? redirectPath = null, string? redirectUrl = null)
         {
             using TcpListener reservation = new(IPAddress.Loopback, 0);
             reservation.Start();
@@ -306,7 +379,7 @@ done
             HttpListener listener = new();
             listener.Prefixes.Add(baseUrl + "/");
             listener.Start();
-            return Task.FromResult(new LocalCandidateServer(listener, baseUrl, candidate, key, authStatus, healthStatus));
+            return Task.FromResult(new LocalCandidateServer(listener, baseUrl, candidate, key, authStatus, healthStatus, redirectPath, redirectUrl));
         }
 
         public async ValueTask DisposeAsync()

@@ -472,37 +472,21 @@ public sealed partial class TerraformProvisioningTests
         Assert.Empty(ProvisioningContracts.ValidateProxyHandoff(proxyConfig));
     }
 
-    [Fact]
-    public async Task InstallHandoff_FlagsACallerSuppliedEndpointAsAnOverride()
+    [Theory]
+    [InlineData("https://tunnel.example.test", "")]
+    [InlineData("", "secret://UNRELATED_CREDENTIAL")]
+    [InlineData("", "arn:aws:secretsmanager:us-east-1:123456789012:secret:foreign")]
+    public async Task InstallHandoff_RefusesCallerOverridesBeforeWriting(string endpoint, string secret)
     {
         using TerraformTestRoot root = new();
         FakeSubstrateRunner runner = new();
         using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
         (HonuaOperationsToolkit toolkit, OperationResponse apply) = await ApplyAsync(root, runner, gateway);
         string outputDirectory = Path.Combine(root.Path, "override-handoff");
-
-        OperationResponse response = await toolkit.InstallHandoffAsync(
-            "aws-ecs",
-            baseUrl: "https://tunnel.example.test",
-            adminKeySecretRef: string.Empty,
-            outputDirectory,
-            overwrite: false,
-            provisioningOperationId: apply.ProvisioningLineage!.ProvisioningOperationId);
-
-        Assert.Equal("install-handoff-written", response.Status);
-        string proxyConfig = await File.ReadAllTextAsync(Path.Combine(outputDirectory, "honua-mcp-proxy.handoff.json"));
-        using JsonDocument handoff = JsonDocument.Parse(proxyConfig);
-
-        Assert.Equal("caller-override", handoff.RootElement.GetProperty("endpointSource").GetString());
-        // The secret reference was NOT overridden, so it stays contract-sourced.
-        Assert.Equal("operator-contract", handoff.RootElement.GetProperty("adminKeySecretRefSource").GetString());
-        // What the stack reported is retained alongside the override, so the two can be compared.
-        Assert.Equal(
-            ProvisioningSubstrateFixtures.ContractEndpoint,
-            handoff.RootElement.GetProperty("operatorContract").GetProperty("endpoint").GetString());
-        Assert.Contains(
-            response.Findings,
-            finding => finding.Contains("WARNING: a caller argument overrode", StringComparison.Ordinal));
+        OperationResponse response = await toolkit.InstallHandoffAsync("aws-ecs", endpoint, secret,
+            outputDirectory, false, apply.ProvisioningLineage!.ProvisioningOperationId);
+        Assert.Equal("runtime-handoff-evidence-mismatch", response.Status);
+        Assert.False(Directory.Exists(outputDirectory));
     }
 
     [Fact]
