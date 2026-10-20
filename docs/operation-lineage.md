@@ -134,3 +134,34 @@ Outstanding #150 acceptance work:
 - The final release#129 candidate receipt still has to be produced by that
   authority. The join checker covers a supplied receipt, including missing,
   mismatched, substituted and duplicate cases. It does not create one.
+
+### Retained cleanup obligation inspection
+
+After exact approval validation, the provisioning executor records a private,
+immutable cleanup obligation before starting the existing IaC wrapper. Its
+claim directory is retained below the protected provisioning state directory,
+independently of the temporary saved-plan directory. Original plan, metadata,
+approval and receipt-schema bytes remain in the existing evidence CAS. A failed
+wrapper receipt is retained and rejudged against those original bindings;
+a failure does not become an installation success or a completed teardown.
+
+Use the existing `provision_infrastructure` tool with `action=inspect-cleanup`,
+the original `stack`, and `provisioningOperationId` to inspect retained evidence.
+This local read is available in Observe/Plan mode within the original operator's
+host-selected runtime, stack and allowed-environment scope. It does not reserve
+an idempotency key, plan, run Terraform, reclaim a claim, approve an action or
+create a replacement plan. Its status probe uses only the original hash-bound
+wrapper and helper, including when the temporary plan directory is gone.
+
+The public response contains operation identifiers, digests, evidence references
+and a conservative status. It excludes plan/state contents and credentials.
+`cleanup-execution-failed` and `cleanup-execution-acknowledged` describe execution
+receipts; both keep `CleanupOutstanding=true` and `CandidateQualified=false`.
+A live executor, missing originals, ambiguous progress or changed substrate is
+never a clean/ready verdict. A caller disconnect retains provisional evidence;
+later read-only inspection may reconcile forward progress of the same original
+claim and receipt, without restarting the executor. Separately approved destroy
+and independent resource-absence/retention evidence remain required. Existing
+operations without a prewritten obligation are not backfilled or re-executed.
+The local test-only canonical IaC helper fixture proves process/recovery behavior,
+not any of the six required live AWS fault cells under issue 183/release 129.

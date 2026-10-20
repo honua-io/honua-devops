@@ -37,6 +37,10 @@ internal sealed record OperationResponse(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ScopedGitReviewEvidence? GitReview { get; init; }
 
+    [JsonPropertyName("provisioningCleanup")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProvisioningCleanupEvidence? ProvisioningCleanup { get; init; }
+
     [JsonPropertyName("auditEventId")]
     public string AuditEventId { get; init; } = Guid.NewGuid().ToString("n");
 
