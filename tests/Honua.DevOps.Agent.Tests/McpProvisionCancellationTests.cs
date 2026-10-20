@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Microsoft.Extensions.AI;
@@ -131,6 +132,75 @@ public sealed class McpProvisionCancellationTests(ITestOutputHelper output)
             await StopOwnedFixtureProcessesAsync(owned);
             Environment.SetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable, previous);
         }
+    }
+
+    [Fact]
+    public async Task ExplicitPublicCancellation_StopsOnlyTheMatchingOwnedRequest()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using TerraformTestRoot root = new();
+        WriteOwnedPlanFixture(root, block: true);
+        McpServerFixture server = new() { TerraformFixtureRoot = root.Path, TerraformFixtureExecutable = root.PlanScript, TraceOwnedProtocol = true };
+        await server.InitializeAsync();
+        OwnedProcessIdentity[] owned = [];
+        try
+        {
+            RequestId requestId = new("owned-plan-" + Guid.NewGuid().ToString("n"));
+            JsonRpcRequest request = new()
+            {
+                Id = requestId,
+                Method = RequestMethods.ToolsCall,
+                Params = JsonSerializer.SerializeToNode(new { name = "provision_infrastructure", arguments = Arguments("plan") })
+            };
+            // Explicit protocol request identity and awaited send isolate the server
+            // from the pinned SDK's unproved client-token notification emission.
+            Task<JsonRpcResponse> call = server.Client.SendRequestAsync(request);
+            owned = await ObserveAdmittedProcessTreeAsync(root, call);
+            await server.Client.SendMessageAsync(Cancellation(new RequestId("wrong-" + Guid.NewGuid().ToString("n"))));
+            using CancellationTokenSource roundtrip = new(TimeSpan.FromSeconds(30));
+            await server.Client.PingAsync(cancellationToken: roundtrip.Token);
+            Assert.False(call.IsCompleted);
+            Assert.All(owned, identity => Assert.True(IsExecuting(identity)));
+            await server.Client.SendMessageAsync(Cancellation(requestId));
+            try
+            {
+                await WaitUntilAsync(() => owned.All(identity => !IsExecuting(identity)), "The explicit matching public cancellation did not stop its owned process tree.");
+            }
+            finally
+            {
+                output.WriteLine("Explicit public original/current process census: " + DescribeProcesses(owned));
+                output.WriteLine("Explicit public SDK protocol trace: " + string.Join("\n", server.CapturedOwnedProtocolTrace));
+                output.WriteLine("Explicit public server stderr: " + string.Join("\n", server.CapturedOwnedServerErrors.Take(40)));
+            }
+            Assert.False(File.Exists(Path.Combine(root.Path, "plan-completed")));
+            Assert.Contains(await server.Client.ListToolsAsync(cancellationToken: roundtrip.Token), tool => tool.Name == "provision_infrastructure");
+            // Cancellation need not manufacture a particular local exception type.
+            // The actual process cessation above is authoritative; observe completion
+            // separately with a finite bound and retain its actual protocol shape.
+            try
+            {
+                JsonRpcResponse response = await call.WaitAsync(TimeSpan.FromSeconds(5));
+                string result = response.Result?.ToJsonString() ?? "null";
+                output.WriteLine("Explicit cancelled request returned JSON-RPC result SHA256=" +
+                    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(result))));
+                Assert.DoesNotContain("terraform-plan-ready", result, StringComparison.Ordinal);
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or McpException)
+            {
+                output.WriteLine("Explicit cancelled request terminated as " + exception.GetType().Name);
+            }
+        }
+        finally
+        {
+            await StopOwnedFixtureProcessesAsync(owned);
+            await server.DisposeAsync();
+        }
+
+        static JsonRpcNotification Cancellation(RequestId requestId) => new()
+        {
+            Method = NotificationMethods.CancelledNotification,
+            Params = JsonSerializer.SerializeToNode(new CancelledNotificationParams { RequestId = requestId })
+        };
     }
 
     private static string DescribeProcesses(OwnedProcessIdentity[] identities) =>
