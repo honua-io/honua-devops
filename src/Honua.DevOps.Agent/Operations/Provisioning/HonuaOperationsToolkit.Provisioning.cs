@@ -92,7 +92,8 @@ internal sealed partial class HonuaOperationsToolkit
         string confirmation,
         string approvalReceiptJson = "",
         CancellationToken cancellationToken = default,
-        string? reservedPlanToken = null)
+        string? reservedPlanToken = null,
+        DestroyRecoverySeed? recoverySeed = null)
     {
         string normalizedStack = NormalizeToken(stack);
         string normalizedSize = NormalizeToken(size);
@@ -304,7 +305,8 @@ internal sealed partial class HonuaOperationsToolkit
                 "--plan-out", planFile,
                 "--metadata-out", planMetadataFile,
                 "--var-file", variableFile,
-                "--actor", $"honua-devops:{provisioningOperationId}",
+                "--actor", recoverySeed is null ? $"honua-devops:{provisioningOperationId}"
+                    : RecoveryActor(recoverySeed, provisioningOperationId),
                 "--target-id", ResolveTargetId(canonicalStack, environment),
                 "--expires-in", SavedPlanLifetimeSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)
             ];
@@ -383,6 +385,8 @@ internal sealed partial class HonuaOperationsToolkit
             steps.Add(ToBackendStep("terraform-show", canonicalStack, showResult, mutatesState: false));
             TerraformPlanReview planReview = BuildPlanReview(showResult);
 
+            ProvisioningEvidenceReference? recovery = recoverySeed is null ? null
+                : BuildRecoveryContext(recoverySeed, provisioningOperationId, metadata, variableFile, planMetadataFile);
             bool destroyPlan = normalizedAction == "destroy";
             ProtectSavedPlan(planFile);
             SavePlanManifest(
@@ -401,7 +405,7 @@ internal sealed partial class HonuaOperationsToolkit
                     provisioningStack.TerraformRootName,
                     planMetadataFile,
                     metadata,
-                    VariablesDigest: ComputeVariablesDigest(variables)));
+                    VariablesDigest: ComputeVariablesDigest(variables), Recovery: recovery));
             keepPlanDirectory = true;
             string nextAction = destroyPlan ? "destroy" : "apply";
             string challenge = $"{nextAction}:{canonicalStack}:{environment}:{planToken}";
@@ -469,6 +473,7 @@ internal sealed partial class HonuaOperationsToolkit
                         GetEvidenceStore().Put("plan-metadata", await File.ReadAllBytesAsync(planMetadataFile, cancellationToken))
                     ]))
             {
+                ProvisioningRecovery = recovery is null ? null : RecoveryProjection(recovery),
                 ApprovalRequest = new ProvisionApprovalRequest(
                     provisioningOperationId,
                     ComputeSha256(planFile),
@@ -476,7 +481,7 @@ internal sealed partial class HonuaOperationsToolkit
                     nextAction,
                     canonicalStack,
                     environment,
-                    metadata.ExpiresAtUtc)
+                    metadata.ExpiresAtUtc) { RecoveryContextSha256 = recovery?.Sha256 }
             };
         }
         finally
@@ -1855,7 +1860,8 @@ internal sealed partial class HonuaOperationsToolkit
                 // actually resolve and re-hash what this reference names.
                 ActuatorReceiptReference: $"urn:sha256:{receiptSha}",
                 EvidenceRefs: [planReference, metadataReference, approvalReference,
-                    evidenceStore.Put("apply", Encoding.UTF8.GetBytes(receiptDocument))]);
+                    evidenceStore.Put("apply", Encoding.UTF8.GetBytes(receiptDocument)),
+                    .. (savedPlan.Manifest.Recovery is null ? Array.Empty<ProvisioningEvidenceReference>() : new[] { savedPlan.Manifest.Recovery })]);
 
             SaveProvisioningState(new ProvisioningState(
                 lineage,
@@ -1874,7 +1880,7 @@ internal sealed partial class HonuaOperationsToolkit
                 OperatorContractSchemaVersion: operatorContract?.SchemaVersion,
                 RuntimeFacts: operatorContract?.RuntimeFacts,
                 RuntimeImageDigest: operatorContract?.ImageDigest,
-                VariablesDigest: savedPlan.Manifest.VariablesDigest));
+                VariablesDigest: savedPlan.Manifest.VariablesDigest, Recovery: savedPlan.Manifest.Recovery));
 
             return new OperationResponse(
                 Status: action == "destroy" ? "infrastructure-destroyed" : "infrastructure-provisioned",
@@ -1926,7 +1932,8 @@ internal sealed partial class HonuaOperationsToolkit
                         : "This execution was not release-qualified and must not be presented as release evidence."
                 ],
                 BackendSteps: steps,
-                ProvisioningLineage: lineage) { AuditEventId = lineage.ApplyAuditEventId! };
+                ProvisioningLineage: lineage) { AuditEventId = lineage.ApplyAuditEventId!,
+                    ProvisioningRecovery = savedPlan.Manifest.Recovery is null ? null : RecoveryProjection(savedPlan.Manifest.Recovery) };
         }
         finally
         {
@@ -2269,7 +2276,8 @@ internal sealed partial class HonuaOperationsToolkit
             || !string.Equals(receipt.PlanMetadataDigest, manifest.PlanMetadataDigest, StringComparison.OrdinalIgnoreCase)
             || receipt.Action != action
             || receipt.Stack != manifest.Stack
-            || receipt.Environment != manifest.Environment)
+            || receipt.Environment != manifest.Environment
+            || receipt.RecoveryContextSha256 != manifest.Recovery?.Sha256)
         {
             error = "The approval receipt does not approve this exact operation, plan metadata digest, plan, action, stack, and environment.";
             return false;
@@ -2350,7 +2358,8 @@ internal sealed partial class HonuaOperationsToolkit
             receipt.Decision,
             receipt.IssuedAtUtc,
             receipt.ExpiresAtUtc,
-            receipt.SigningMode);
+            receipt.SigningMode,
+            receipt.RecoveryContextSha256);
 
     private static void CleanupExpiredSavedPlans()
     {
@@ -2458,7 +2467,9 @@ internal sealed partial class HonuaOperationsToolkit
         /// of it.
         /// </summary>
         ExactPlanMetadata Metadata,
-        string? VariablesDigest = null)
+        string? VariablesDigest = null,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        ProvisioningEvidenceReference? Recovery = null)
     {
         internal string PlanMetadataDigest => Metadata.PlanMetadataDigest;
     }
@@ -2489,7 +2500,8 @@ internal sealed partial class HonuaOperationsToolkit
         string SigningMode,
         DateTimeOffset IssuedAtUtc,
         DateTimeOffset ExpiresAtUtc,
-        string Signature);
+        string Signature,
+        string? RecoveryContextSha256 = null);
 
     private sealed record SavedTerraformPlan(
         SavedTerraformPlanManifest Manifest,
@@ -2515,7 +2527,9 @@ internal sealed partial class HonuaOperationsToolkit
         ProvisioningEvidenceReference? ProvisionBinding = null,
         ProvisionedRuntimeFacts? RuntimeFacts = null,
         string? RuntimeImageDigest = null,
-        string? VariablesDigest = null);
+        string? VariablesDigest = null,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        ProvisioningEvidenceReference? Recovery = null);
 
     private static OperationBackendStep ToBackendStep(
         string name,

@@ -41,6 +41,10 @@ internal sealed record OperationResponse(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ProvisioningCleanupEvidence? ProvisioningCleanup { get; init; }
 
+    [JsonPropertyName("provisioningRecovery")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProvisioningRecoveryEvidence? ProvisioningRecovery { get; init; }
+
     [JsonPropertyName("auditEventId")]
     public string AuditEventId { get; init; } = Guid.NewGuid().ToString("n");
 

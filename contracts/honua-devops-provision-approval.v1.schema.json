@@ -46,6 +46,11 @@
       "type": "string",
       "pattern": "^[0-9a-fA-F]{64}$"
     },
+    "recoveryContextSha256": {
+      "description": "Optional only for a retained destroy recovery. The normal issuer reads it from the protected plan response and appends newline plus recovery-context-sha256:<lowercase digest> to the ordinary canonical payload. It binds the immutable original-root/parent/next-plan relationship; no old approval is reused.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "action": { "enum": ["apply", "destroy"] },
     "stack": { "type": "string", "minLength": 1, "maxLength": 64 },
     "environment": { "type": "string", "minLength": 1, "maxLength": 64 },

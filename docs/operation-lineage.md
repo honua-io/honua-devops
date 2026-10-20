@@ -165,3 +165,29 @@ and independent resource-absence/retention evidence remain required. Existing
 operations without a prewritten obligation are not backfilled or re-executed.
 The local test-only canonical IaC helper fixture proves process/recovery behavior,
 not any of the six required live AWS fault cells under issue 183/release 129.
+
+
+### Recover an original destroy intent
+
+After a failed or indeterminate destroy, retain the original
+`provisioningOperationId`. Call the same `provision_infrastructure` tool with
+`action=destroy`, `confirmed=false`, that operation ID and a fresh
+`idempotencyKey`. This performs a fresh governed plan against the same retained
+operator scope, target, account, backend, input bytes and state lineage. It does
+not replay the spent approval or mutate infrastructure.
+
+The ready response contains `provisioningRecovery`: the immutable original root,
+immediate parent, fresh operation and content-addressed context. The existing
+`--issue-provision-approval --from-plan-response` issuer binds its
+`approvalRequest.recoveryContextSha256` into the normal signed approval. Review
+the new plan and obtain a fresh one-use approval before confirming it. The same
+root reservation is checked before the local execution claim and held throughout
+the executor; live, changed or superseded attempts refuse mutation. Completed
+confirmed-request replay returns the original receipt and starts no new runner.
+
+A lost planning response remains explicitly indeterminate. An explicit new plan
+key can replace an abandoned read-only reservation; a superseded plan cannot be
+executed. Original plan-directory loss does not erase retained obligation,
+approval, claim or receipt evidence. Missing final execution evidence remains
+indeterminate and is never reported as successful cleanup. These source controls
+do not qualify the six AWS fault cells or establish resource absence.
