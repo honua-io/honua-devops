@@ -1316,6 +1316,9 @@ internal sealed partial class HonuaOperationsToolkit
             {
                 "region" or "environment" or "name_prefix" or "tags" => ValidateVariable(property.Name, property.Value),
                 "honua_image_uri" => ValidateLambdaImage(property.Value),
+                "migration_image" => ValidateLambdaImage(property.Value),
+                "migration_packaged_manifest_sha256" or "migration_target_locator_sha256" =>
+                    ValidateString(property.Name, property.Value, new Regex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant)),
                 "lambda_alias_name" => ValidateString(property.Name, property.Value, new Regex("^[A-Za-z_][A-Za-z0-9_-]{0,63}$", RegexOptions.CultureInvariant)),
                 "image_repository_policy_mode" => ValidateChoice(property.Name, property.Value, "reuse"),
                 "redis_enabled" or "skip_migrations" => ValidateExactBoolean(property.Name, property.Value, true),
@@ -1326,6 +1329,15 @@ internal sealed partial class HonuaOperationsToolkit
         }
         if (!variables.ContainsKey("region") || !variables.ContainsKey("honua_image_uri"))
             throw new InvalidOperationException("Lambda planning requires an explicit region and immutable published image URI.");
+        var migrationEnabled = variables.ContainsKey("migration_image");
+        if (migrationEnabled != variables.ContainsKey("migration_packaged_manifest_sha256") ||
+            (!migrationEnabled && variables.ContainsKey("migration_target_locator_sha256")))
+            throw new InvalidOperationException("The preview migration profile requires both an immutable image and its packaged manifest hash; a locator hash requires that profile.");
+        if (migrationEnabled && !string.Equals(
+                ((string)variables["migration_image"]!).Split('@')[0],
+                ((string)variables["honua_image_uri"]!).Split('@')[0],
+                StringComparison.Ordinal))
+            throw new InvalidOperationException("The migration image must use the serving image's repository managed by the selected Lambda root.");
         if (!variables.ContainsKey("name_prefix")) variables["name_prefix"] = DefaultNamePrefixFor((string)variables["environment"]!);
         return variables;
     }

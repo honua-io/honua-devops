@@ -60,6 +60,16 @@ initialization and out-of-band migrations still need a qualified workflow before
 advertising unattended setup. A generated contract or successful Terraform apply
 does not close that gap.
 
+The migration preview additionally admits the non-secret `migration_image` and
+`migration_packaged_manifest_sha256` pins together, with optional
+`migration_target_locator_sha256` from the canonical artifact inspector. The
+migration image must be digest-pinned in the serving image's repository; hashes
+must be lowercase SHA-256. These values are included in the reviewed plan's
+variable digest, so changing any pin requires a new plan and approval. Connection
+strings, secrets and arbitrary environment overrides remain out of band. This
+requires a matching `honua-iac` root that implements the isolated migration
+profile; it does not establish public artifact availability or live execution.
+
 Native EKS has target-aware handoff checks for an existing Deployment, serving
 port and public route. It is not in the Terraform provisioning stack allowlist.
 Its runtime profile is `honua-kubernetes-deployment`, with no Argo dependency;
