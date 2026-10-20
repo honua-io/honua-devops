@@ -1,0 +1,1574 @@
+{
+  "deployment_contract": {
+    "sensitive": false,
+    "value": {
+      "dependencies": {
+        "cache": {
+          "enabled": false,
+          "kind": "redis",
+          "secret_ref": null
+        },
+        "database": {
+          "endpoint": "mngm7ozm",
+          "kind": "aws-rds-postgres",
+          "managed": true,
+          "secret_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf"
+        },
+        "ingress": {
+          "certificate_ref": null,
+          "endpoint": "https://abcdefghij.execute-api.us-east-1.amazonaws.com",
+          "kind": "aws-apigatewayv2-http",
+          "waf_ref": null
+        },
+        "object_storage": {
+          "bucket": null,
+          "enabled": false,
+          "kind": null,
+          "prefix": null
+        }
+      },
+      "endpoints": {
+        "admin_base_path": "/api/v1/admin",
+        "custom_domain": null,
+        "ingress_dns_name": "abcdefghij.execute-api.us-east-1.amazonaws.com",
+        "mcp_path": null,
+        "protocol_path": "/v1",
+        "public_base_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com",
+        "readiness_path": "/healthz/ready"
+      },
+      "identity": {
+        "artifacts": [],
+        "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+        "candidate_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "contract_digest": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
+        "iac_revision": "cccccccccccccccccccccccccccccccccccccccc",
+        "iac_root": "infrastructure/terraform/examples/aws-serverless",
+        "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "module_source": "infrastructure/terraform/modules/aws-serverless",
+        "platform": {
+          "account_id": "123456789012",
+          "partition": "aws",
+          "provider": "aws",
+          "region": "us-east-1"
+        },
+        "provider_lock_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "state_lineage": "11111111-2222-3333-4444-555555555555",
+        "state_serial": 7,
+        "status": "qualified",
+        "terraform_version": "1.11.4",
+        "workload_identity": "arn:aws:iam::123456789012:role/honua-test"
+      },
+      "kind": "deployment",
+      "rollout": {
+        "backend_name": "honua-gitops-aws-lambda",
+        "canary": {
+          "enabled": false,
+          "service_name": null,
+          "target_group_arn": null,
+          "verification_header_name": null,
+          "weight_percentage": 0
+        },
+        "current_revision": "43",
+        "desired_revision": "43",
+        "target_id": "honua-contract-dev-honua-live",
+        "target_kind": "AwsLambda",
+        "target_name": "honua-contract-dev-honua",
+        "target_resource": "arn:aws:lambda:us-east-1:123456789012:function:honua-contract-dev-honua:live"
+      },
+      "schema_version": "honua.operator-contract/v2",
+      "secret_refs": {
+        "admin_password": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+        "audit_chain_key": "arn:aws:secretsmanager:us-east-1:123456789012:secret:operator-audit-chain-AbC123",
+        "connection_encryption_master_key": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+        "db_connection": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf"
+      },
+      "stack": {
+        "account_id": "123456789012",
+        "environment": "dev",
+        "id": "aws-lambda",
+        "name_prefix": "honua-contract",
+        "platform": "aws",
+        "region": "us-east-1",
+        "runtime": "lambda"
+      },
+      "workload": {
+        "cluster_id": null,
+        "cluster_name": "honua-contract-dev",
+        "cpu_architecture": "x86_64",
+        "desired_count": 0,
+        "identity": "arn:aws:iam::123456789012:role/honua-test",
+        "kind": "AwsLambda",
+        "name": "honua-contract-dev-honua",
+        "resource_id": "arn:aws:lambda:us-east-1:123456789012:function:honua-contract-dev-honua:live"
+      }
+    },
+    "type": [
+      "object",
+      {
+        "dependencies": [
+          "object",
+          {
+            "cache": [
+              "object",
+              {
+                "enabled": "bool",
+                "kind": "string",
+                "secret_ref": "dynamic"
+              }
+            ],
+            "database": [
+              "object",
+              {
+                "endpoint": "string",
+                "kind": "string",
+                "managed": "bool",
+                "secret_ref": "string"
+              }
+            ],
+            "ingress": [
+              "object",
+              {
+                "certificate_ref": "dynamic",
+                "endpoint": "string",
+                "kind": "string",
+                "waf_ref": "dynamic"
+              }
+            ],
+            "object_storage": [
+              "object",
+              {
+                "bucket": "string",
+                "enabled": "bool",
+                "kind": "string",
+                "prefix": "string"
+              }
+            ]
+          }
+        ],
+        "endpoints": [
+          "object",
+          {
+            "admin_base_path": "string",
+            "custom_domain": "string",
+            "ingress_dns_name": "string",
+            "mcp_path": "string",
+            "protocol_path": "string",
+            "public_base_url": "string",
+            "readiness_path": "string"
+          }
+        ],
+        "identity": [
+          "object",
+          {
+            "artifacts": [
+              "list",
+              [
+                "object",
+                {
+                  "digest": "string",
+                  "kind": "string",
+                  "name": "string",
+                  "version": "string"
+                }
+              ]
+            ],
+            "backend_config_digest": "string",
+            "candidate_digest": "string",
+            "contract_digest": "string",
+            "iac_revision": "string",
+            "iac_root": "string",
+            "image_digest": "string",
+            "image_reference": "string",
+            "manifest_digest": "string",
+            "module_source": "string",
+            "platform": [
+              "object",
+              {
+                "account_id": "string",
+                "partition": "string",
+                "provider": "string",
+                "region": "string"
+              }
+            ],
+            "provider_lock_digest": "string",
+            "state_lineage": "string",
+            "state_serial": "number",
+            "status": "string",
+            "terraform_version": "string",
+            "workload_identity": "string"
+          }
+        ],
+        "kind": "string",
+        "rollout": [
+          "object",
+          {
+            "backend_name": "string",
+            "canary": [
+              "object",
+              {
+                "enabled": "bool",
+                "service_name": "dynamic",
+                "target_group_arn": "dynamic",
+                "verification_header_name": "dynamic",
+                "weight_percentage": "number"
+              }
+            ],
+            "current_revision": "string",
+            "desired_revision": "string",
+            "target_id": "string",
+            "target_kind": "string",
+            "target_name": "string",
+            "target_resource": "string"
+          }
+        ],
+        "schema_version": "string",
+        "secret_refs": [
+          "object",
+          {
+            "admin_password": "string",
+            "audit_chain_key": "string",
+            "connection_encryption_master_key": "string",
+            "db_connection": "string"
+          }
+        ],
+        "stack": [
+          "object",
+          {
+            "account_id": "string",
+            "environment": "string",
+            "id": "string",
+            "name_prefix": "string",
+            "platform": "string",
+            "region": "string",
+            "runtime": "string"
+          }
+        ],
+        "workload": [
+          "object",
+          {
+            "cluster_id": "dynamic",
+            "cluster_name": "string",
+            "cpu_architecture": "string",
+            "desired_count": "number",
+            "identity": "string",
+            "kind": "string",
+            "name": "string",
+            "resource_id": "string"
+          }
+        ]
+      }
+    ]
+  },
+  "validation_contract": {
+    "sensitive": false,
+    "value": {
+      "artifacts": {
+        "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "module_source": "infrastructure/terraform/modules/aws-serverless",
+        "pins": [],
+        "terraform_root": "infrastructure/terraform/examples/aws-serverless"
+      },
+      "identity": {
+        "artifacts": [],
+        "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+        "candidate_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "contract_digest": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
+        "iac_revision": "cccccccccccccccccccccccccccccccccccccccc",
+        "iac_root": "infrastructure/terraform/examples/aws-serverless",
+        "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "module_source": "infrastructure/terraform/modules/aws-serverless",
+        "platform": {
+          "account_id": "123456789012",
+          "partition": "aws",
+          "provider": "aws",
+          "region": "us-east-1"
+        },
+        "provider_lock_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "state_lineage": "11111111-2222-3333-4444-555555555555",
+        "state_serial": 7,
+        "status": "qualified",
+        "terraform_version": "1.11.4",
+        "workload_identity": "arn:aws:iam::123456789012:role/honua-test"
+      },
+      "kind": "validation",
+      "lifecycle": {
+        "destroy_mode": "ephemeral",
+        "reuse_data_stack": false,
+        "ttl_hours": null
+      },
+      "mcp": {
+        "enabled": false,
+        "profile": null,
+        "required_tools": [],
+        "transport": null
+      },
+      "platform": {
+        "capabilities": {
+          "backup_drill": true,
+          "deploy_plan": true,
+          "http_protocol": true,
+          "idempotency": true,
+          "mcp": false,
+          "mutation": true,
+          "scale_check": false
+        },
+        "name": "aws-lambda"
+      },
+      "schema_version": "honua.operator-contract/v2",
+      "selectors": {
+        "account_id": "123456789012",
+        "cluster_arn": null,
+        "log_group": "/aws/lambda/honua-contract-dev-honua",
+        "region": "us-east-1",
+        "service_arn": null,
+        "tag_filters": {
+          "Environment": "dev",
+          "ManagedBy": "terraform",
+          "Project": "honua-server"
+        }
+      },
+      "test_data": {
+        "admin_credential_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+        "reuse_data_stack": false,
+        "seed_mode": "smoke",
+        "tenant_prefix": "honua-lambda"
+      },
+      "tests": {
+        "admin_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com/api/v1/admin",
+        "mcp_url": null,
+        "protocol_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com/v1",
+        "readiness_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com/healthz/ready"
+      }
+    },
+    "type": [
+      "object",
+      {
+        "artifacts": [
+          "object",
+          {
+            "image_digest": "string",
+            "image_reference": "string",
+            "module_source": "string",
+            "pins": [
+              "list",
+              [
+                "object",
+                {
+                  "digest": "string",
+                  "kind": "string",
+                  "name": "string",
+                  "version": "string"
+                }
+              ]
+            ],
+            "terraform_root": "string"
+          }
+        ],
+        "identity": [
+          "object",
+          {
+            "artifacts": [
+              "list",
+              [
+                "object",
+                {
+                  "digest": "string",
+                  "kind": "string",
+                  "name": "string",
+                  "version": "string"
+                }
+              ]
+            ],
+            "backend_config_digest": "string",
+            "candidate_digest": "string",
+            "contract_digest": "string",
+            "iac_revision": "string",
+            "iac_root": "string",
+            "image_digest": "string",
+            "image_reference": "string",
+            "manifest_digest": "string",
+            "module_source": "string",
+            "platform": [
+              "object",
+              {
+                "account_id": "string",
+                "partition": "string",
+                "provider": "string",
+                "region": "string"
+              }
+            ],
+            "provider_lock_digest": "string",
+            "state_lineage": "string",
+            "state_serial": "number",
+            "status": "string",
+            "terraform_version": "string",
+            "workload_identity": "string"
+          }
+        ],
+        "kind": "string",
+        "lifecycle": [
+          "object",
+          {
+            "destroy_mode": "string",
+            "reuse_data_stack": "bool",
+            "ttl_hours": "number"
+          }
+        ],
+        "mcp": [
+          "object",
+          {
+            "enabled": "bool",
+            "profile": "string",
+            "required_tools": [
+              "list",
+              "string"
+            ],
+            "transport": "string"
+          }
+        ],
+        "platform": [
+          "object",
+          {
+            "capabilities": [
+              "object",
+              {
+                "backup_drill": "bool",
+                "deploy_plan": "bool",
+                "http_protocol": "bool",
+                "idempotency": "bool",
+                "mcp": "bool",
+                "mutation": "bool",
+                "scale_check": "bool"
+              }
+            ],
+            "name": "string"
+          }
+        ],
+        "schema_version": "string",
+        "selectors": [
+          "object",
+          {
+            "account_id": "string",
+            "cluster_arn": "dynamic",
+            "log_group": "string",
+            "region": "string",
+            "service_arn": "dynamic",
+            "tag_filters": [
+              "object",
+              {
+                "Environment": "string",
+                "ManagedBy": "string",
+                "Project": "string"
+              }
+            ]
+          }
+        ],
+        "test_data": [
+          "object",
+          {
+            "admin_credential_ref": "string",
+            "reuse_data_stack": "bool",
+            "seed_mode": "string",
+            "tenant_prefix": "string"
+          }
+        ],
+        "tests": [
+          "object",
+          {
+            "admin_url": "string",
+            "mcp_url": "string",
+            "protocol_url": "string",
+            "readiness_url": "string"
+          }
+        ]
+      }
+    ]
+  },
+  "operations_contract": {
+    "sensitive": false,
+    "value": {
+      "cost": {
+        "ephemeral": true,
+        "owner": null,
+        "ttl_hours": null
+      },
+      "grouping": {
+        "name_prefix": "honua-contract",
+        "resource_group": "honua-contract-dev",
+        "tags": {
+          "Environment": "dev",
+          "ManagedBy": "terraform",
+          "Project": "honua-server"
+        }
+      },
+      "identity": {
+        "artifacts": [],
+        "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+        "candidate_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "contract_digest": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
+        "iac_revision": "cccccccccccccccccccccccccccccccccccccccc",
+        "iac_root": "infrastructure/terraform/examples/aws-serverless",
+        "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "module_source": "infrastructure/terraform/modules/aws-serverless",
+        "platform": {
+          "account_id": "123456789012",
+          "partition": "aws",
+          "provider": "aws",
+          "region": "us-east-1"
+        },
+        "provider_lock_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "state_lineage": "11111111-2222-3333-4444-555555555555",
+        "state_serial": 7,
+        "status": "qualified",
+        "terraform_version": "1.11.4",
+        "workload_identity": "arn:aws:iam::123456789012:role/honua-test"
+      },
+      "kind": "operations",
+      "observability": {
+        "log_group": "/aws/lambda/honua-contract-dev-honua",
+        "metrics_namespace": "Honua/honua-contract-dev",
+        "prometheus_canary_job": null,
+        "prometheus_job": null,
+        "telemetry_policy": "honua-http"
+      },
+      "resilience": {
+        "cache_enabled": false,
+        "database_managed": true,
+        "ingress_access_logs_enabled": true,
+        "ingress_deletion_protection": false
+      },
+      "scaling": {
+        "cpu_architecture": "x86_64",
+        "deployment_mode": "Serverless",
+        "desired_count": 0,
+        "max_capacity": 0
+      },
+      "schema_version": "honua.operator-contract/v2",
+      "secrets": {
+        "provider": "aws-secretsmanager",
+        "references": {
+          "admin_password": {
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+            "kind": "admin_password",
+            "kms_key_ref": null,
+            "managed_by": "honua-iac",
+            "provider": "aws-secretsmanager"
+          },
+          "audit_chain_key": {
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:operator-audit-chain-AbC123",
+            "kind": "audit_chain_key",
+            "kms_key_ref": null,
+            "managed_by": "operator",
+            "provider": "aws-secretsmanager"
+          },
+          "connection_encryption_master_key": {
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+            "kind": "connection_encryption_master_key",
+            "kms_key_ref": null,
+            "managed_by": "honua-iac",
+            "provider": "aws-secretsmanager"
+          },
+          "db_connection": {
+            "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+            "kind": "db_connection",
+            "kms_key_ref": null,
+            "managed_by": "honua-iac",
+            "provider": "aws-secretsmanager"
+          }
+        }
+      },
+      "state": {
+        "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+        "lineage": "11111111-2222-3333-4444-555555555555",
+        "serial": 7,
+        "terraform_root": "infrastructure/terraform/examples/aws-serverless"
+      }
+    },
+    "type": [
+      "object",
+      {
+        "cost": [
+          "object",
+          {
+            "ephemeral": "bool",
+            "owner": "string",
+            "ttl_hours": "number"
+          }
+        ],
+        "grouping": [
+          "object",
+          {
+            "name_prefix": "string",
+            "resource_group": "string",
+            "tags": [
+              "object",
+              {
+                "Environment": "string",
+                "ManagedBy": "string",
+                "Project": "string"
+              }
+            ]
+          }
+        ],
+        "identity": [
+          "object",
+          {
+            "artifacts": [
+              "list",
+              [
+                "object",
+                {
+                  "digest": "string",
+                  "kind": "string",
+                  "name": "string",
+                  "version": "string"
+                }
+              ]
+            ],
+            "backend_config_digest": "string",
+            "candidate_digest": "string",
+            "contract_digest": "string",
+            "iac_revision": "string",
+            "iac_root": "string",
+            "image_digest": "string",
+            "image_reference": "string",
+            "manifest_digest": "string",
+            "module_source": "string",
+            "platform": [
+              "object",
+              {
+                "account_id": "string",
+                "partition": "string",
+                "provider": "string",
+                "region": "string"
+              }
+            ],
+            "provider_lock_digest": "string",
+            "state_lineage": "string",
+            "state_serial": "number",
+            "status": "string",
+            "terraform_version": "string",
+            "workload_identity": "string"
+          }
+        ],
+        "kind": "string",
+        "observability": [
+          "object",
+          {
+            "log_group": "string",
+            "metrics_namespace": "string",
+            "prometheus_canary_job": "dynamic",
+            "prometheus_job": "dynamic",
+            "telemetry_policy": "string"
+          }
+        ],
+        "resilience": [
+          "object",
+          {
+            "cache_enabled": "bool",
+            "database_managed": "bool",
+            "ingress_access_logs_enabled": "bool",
+            "ingress_deletion_protection": "bool"
+          }
+        ],
+        "scaling": [
+          "object",
+          {
+            "cpu_architecture": "string",
+            "deployment_mode": "string",
+            "desired_count": "number",
+            "max_capacity": "number"
+          }
+        ],
+        "schema_version": "string",
+        "secrets": [
+          "object",
+          {
+            "provider": "string",
+            "references": [
+              "object",
+              {
+                "admin_password": [
+                  "object",
+                  {
+                    "id": "string",
+                    "kind": "string",
+                    "kms_key_ref": "dynamic",
+                    "managed_by": "string",
+                    "provider": "string"
+                  }
+                ],
+                "audit_chain_key": [
+                  "object",
+                  {
+                    "id": "string",
+                    "kind": "string",
+                    "kms_key_ref": "string",
+                    "managed_by": "string",
+                    "provider": "string"
+                  }
+                ],
+                "connection_encryption_master_key": [
+                  "object",
+                  {
+                    "id": "string",
+                    "kind": "string",
+                    "kms_key_ref": "dynamic",
+                    "managed_by": "string",
+                    "provider": "string"
+                  }
+                ],
+                "db_connection": [
+                  "object",
+                  {
+                    "id": "string",
+                    "kind": "string",
+                    "kms_key_ref": "dynamic",
+                    "managed_by": "string",
+                    "provider": "string"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "state": [
+          "object",
+          {
+            "backend_config_digest": "string",
+            "lineage": "string",
+            "serial": "number",
+            "terraform_root": "string"
+          }
+        ]
+      }
+    ]
+  },
+  "operator_contract": {
+    "sensitive": false,
+    "value": {
+      "deployment_contract": {
+        "dependencies": {
+          "cache": {
+            "enabled": false,
+            "kind": "redis",
+            "secret_ref": null
+          },
+          "database": {
+            "endpoint": "mngm7ozm",
+            "kind": "aws-rds-postgres",
+            "managed": true,
+            "secret_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf"
+          },
+          "ingress": {
+            "certificate_ref": null,
+            "endpoint": "https://abcdefghij.execute-api.us-east-1.amazonaws.com",
+            "kind": "aws-apigatewayv2-http",
+            "waf_ref": null
+          },
+          "object_storage": {
+            "bucket": null,
+            "enabled": false,
+            "kind": null,
+            "prefix": null
+          }
+        },
+        "endpoints": {
+          "admin_base_path": "/api/v1/admin",
+          "custom_domain": null,
+          "ingress_dns_name": "abcdefghij.execute-api.us-east-1.amazonaws.com",
+          "mcp_path": null,
+          "protocol_path": "/v1",
+          "public_base_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com",
+          "readiness_path": "/healthz/ready"
+        },
+        "identity": {
+          "artifacts": [],
+          "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "candidate_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "contract_digest": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
+          "iac_revision": "cccccccccccccccccccccccccccccccccccccccc",
+          "iac_root": "infrastructure/terraform/examples/aws-serverless",
+          "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "manifest_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "module_source": "infrastructure/terraform/modules/aws-serverless",
+          "platform": {
+            "account_id": "123456789012",
+            "partition": "aws",
+            "provider": "aws",
+            "region": "us-east-1"
+          },
+          "provider_lock_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "state_lineage": "11111111-2222-3333-4444-555555555555",
+          "state_serial": 7,
+          "status": "qualified",
+          "terraform_version": "1.11.4",
+          "workload_identity": "arn:aws:iam::123456789012:role/honua-test"
+        },
+        "kind": "deployment",
+        "rollout": {
+          "backend_name": "honua-gitops-aws-lambda",
+          "canary": {
+            "enabled": false,
+            "service_name": null,
+            "target_group_arn": null,
+            "verification_header_name": null,
+            "weight_percentage": 0
+          },
+          "current_revision": "43",
+          "desired_revision": "43",
+          "target_id": "honua-contract-dev-honua-live",
+          "target_kind": "AwsLambda",
+          "target_name": "honua-contract-dev-honua",
+          "target_resource": "arn:aws:lambda:us-east-1:123456789012:function:honua-contract-dev-honua:live"
+        },
+        "schema_version": "honua.operator-contract/v2",
+        "secret_refs": {
+          "admin_password": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+          "audit_chain_key": "arn:aws:secretsmanager:us-east-1:123456789012:secret:operator-audit-chain-AbC123",
+          "connection_encryption_master_key": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+          "db_connection": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf"
+        },
+        "stack": {
+          "account_id": "123456789012",
+          "environment": "dev",
+          "id": "aws-lambda",
+          "name_prefix": "honua-contract",
+          "platform": "aws",
+          "region": "us-east-1",
+          "runtime": "lambda"
+        },
+        "workload": {
+          "cluster_id": null,
+          "cluster_name": "honua-contract-dev",
+          "cpu_architecture": "x86_64",
+          "desired_count": 0,
+          "identity": "arn:aws:iam::123456789012:role/honua-test",
+          "kind": "AwsLambda",
+          "name": "honua-contract-dev-honua",
+          "resource_id": "arn:aws:lambda:us-east-1:123456789012:function:honua-contract-dev-honua:live"
+        }
+      },
+      "operations_contract": {
+        "cost": {
+          "ephemeral": true,
+          "owner": null,
+          "ttl_hours": null
+        },
+        "grouping": {
+          "name_prefix": "honua-contract",
+          "resource_group": "honua-contract-dev",
+          "tags": {
+            "Environment": "dev",
+            "ManagedBy": "terraform",
+            "Project": "honua-server"
+          }
+        },
+        "identity": {
+          "artifacts": [],
+          "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "candidate_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "contract_digest": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
+          "iac_revision": "cccccccccccccccccccccccccccccccccccccccc",
+          "iac_root": "infrastructure/terraform/examples/aws-serverless",
+          "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "manifest_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "module_source": "infrastructure/terraform/modules/aws-serverless",
+          "platform": {
+            "account_id": "123456789012",
+            "partition": "aws",
+            "provider": "aws",
+            "region": "us-east-1"
+          },
+          "provider_lock_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "state_lineage": "11111111-2222-3333-4444-555555555555",
+          "state_serial": 7,
+          "status": "qualified",
+          "terraform_version": "1.11.4",
+          "workload_identity": "arn:aws:iam::123456789012:role/honua-test"
+        },
+        "kind": "operations",
+        "observability": {
+          "log_group": "/aws/lambda/honua-contract-dev-honua",
+          "metrics_namespace": "Honua/honua-contract-dev",
+          "prometheus_canary_job": null,
+          "prometheus_job": null,
+          "telemetry_policy": "honua-http"
+        },
+        "resilience": {
+          "cache_enabled": false,
+          "database_managed": true,
+          "ingress_access_logs_enabled": true,
+          "ingress_deletion_protection": false
+        },
+        "scaling": {
+          "cpu_architecture": "x86_64",
+          "deployment_mode": "Serverless",
+          "desired_count": 0,
+          "max_capacity": 0
+        },
+        "schema_version": "honua.operator-contract/v2",
+        "secrets": {
+          "provider": "aws-secretsmanager",
+          "references": {
+            "admin_password": {
+              "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+              "kind": "admin_password",
+              "kms_key_ref": null,
+              "managed_by": "honua-iac",
+              "provider": "aws-secretsmanager"
+            },
+            "audit_chain_key": {
+              "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:operator-audit-chain-AbC123",
+              "kind": "audit_chain_key",
+              "kms_key_ref": null,
+              "managed_by": "operator",
+              "provider": "aws-secretsmanager"
+            },
+            "connection_encryption_master_key": {
+              "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+              "kind": "connection_encryption_master_key",
+              "kms_key_ref": null,
+              "managed_by": "honua-iac",
+              "provider": "aws-secretsmanager"
+            },
+            "db_connection": {
+              "id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+              "kind": "db_connection",
+              "kms_key_ref": null,
+              "managed_by": "honua-iac",
+              "provider": "aws-secretsmanager"
+            }
+          }
+        },
+        "state": {
+          "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "lineage": "11111111-2222-3333-4444-555555555555",
+          "serial": 7,
+          "terraform_root": "infrastructure/terraform/examples/aws-serverless"
+        }
+      },
+      "schema_version": "honua.operator-contract/v2",
+      "validation_contract": {
+        "artifacts": {
+          "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "module_source": "infrastructure/terraform/modules/aws-serverless",
+          "pins": [],
+          "terraform_root": "infrastructure/terraform/examples/aws-serverless"
+        },
+        "identity": {
+          "artifacts": [],
+          "backend_config_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "candidate_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "contract_digest": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
+          "iac_revision": "cccccccccccccccccccccccccccccccccccccccc",
+          "iac_root": "infrastructure/terraform/examples/aws-serverless",
+          "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "image_reference": "123456789012.dkr.ecr.us-east-1.amazonaws.com/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "manifest_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "module_source": "infrastructure/terraform/modules/aws-serverless",
+          "platform": {
+            "account_id": "123456789012",
+            "partition": "aws",
+            "provider": "aws",
+            "region": "us-east-1"
+          },
+          "provider_lock_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "state_lineage": "11111111-2222-3333-4444-555555555555",
+          "state_serial": 7,
+          "status": "qualified",
+          "terraform_version": "1.11.4",
+          "workload_identity": "arn:aws:iam::123456789012:role/honua-test"
+        },
+        "kind": "validation",
+        "lifecycle": {
+          "destroy_mode": "ephemeral",
+          "reuse_data_stack": false,
+          "ttl_hours": null
+        },
+        "mcp": {
+          "enabled": false,
+          "profile": null,
+          "required_tools": [],
+          "transport": null
+        },
+        "platform": {
+          "capabilities": {
+            "backup_drill": true,
+            "deploy_plan": true,
+            "http_protocol": true,
+            "idempotency": true,
+            "mcp": false,
+            "mutation": true,
+            "scale_check": false
+          },
+          "name": "aws-lambda"
+        },
+        "schema_version": "honua.operator-contract/v2",
+        "selectors": {
+          "account_id": "123456789012",
+          "cluster_arn": null,
+          "log_group": "/aws/lambda/honua-contract-dev-honua",
+          "region": "us-east-1",
+          "service_arn": null,
+          "tag_filters": {
+            "Environment": "dev",
+            "ManagedBy": "terraform",
+            "Project": "honua-server"
+          }
+        },
+        "test_data": {
+          "admin_credential_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:honua-mock-AbCdEf",
+          "reuse_data_stack": false,
+          "seed_mode": "smoke",
+          "tenant_prefix": "honua-lambda"
+        },
+        "tests": {
+          "admin_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com/api/v1/admin",
+          "mcp_url": null,
+          "protocol_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com/v1",
+          "readiness_url": "https://abcdefghij.execute-api.us-east-1.amazonaws.com/healthz/ready"
+        }
+      }
+    },
+    "type": [
+      "object",
+      {
+        "deployment_contract": [
+          "object",
+          {
+            "dependencies": [
+              "object",
+              {
+                "cache": [
+                  "object",
+                  {
+                    "enabled": "bool",
+                    "kind": "string",
+                    "secret_ref": "dynamic"
+                  }
+                ],
+                "database": [
+                  "object",
+                  {
+                    "endpoint": "string",
+                    "kind": "string",
+                    "managed": "bool",
+                    "secret_ref": "string"
+                  }
+                ],
+                "ingress": [
+                  "object",
+                  {
+                    "certificate_ref": "dynamic",
+                    "endpoint": "string",
+                    "kind": "string",
+                    "waf_ref": "dynamic"
+                  }
+                ],
+                "object_storage": [
+                  "object",
+                  {
+                    "bucket": "string",
+                    "enabled": "bool",
+                    "kind": "string",
+                    "prefix": "string"
+                  }
+                ]
+              }
+            ],
+            "endpoints": [
+              "object",
+              {
+                "admin_base_path": "string",
+                "custom_domain": "string",
+                "ingress_dns_name": "string",
+                "mcp_path": "string",
+                "protocol_path": "string",
+                "public_base_url": "string",
+                "readiness_path": "string"
+              }
+            ],
+            "identity": [
+              "object",
+              {
+                "artifacts": [
+                  "list",
+                  [
+                    "object",
+                    {
+                      "digest": "string",
+                      "kind": "string",
+                      "name": "string",
+                      "version": "string"
+                    }
+                  ]
+                ],
+                "backend_config_digest": "string",
+                "candidate_digest": "string",
+                "contract_digest": "string",
+                "iac_revision": "string",
+                "iac_root": "string",
+                "image_digest": "string",
+                "image_reference": "string",
+                "manifest_digest": "string",
+                "module_source": "string",
+                "platform": [
+                  "object",
+                  {
+                    "account_id": "string",
+                    "partition": "string",
+                    "provider": "string",
+                    "region": "string"
+                  }
+                ],
+                "provider_lock_digest": "string",
+                "state_lineage": "string",
+                "state_serial": "number",
+                "status": "string",
+                "terraform_version": "string",
+                "workload_identity": "string"
+              }
+            ],
+            "kind": "string",
+            "rollout": [
+              "object",
+              {
+                "backend_name": "string",
+                "canary": [
+                  "object",
+                  {
+                    "enabled": "bool",
+                    "service_name": "dynamic",
+                    "target_group_arn": "dynamic",
+                    "verification_header_name": "dynamic",
+                    "weight_percentage": "number"
+                  }
+                ],
+                "current_revision": "string",
+                "desired_revision": "string",
+                "target_id": "string",
+                "target_kind": "string",
+                "target_name": "string",
+                "target_resource": "string"
+              }
+            ],
+            "schema_version": "string",
+            "secret_refs": [
+              "object",
+              {
+                "admin_password": "string",
+                "audit_chain_key": "string",
+                "connection_encryption_master_key": "string",
+                "db_connection": "string"
+              }
+            ],
+            "stack": [
+              "object",
+              {
+                "account_id": "string",
+                "environment": "string",
+                "id": "string",
+                "name_prefix": "string",
+                "platform": "string",
+                "region": "string",
+                "runtime": "string"
+              }
+            ],
+            "workload": [
+              "object",
+              {
+                "cluster_id": "dynamic",
+                "cluster_name": "string",
+                "cpu_architecture": "string",
+                "desired_count": "number",
+                "identity": "string",
+                "kind": "string",
+                "name": "string",
+                "resource_id": "string"
+              }
+            ]
+          }
+        ],
+        "operations_contract": [
+          "object",
+          {
+            "cost": [
+              "object",
+              {
+                "ephemeral": "bool",
+                "owner": "string",
+                "ttl_hours": "number"
+              }
+            ],
+            "grouping": [
+              "object",
+              {
+                "name_prefix": "string",
+                "resource_group": "string",
+                "tags": [
+                  "object",
+                  {
+                    "Environment": "string",
+                    "ManagedBy": "string",
+                    "Project": "string"
+                  }
+                ]
+              }
+            ],
+            "identity": [
+              "object",
+              {
+                "artifacts": [
+                  "list",
+                  [
+                    "object",
+                    {
+                      "digest": "string",
+                      "kind": "string",
+                      "name": "string",
+                      "version": "string"
+                    }
+                  ]
+                ],
+                "backend_config_digest": "string",
+                "candidate_digest": "string",
+                "contract_digest": "string",
+                "iac_revision": "string",
+                "iac_root": "string",
+                "image_digest": "string",
+                "image_reference": "string",
+                "manifest_digest": "string",
+                "module_source": "string",
+                "platform": [
+                  "object",
+                  {
+                    "account_id": "string",
+                    "partition": "string",
+                    "provider": "string",
+                    "region": "string"
+                  }
+                ],
+                "provider_lock_digest": "string",
+                "state_lineage": "string",
+                "state_serial": "number",
+                "status": "string",
+                "terraform_version": "string",
+                "workload_identity": "string"
+              }
+            ],
+            "kind": "string",
+            "observability": [
+              "object",
+              {
+                "log_group": "string",
+                "metrics_namespace": "string",
+                "prometheus_canary_job": "dynamic",
+                "prometheus_job": "dynamic",
+                "telemetry_policy": "string"
+              }
+            ],
+            "resilience": [
+              "object",
+              {
+                "cache_enabled": "bool",
+                "database_managed": "bool",
+                "ingress_access_logs_enabled": "bool",
+                "ingress_deletion_protection": "bool"
+              }
+            ],
+            "scaling": [
+              "object",
+              {
+                "cpu_architecture": "string",
+                "deployment_mode": "string",
+                "desired_count": "number",
+                "max_capacity": "number"
+              }
+            ],
+            "schema_version": "string",
+            "secrets": [
+              "object",
+              {
+                "provider": "string",
+                "references": [
+                  "object",
+                  {
+                    "admin_password": [
+                      "object",
+                      {
+                        "id": "string",
+                        "kind": "string",
+                        "kms_key_ref": "dynamic",
+                        "managed_by": "string",
+                        "provider": "string"
+                      }
+                    ],
+                    "audit_chain_key": [
+                      "object",
+                      {
+                        "id": "string",
+                        "kind": "string",
+                        "kms_key_ref": "string",
+                        "managed_by": "string",
+                        "provider": "string"
+                      }
+                    ],
+                    "connection_encryption_master_key": [
+                      "object",
+                      {
+                        "id": "string",
+                        "kind": "string",
+                        "kms_key_ref": "dynamic",
+                        "managed_by": "string",
+                        "provider": "string"
+                      }
+                    ],
+                    "db_connection": [
+                      "object",
+                      {
+                        "id": "string",
+                        "kind": "string",
+                        "kms_key_ref": "dynamic",
+                        "managed_by": "string",
+                        "provider": "string"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "state": [
+              "object",
+              {
+                "backend_config_digest": "string",
+                "lineage": "string",
+                "serial": "number",
+                "terraform_root": "string"
+              }
+            ]
+          }
+        ],
+        "schema_version": "string",
+        "validation_contract": [
+          "object",
+          {
+            "artifacts": [
+              "object",
+              {
+                "image_digest": "string",
+                "image_reference": "string",
+                "module_source": "string",
+                "pins": [
+                  "list",
+                  [
+                    "object",
+                    {
+                      "digest": "string",
+                      "kind": "string",
+                      "name": "string",
+                      "version": "string"
+                    }
+                  ]
+                ],
+                "terraform_root": "string"
+              }
+            ],
+            "identity": [
+              "object",
+              {
+                "artifacts": [
+                  "list",
+                  [
+                    "object",
+                    {
+                      "digest": "string",
+                      "kind": "string",
+                      "name": "string",
+                      "version": "string"
+                    }
+                  ]
+                ],
+                "backend_config_digest": "string",
+                "candidate_digest": "string",
+                "contract_digest": "string",
+                "iac_revision": "string",
+                "iac_root": "string",
+                "image_digest": "string",
+                "image_reference": "string",
+                "manifest_digest": "string",
+                "module_source": "string",
+                "platform": [
+                  "object",
+                  {
+                    "account_id": "string",
+                    "partition": "string",
+                    "provider": "string",
+                    "region": "string"
+                  }
+                ],
+                "provider_lock_digest": "string",
+                "state_lineage": "string",
+                "state_serial": "number",
+                "status": "string",
+                "terraform_version": "string",
+                "workload_identity": "string"
+              }
+            ],
+            "kind": "string",
+            "lifecycle": [
+              "object",
+              {
+                "destroy_mode": "string",
+                "reuse_data_stack": "bool",
+                "ttl_hours": "number"
+              }
+            ],
+            "mcp": [
+              "object",
+              {
+                "enabled": "bool",
+                "profile": "string",
+                "required_tools": [
+                  "list",
+                  "string"
+                ],
+                "transport": "string"
+              }
+            ],
+            "platform": [
+              "object",
+              {
+                "capabilities": [
+                  "object",
+                  {
+                    "backup_drill": "bool",
+                    "deploy_plan": "bool",
+                    "http_protocol": "bool",
+                    "idempotency": "bool",
+                    "mcp": "bool",
+                    "mutation": "bool",
+                    "scale_check": "bool"
+                  }
+                ],
+                "name": "string"
+              }
+            ],
+            "schema_version": "string",
+            "selectors": [
+              "object",
+              {
+                "account_id": "string",
+                "cluster_arn": "dynamic",
+                "log_group": "string",
+                "region": "string",
+                "service_arn": "dynamic",
+                "tag_filters": [
+                  "object",
+                  {
+                    "Environment": "string",
+                    "ManagedBy": "string",
+                    "Project": "string"
+                  }
+                ]
+              }
+            ],
+            "test_data": [
+              "object",
+              {
+                "admin_credential_ref": "string",
+                "reuse_data_stack": "bool",
+                "seed_mode": "string",
+                "tenant_prefix": "string"
+              }
+            ],
+            "tests": [
+              "object",
+              {
+                "admin_url": "string",
+                "mcp_url": "string",
+                "protocol_url": "string",
+                "readiness_url": "string"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "runtime_binding_contract": {
+    "sensitive": false,
+    "value": {
+      "backend": "honua-gitops-aws-lambda",
+      "environment": "dev",
+      "platform": {
+        "accountId": "123456789012",
+        "partition": "aws",
+        "region": "us-east-1"
+      },
+      "resourceIdentity": {
+        "aliasArn": "arn:aws:lambda:us-east-1:123456789012:function:honua-contract-dev-honua:live",
+        "apiGatewayId": "sxv8hi3v",
+        "apiGatewayIntegrationAliasArn": "arn:aws:lambda:us-east-1:123456789012:function:honua-contract-dev-honua:live",
+        "apiGatewayIntegrationId": "58xyvd9k",
+        "apiGatewayRouteId": "rd4dr6j5",
+        "apiGatewayRouteKey": "ANY /{proxy+}",
+        "apiGatewayStage": "$default",
+        "functionArn": "arn:aws:lambda:us-east-1:123456789012:function:honua-contract-dev-honua",
+        "publishedVersion": "43"
+      },
+      "runtimeKind": "aws-lambda",
+      "schemaVersion": "honua.runtime-binding/v1",
+      "targetId": "honua-contract-dev-honua-live",
+      "targetKind": "AwsLambda"
+    },
+    "type": [
+      "object",
+      {
+        "backend": "string",
+        "environment": "string",
+        "platform": [
+          "object",
+          {
+            "accountId": "string",
+            "partition": "string",
+            "region": "string"
+          }
+        ],
+        "resourceIdentity": [
+          "object",
+          {
+            "aliasArn": "string",
+            "apiGatewayId": "string",
+            "apiGatewayIntegrationAliasArn": "string",
+            "apiGatewayIntegrationId": "string",
+            "apiGatewayRouteId": "string",
+            "apiGatewayRouteKey": "string",
+            "apiGatewayStage": "string",
+            "functionArn": "string",
+            "publishedVersion": "string"
+          }
+        ],
+        "runtimeKind": "string",
+        "schemaVersion": "string",
+        "targetId": "string",
+        "targetKind": "string"
+      }
+    ]
+  },
+  "operator_contract_digest": {
+    "sensitive": false,
+    "value": "b02ec0aa470426be18c5c2af4c5992b90c3040f1a24cf70042f2f79d526a1a1b",
+    "type": "string"
+  }
+}

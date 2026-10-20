@@ -28,6 +28,11 @@ internal sealed record OperationRuntime(
     // Off by default for the same reason: it stays off until an environment is qualified.
     bool ProtectedRecoveryEnabled = false)
 {
+    /// <summary>Host-selected target runtime. ECS remains the legacy configuration default.</summary>
+    internal string RuntimeKind { get; init; } = "aws-ecs";
+    internal string? RuntimeBackend { get; init; }
+    internal string? ServerTargetId { get; init; }
+
     private static readonly string[] DefaultEnvironments = ["dev", "staging", "prod"];
     private static readonly string[] DefaultProductionEnvironments = ["prod", "production", "prd"];
 
@@ -125,6 +130,15 @@ internal sealed record OperationRuntime(
             Environment.GetEnvironmentVariable(DeployTargetIdVariable),
             DeployTargetIdVariable);
 
+        var runtimeProfile = ProvisioningRuntimeProfile.Resolve(Environment.GetEnvironmentVariable(ProvisioningRuntimeProfile.EnvironmentVariable));
+        if (runtimeProfile.RuntimeKind == "aws-eks" && !string.Equals(gitOpsTool, "honua-gitops", StringComparison.Ordinal))
+            throw new InvalidOperationException("Native EKS deployment uses Honua approval and Kubernetes Deployment APIs without any external GitOps controller.");
+        var runtimeBackend = Environment.GetEnvironmentVariable("HONUA_DEVOPS_RUNTIME_BACKEND")?.Trim();
+        var serverTargetId = NormalizeOptionalIdentifier(Environment.GetEnvironmentVariable("HONUA_DEVOPS_SERVER_TARGET_ID"), "HONUA_DEVOPS_SERVER_TARGET_ID");
+        if ((!string.IsNullOrEmpty(runtimeBackend) && runtimeBackend != runtimeProfile.Backend) ||
+            runtimeProfile.RuntimeKind != "aws-ecs" && (string.IsNullOrEmpty(runtimeBackend) || serverTargetId is null || deployTargetId is null))
+            throw new InvalidOperationException("The host runtime requires an exact backend and explicit registered server/deploy-target binding.");
+
         string[] productionEnvironments = ParseProductionEnvironments(
             Environment.GetEnvironmentVariable(ProductionEnvironmentsVariable));
 
@@ -183,7 +197,12 @@ internal sealed record OperationRuntime(
             candidateReference,
             approvalSigningMode,
             approvalIssuerKeyArns,
-            protectedRecoveryEnabled);
+            protectedRecoveryEnabled)
+        {
+            RuntimeKind = runtimeProfile.RuntimeKind,
+            RuntimeBackend = string.IsNullOrEmpty(runtimeBackend) ? null : runtimeBackend,
+            ServerTargetId = serverTargetId
+        };
     }
 
     private static string ParseApprovalSigningMode(string? value)

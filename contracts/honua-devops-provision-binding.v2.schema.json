@@ -1,0 +1,1115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://honua.io/schemas/honua-devops-provision-binding.v2.json",
+  "title": "honua-devops target-aware provision binding v2",
+  "description": "Target-aware proof derived from exact applied IaC lineage and actual provider observations. Runtime and resource identity are never caller overrides. ECS v1 remains supported separately. Configured facts or offline tests do not establish live qualification.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "lineage",
+    "endpoint",
+    "endpointSource",
+    "adminKeySecretRefSource",
+    "candidateReference",
+    "proxyArtifact",
+    "secretReferenceSha256",
+    "handoffSha256",
+    "verificationReceiptId",
+    "verificationReceiptSha256",
+    "operatorContract",
+    "iacExecution",
+    "execReceiptSha256",
+    "execReceipt",
+    "teardownHandle",
+    "runtime",
+    "serverTarget"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "honua.devops.provision-binding/v2"
+    },
+    "lineage": {
+      "type": "object",
+      "required": [
+        "provisioningOperationId",
+        "planSha256",
+        "planMetadataDigest",
+        "approvalReceiptId",
+        "approvalReceiptSha256",
+        "applyAuditEventId",
+        "actuatorReceiptReference",
+        "handoffReceiptSha256",
+        "handoffVerificationReceiptId",
+        "handoffVerificationReceiptSha256",
+        "rootProvisioningOperationId"
+      ],
+      "properties": {
+        "provisioningOperationId": {
+          "$ref": "#/$defs/provisioningOperationId"
+        },
+        "planSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "planMetadataDigest": {
+          "description": "The honua-iac exact-plan metadata digest the approval bound and the apply wrapper enforced.",
+          "$ref": "#/$defs/sha256"
+        },
+        "approvalReceiptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "approvalReceiptSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "applyAuditEventId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "actuatorReceiptReference": {
+          "description": "Content address of the exact honua-iac execution receipt bytes retained by the apply evidence reference. The execReceipt object is a structured projection, not a byte-preserving serialization.",
+          "type": "string",
+          "pattern": "^urn:sha256:[0-9a-f]{64}$"
+        },
+        "handoffReceiptSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "handoffVerificationReceiptId": {
+          "$ref": "#/$defs/receiptUrn"
+        },
+        "handoffVerificationReceiptSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "rootProvisioningOperationId": {
+          "$ref": "#/$defs/provisioningOperationId"
+        },
+        "serverOperationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serverProposalId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serverDecisionReference": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serverExecutionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "releaseReceiptReference": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "releaseReceiptSha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "reference",
+              "sha256",
+              "byteLength"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reference": {
+                "$ref": "#/$defs/receiptUrn"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "byteLength": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "endpoint": {
+      "type": "string",
+      "format": "uri"
+    },
+    "endpointSource": {
+      "$ref": "#/$defs/identitySource"
+    },
+    "adminKeySecretRefSource": {
+      "$ref": "#/$defs/identitySource"
+    },
+    "candidateReference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proxyArtifact": {
+      "type": "object",
+      "required": [
+        "package",
+        "integrity"
+      ],
+      "properties": {
+        "package": {
+          "type": "string",
+          "pattern": "^@honua/mcp-server@[0-9]+\\.[0-9]+\\.[0-9]+"
+        },
+        "integrity": {
+          "type": "string",
+          "pattern": "^sha(256|384|512)-"
+        }
+      },
+      "additionalProperties": false
+    },
+    "secretReferenceSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "handoffSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "verificationReceiptId": {
+      "$ref": "#/$defs/receiptUrn"
+    },
+    "verificationReceiptSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "operatorContract": {
+      "description": "What the stack's own honua.operator-contract/v2 projection reported.",
+      "type": "object",
+      "required": [
+        "digest",
+        "status",
+        "endpoint"
+      ],
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "status": {
+          "const": "qualified"
+        },
+        "endpoint": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "additionalProperties": false
+    },
+    "iacExecution": {
+      "$ref": "#/$defs/iacExecution"
+    },
+    "execReceiptSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "execReceipt": {
+      "description": "Structured projection of the honua.iac.exec-receipt document. Resolve the apply evidence reference to re-hash the exact original bytes; serializing this object again may change whitespace.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "kind",
+        "plan_metadata_digest",
+        "state_after"
+      ],
+      "properties": {
+        "kind": {
+          "const": "honua.iac.exec-receipt"
+        },
+        "schema_version": {
+          "const": "v1"
+        }
+      },
+      "additionalProperties": true
+    },
+    "teardownHandle": {
+      "$ref": "#/$defs/teardownHandle"
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "targetKind",
+        "backend",
+        "resourceIdentity",
+        "observation"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "aws-ecs",
+            "aws-lambda",
+            "aws-eks"
+          ]
+        },
+        "targetKind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "backend": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "resourceIdentity": {
+          "type": "object"
+        },
+        "observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "evidenceMode",
+            "observedAt",
+            "receiptSha256"
+          ],
+          "properties": {
+            "evidenceMode": {
+              "const": "live-provider-read"
+            },
+            "observedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "receiptSha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "aws-ecs"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targetKind": {
+                "const": "AwsEcs"
+              },
+              "backend": {
+                "const": "honua-aws-ecs-alb"
+              },
+              "resourceIdentity": {
+                "type": "object",
+                "required": [
+                  "clusterArn",
+                  "serviceArn",
+                  "taskDefinitionArn",
+                  "listenerRuleArn",
+                  "stableTargetGroupArn",
+                  "canaryTargetGroupArn"
+                ],
+                "properties": {
+                  "clusterArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:cluster/.+"
+                  },
+                  "serviceArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:service/.+"
+                  },
+                  "taskDefinitionArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/.+:[0-9]+$"
+                  },
+                  "listenerRuleArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener-rule/.+"
+                  },
+                  "stableTargetGroupArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:targetgroup/.+"
+                  },
+                  "canaryTargetGroupArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:targetgroup/.+"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "aws-lambda"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targetKind": {
+                "const": "AwsLambda"
+              },
+              "backend": {
+                "const": "honua-gitops-aws-lambda"
+              },
+              "resourceIdentity": {
+                "type": "object",
+                "required": [
+                  "functionArn",
+                  "aliasArn",
+                  "publishedVersion",
+                  "apiGatewayId",
+                  "apiGatewayIntegrationId",
+                  "apiGatewayIntegrationAliasArn",
+                  "apiGatewayStage",
+                  "apiGatewayRouteId",
+                  "apiGatewayRouteKey"
+                ],
+                "properties": {
+                  "functionArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[^:]+$"
+                  },
+                  "aliasArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$"
+                  },
+                  "publishedVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^[1-9][0-9]*$"
+                  },
+                  "apiGatewayId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "apiGatewayIntegrationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "apiGatewayIntegrationAliasArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$"
+                  },
+                  "apiGatewayStage": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "apiGatewayRouteId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "apiGatewayRouteKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "aws-eks"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targetKind": {
+                "const": "Kubernetes"
+              },
+              "backend": {
+                "const": "honua-kubernetes-deployment"
+              },
+              "resourceIdentity": {
+                "type": "object",
+                "required": [
+                  "clusterArn",
+                  "apiServer",
+                  "caSha256",
+                  "namespace",
+                  "deploymentName",
+                  "deploymentUid",
+                  "containerName",
+                  "serviceName",
+                  "serviceUid",
+                  "routeKind",
+                  "routeUid",
+                  "routeName",
+                  "clusterUid",
+                  "replicaSetUid",
+                  "imageDigest",
+                  "observedGeneration",
+                  "availableReplicas",
+                  "updatedReplicas",
+                  "servicePort",
+                  "targetPort",
+                  "publicUrl"
+                ],
+                "properties": {
+                  "clusterArn": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws[a-z-]*:eks:[a-z0-9-]+:[0-9]{12}:cluster/.+"
+                  },
+                  "apiServer": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "format": "uri"
+                  },
+                  "caSha256": {
+                    "$ref": "#/$defs/sha256",
+                    "description": "SHA-256 of the single cluster CA certificate DER bytes; PEM/base64 text hashing is not equivalent."
+                  },
+                  "namespace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "containerName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "serviceName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "serviceUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "routeKind": {
+                    "enum": [
+                      "Ingress",
+                      "LoadBalancerService"
+                    ]
+                  },
+                  "routeUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "routeName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "deploymentName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "deploymentUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "clusterUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "replicaSetUid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "imageDigest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "observedGeneration": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "availableReplicas": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "updatedReplicas": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "servicePort": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63
+                  },
+                  "targetPort": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63
+                  },
+                  "routeHost": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "routePath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "routePathType": {
+                    "enum": [
+                      "Exact",
+                      "Prefix"
+                    ]
+                  },
+                  "publicUrl": {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https://",
+                    "maxLength": 2048
+                  },
+                  "loadBalancerArn": {
+                    "type": "string",
+                    "maxLength": 1024,
+                    "pattern": "^arn:aws(-us-gov|-cn)?:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/(app|net)/[A-Za-z0-9-]+/[a-f0-9]+$"
+                  },
+                  "dnsZoneId": {
+                    "type": "string",
+                    "pattern": "^(/hostedzone/)?Z[A-Z0-9]+$"
+                  },
+                  "dnsRecordName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 254
+                  }
+                },
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "routeKind": {
+                          "const": "Ingress"
+                        }
+                      }
+                    },
+                    "then": {
+                      "required": [
+                        "routeHost",
+                        "routePath",
+                        "routePathType",
+                        "loadBalancerArn",
+                        "dnsZoneId",
+                        "dnsRecordName"
+                      ]
+                    }
+                  },
+                  {
+                    "if": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "loadBalancerArn"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "dnsZoneId"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "dnsRecordName"
+                          ]
+                        }
+                      ]
+                    },
+                    "then": {
+                      "required": [
+                        "loadBalancerArn",
+                        "dnsZoneId",
+                        "dnsRecordName"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "serverTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serverTargetId",
+        "deployTargetId",
+        "environment",
+        "tenantId",
+        "runtimeKind",
+        "backend",
+        "targetName",
+        "resourceParameters",
+        "usesCustomProviderEndpoint"
+      ],
+      "properties": {
+        "serverTargetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "deployTargetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tenantId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Exact nullable tenant returned explicitly by canonical server authorization; missing is unsupported, null is unbound/disabled, never inferred from request headers."
+        },
+        "runtimeKind": {
+          "enum": [
+            "aws-ecs",
+            "aws-lambda",
+            "aws-eks"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "targetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "resourceParameters": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "usesCustomProviderEndpoint": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableSha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^([0-9a-f]{64})?$"
+    },
+    "receiptUrn": {
+      "type": "string",
+      "pattern": "^urn:sha256:[0-9a-f]{64}$"
+    },
+    "provisioningOperationId": {
+      "type": "string",
+      "pattern": "^urn:honua:provisioning:[0-9a-f]{32}$"
+    },
+    "identitySource": {
+      "description": "Where the endpoint / admin-key locator came from. `operator-contract` means the stack reported it; `caller-override` means a caller supplied it instead and the binding is not self-attesting for that value.",
+      "enum": [
+        "operator-contract",
+        "caller-override"
+      ]
+    },
+    "iacExecution": {
+      "type": "object",
+      "required": [
+        "planMetadataDigest",
+        "savedPlanSha256",
+        "terraformRoot",
+        "iacRevision",
+        "iacTreeDigest",
+        "terraformVersion",
+        "providerLockDigest",
+        "inputDigest",
+        "backend",
+        "executionIdentity",
+        "state",
+        "operatorContractDigest",
+        "evidenceMode",
+        "releaseQualified"
+      ],
+      "properties": {
+        "planMetadataDigest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "savedPlanSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "terraformRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iacRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iacTreeDigest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "terraformVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "providerLockDigest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "inputDigest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "backend": {
+          "type": "object",
+          "required": [
+            "backendConfigDigest",
+            "backendKind",
+            "isRemote",
+            "workspace",
+            "objectKey",
+            "region"
+          ],
+          "properties": {
+            "backendConfigDigest": {
+              "$ref": "#/$defs/sha256"
+            },
+            "backendKind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "isRemote": {
+              "type": "boolean"
+            },
+            "workspace": {
+              "type": "string",
+              "minLength": 1
+            },
+            "objectKey": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "region": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "executionIdentity": {
+          "type": "object",
+          "required": [
+            "assumedRoleArn",
+            "roleId",
+            "accountId",
+            "partition",
+            "issuer",
+            "credentialKind"
+          ],
+          "properties": {
+            "assumedRoleArn": {
+              "type": "string",
+              "minLength": 1
+            },
+            "roleId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "accountId": {
+              "type": "string",
+              "pattern": "^[0-9]{12}$"
+            },
+            "partition": {
+              "type": "string",
+              "minLength": 1
+            },
+            "issuer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "credentialKind": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "state": {
+          "type": "object",
+          "required": [
+            "lineageBefore",
+            "serialBefore",
+            "lineageAfter",
+            "serialAfter"
+          ],
+          "properties": {
+            "lineageBefore": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "serialBefore": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "lineageAfter": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "serialAfter": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "operatorContractDigest": {
+          "$ref": "#/$defs/nullableSha256"
+        },
+        "evidenceMode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "releaseQualified": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "teardownHandle": {
+      "description": "A dereferenceable teardown target: the exact root, workspace, backend object and state lineage a destroy would act on.",
+      "type": "object",
+      "required": [
+        "kind",
+        "terraformRoot",
+        "action",
+        "workspace",
+        "backendConfigDigest",
+        "objectKey",
+        "stateLineage",
+        "stateSerial",
+        "accountId",
+        "region"
+      ],
+      "properties": {
+        "kind": {
+          "const": "honua.iac.terraform-teardown/v1"
+        },
+        "terraformRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backendConfigDigest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "objectKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stateLineage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stateSerial": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "accountId": {
+          "type": "string",
+          "pattern": "^[0-9]{12}$"
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "kind": {
+                "const": "aws-ecs"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "serverTarget": {
+            "properties": {
+              "runtimeKind": {
+                "const": "aws-ecs"
+              },
+              "backend": {
+                "const": "honua-aws-ecs-alb"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "kind": {
+                "const": "aws-lambda"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "serverTarget": {
+            "properties": {
+              "runtimeKind": {
+                "const": "aws-lambda"
+              },
+              "backend": {
+                "const": "honua-gitops-aws-lambda"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "kind": {
+                "const": "aws-eks"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "serverTarget": {
+            "properties": {
+              "runtimeKind": {
+                "const": "aws-eks"
+              },
+              "backend": {
+                "const": "honua-kubernetes-deployment"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -26,11 +26,14 @@ plus optional `create_scoped_gitops_pull_request` and
 The caller cannot invoke `record_gitops_proposal_decision`, private experimental
 rollback, arbitrary process execution, or any unlisted tool through this bridge.
 
-## ECS provisioning and authenticated handoff
+## ECS and Lambda provisioning and authenticated handoff
 
-The concrete supported provisioning adapter is `aws-ecs`, size `small`, using
-`Provisioning/HonuaOperationsToolkit.Provisioning.cs` and the existing exact-plan
-Terraform substrate. Plan produces a durable provisioning operation, saved-plan
+The implemented provisioning adapters are `aws-ecs` and `aws-lambda`, size
+`small`, using `Provisioning/HonuaOperationsToolkit.Provisioning.cs` and the
+existing exact-plan Terraform substrate. The host selects the runtime through
+`HONUA_DEVOPS_RUNTIME_KIND`; a prompt cannot change that authorization binding.
+ECS uses the `aws` Terraform root and Lambda uses `aws-serverless`.
+Plan produces a durable provisioning operation, saved-plan
 metadata digest and review challenge. A separate trusted issuer signs approval
 for that exact operation, plan, action, stack and environment. Apply consumes the
 saved plan; it does not regenerate a different plan after approval. The canonical
@@ -43,6 +46,37 @@ contract v2 output. `verify_install_handoff` resolves its secret reference only
 inside the child transport and verifies health, Admin authentication, MCP
 negotiation and the actual tool roster before producing a binding receipt.
 Provisioning success alone never means an installed target is ready.
+
+Lambda additionally compares the retained applied contract with the registered
+runtime authority and read-only AWS observations: the account, function ARN,
+serving alias and immutable version, image digest, API Gateway integration,
+route and stage. The current observer accepts the default execute-api hostname;
+custom-domain mappings are not qualified. After public probes, the verifier
+reloads registered authority and refuses a revoked or changed target.
+
+These are implemented checks, not a live Lambda qualification result. The Lambda
+variable contract requires `skip_migrations=true`; first-install database
+initialization and out-of-band migrations still need a qualified workflow before
+advertising unattended setup. A generated contract or successful Terraform apply
+does not close that gap.
+
+The migration preview additionally admits the non-secret `migration_image` and
+`migration_packaged_manifest_sha256` pins together, with optional
+`migration_target_locator_sha256` from the canonical artifact inspector. The
+migration image must be digest-pinned in the serving image's repository; hashes
+must be lowercase SHA-256. These values are included in the reviewed plan's
+variable digest, so changing any pin requires a new plan and approval. Connection
+strings, secrets and arbitrary environment overrides remain out of band. This
+requires a matching `honua-iac` root that implements the isolated migration
+profile; it does not establish public artifact availability or live execution.
+
+Native EKS provisioning and install-handoff verification are not implemented in
+this DevOps surface. Its profile identifies `honua-kubernetes-deployment`, but
+`install_handoff` refuses EKS rather than treating cluster metadata as proof of a
+running workload. It is not in the Terraform provisioning stack allowlist.
+The complete workflow still requires native Deployment, serving-port and public
+route observation and actual qualification, with no Argo dependency;
+that profile alone is not evidence of provisioning, rollout or rollback.
 
 ## Git and Studio configuration
 
@@ -100,9 +134,12 @@ and opt-in `AwsEcsAlbRealCertificationTests` /
 `AwsEcsAlbRollbackFailureRealCertificationTests`. The unified journey still needs
 a separately authorized isolated live upgrade,
 failure injection, compensation, restart/reconcile and actual revision/health
-verification against the ECS adapter. Lambda/EKS are unsupported in this bridge
-until real adapters and equivalent execution evidence exist. Runtime adapter
-planning strings do not establish adapter execution support.
+verification against the ECS adapter. Lambda planning and handoff checks, and
+native EKS handoff checks, do not qualify their Day-2 execution or recovery. Each
+runtime still needs actual install, upgrade, failed upgrade and rollback evidence
+through the unified connection, using its canonical server backend and separate
+human approval. Runtime adapter planning strings do not establish execution
+support.
 
 ## Evidence levels
 

@@ -133,7 +133,8 @@ internal static class ProvisioningSubstrateFixtures
         IApprovalSignatureProvider? signatureProvider = null,
         string? issuer = null,
         string? declaredSigningMode = null,
-        bool omitSigningMode = false)
+        bool omitSigningMode = false,
+        string stack = "aws-ecs")
     {
         ProvisioningLineage lineage = Assert.IsType<ProvisioningLineage>(plan.ProvisioningLineage);
         DateTimeOffset issued = DateTimeOffset.UtcNow.AddSeconds(-1);
@@ -158,7 +159,7 @@ internal static class ProvisioningSubstrateFixtures
             lineage.PlanSha256!,
             planMetadataDigest,
             action,
-            "aws-ecs",
+            stack,
             environment,
             "approved",
             issued,
@@ -176,7 +177,7 @@ internal static class ProvisioningSubstrateFixtures
             ["planSha256"] = lineage.PlanSha256,
             ["planMetadataDigest"] = planMetadataDigest,
             ["action"] = action,
-            ["stack"] = "aws-ecs",
+            ["stack"] = stack,
             ["environment"] = environment,
             ["decision"] = "approved",
             ["signingMode"] = signingMode,
@@ -247,12 +248,13 @@ internal sealed class TerraformTestRoot : IDisposable
     internal TerraformTestRoot(
         bool withSubstrateScripts = true,
         bool withProviderLock = true,
-        bool withContracts = true)
+        bool withContracts = true,
+        string rootName = "aws")
     {
         Path = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(),
             $"honua-devops-provision-tests-{Guid.NewGuid():n}");
-        AwsRoot = System.IO.Path.Combine(Path, "infrastructure", "terraform", "examples", "aws");
+        AwsRoot = System.IO.Path.Combine(Path, "infrastructure", "terraform", "examples", rootName);
         Directory.CreateDirectory(AwsRoot);
         File.WriteAllText(System.IO.Path.Combine(AwsRoot, "main.tf"), "module \"honua\" {}\n");
         File.WriteAllText(

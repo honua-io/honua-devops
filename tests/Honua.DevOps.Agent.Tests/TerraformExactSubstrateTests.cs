@@ -204,6 +204,28 @@ public sealed class TerraformExactSubstrateTests
     }
 
     [Fact]
+    public void TargetAwareOperatorContractDoesNotRelabelPassthroughOrDifferentTargetAsNative()
+    {
+        var outputs = JsonNode.Parse(ProvisioningSubstrateFixtures.TerraformOutputJson)!;
+        var deployment = outputs["deployment_contract"]!["value"]!;
+        var targetId = deployment["rollout"]!["target_id"]!.GetValue<string>();
+        var environment = deployment["stack"]!["environment"]!.GetValue<string>();
+        Assert.False(OperatorContract.TryReadForRuntime(outputs.ToJsonString(), ProvisioningSubstrateFixtures.OperatorContractSchemaJson,
+            ProvisioningRuntimeProfile.Resolve("aws-ecs"), targetId, environment, out _, out _));
+        // Parser-only offline projection: changing a field here is not producer or execution evidence.
+        deployment["rollout"]!["backend_name"] = "honua-aws-ecs-alb";
+        Assert.True(OperatorContract.TryReadForRuntime(outputs.ToJsonString(), ProvisioningSubstrateFixtures.OperatorContractSchemaJson,
+            ProvisioningRuntimeProfile.Resolve("aws-ecs"), targetId, environment, out var contract, out _));
+        Assert.Equal("ecs-fargate", contract!.Runtime);
+        Assert.False(OperatorContract.TryReadForRuntime(outputs.ToJsonString(), ProvisioningSubstrateFixtures.OperatorContractSchemaJson,
+            ProvisioningRuntimeProfile.Resolve("aws-lambda"), targetId, environment, out _, out _));
+        Assert.False(OperatorContract.TryReadForRuntime(outputs.ToJsonString(), ProvisioningSubstrateFixtures.OperatorContractSchemaJson,
+            ProvisioningRuntimeProfile.Resolve("aws-ecs"), "another-target", environment, out _, out _));
+        Assert.False(OperatorContract.TryReadForRuntime(outputs.ToJsonString(), ProvisioningSubstrateFixtures.OperatorContractSchemaJson,
+            ProvisioningRuntimeProfile.Resolve("aws-ecs"), targetId, "prod", out _, out _));
+    }
+
+    [Fact]
     public void OperatorContract_RefusesWhenTheStackProjectsNoContract()
     {
         // The pre-#147 behaviour was to scrape `honua_url`. A stack that emits only

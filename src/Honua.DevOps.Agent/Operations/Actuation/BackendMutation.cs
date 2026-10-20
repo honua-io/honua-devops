@@ -73,6 +73,7 @@ internal static class BackendMutationCatalog
                 "Creates a durable metadata-release operation."),
 
             // ---- Non-mutating reads and plans ----
+            ["AuthorizeRuntimeHandoffAsync"] = new("AuthorizeRuntimeHandoffAsync", null, "Fresh target authorization/registry read; no proposal or provider mutation."),
             ["RequestTroubleshootAsync"] = new("RequestTroubleshootAsync", null, "Read-only diagnostic fan-out."),
             ["PlanGitOpsDeployAsync"] = new(
                 "PlanGitOpsDeployAsync",

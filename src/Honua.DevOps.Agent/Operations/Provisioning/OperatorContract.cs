@@ -44,6 +44,14 @@ internal sealed record OperatorContract(
     string Partition,
     string? ImageDigest)
 {
+    internal ProvisionedRuntimeFacts? RuntimeFacts { get; init; }
+    internal string? Runtime { get; init; }
+    internal string? StackId { get; init; }
+    internal string? Environment { get; init; }
+    internal string? Backend { get; init; }
+    internal string? TargetKind { get; init; }
+    internal string? TargetId { get; init; }
+
     internal const string ExpectedSchemaVersion = "honua.operator-contract/v2";
 
     private static readonly string[] ContractOutputNames = ["deployment_contract", "validation_contract", "operations_contract"];
@@ -227,9 +235,33 @@ internal sealed record OperatorContract(
                 AccountId: ReadString(platform, "account_id") ?? string.Empty,
                 Region: ReadString(platform, "region") ?? string.Empty,
                 Partition: ReadString(platform, "partition") ?? string.Empty,
-                ImageDigest: ReadString(identity, "image_digest"));
+                ImageDigest: ReadString(identity, "image_digest"))
+            {
+                Runtime = ReadString(deployment.GetProperty("stack"), "runtime"),
+                StackId = ReadString(deployment.GetProperty("stack"), "id"),
+                Environment = ReadString(deployment.GetProperty("stack"), "environment"),
+                Backend = ReadString(deployment.GetProperty("rollout"), "backend_name"),
+                TargetKind = ReadString(deployment.GetProperty("rollout"), "target_kind"),
+                TargetId = ReadString(deployment.GetProperty("rollout"), "target_id"),
+            };
             return true;
         }
+    }
+
+    /// <summary>Consumes a real target-specific operator projection without relabeling the ECS contract.</summary>
+    internal static bool TryReadForRuntime(string terraformOutputJson, string schemaJson, ProvisioningRuntimeProfile expected,
+        string expectedTargetId, string expectedEnvironment, out OperatorContract? contract, out string error)
+    {
+        if (!TryRead(terraformOutputJson, schemaJson, out contract, out error)) return false;
+        var expectedRuntime = expected.RuntimeKind switch { "aws-ecs" => "ecs-fargate", "aws-lambda" => "lambda", "aws-eks" => "eks", _ => null };
+        if (contract!.Runtime != expectedRuntime || contract.Backend != expected.Backend || contract.TargetKind != expected.TargetKind ||
+            contract.TargetId != expectedTargetId || contract.Environment != expectedEnvironment)
+        {
+            contract = null;
+            error = "The operator contract does not match the host-authorized runtime, backend, target and environment.";
+            return false;
+        }
+        return true;
     }
 
     /// <summary>

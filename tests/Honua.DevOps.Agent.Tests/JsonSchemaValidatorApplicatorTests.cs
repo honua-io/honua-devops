@@ -16,6 +16,32 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed class JsonSchemaValidatorApplicatorTests
 {
     [Fact]
+    public void AnyOfRequiresAtLeastOneCompleteBranchAndNestedConditionStillApplies()
+    {
+        const string schema = """
+        {"type":"object","if":{"anyOf":[{"required":["a"]},{"required":["b"]}]},"then":{"required":["pin"]}}
+        """;
+        Assert.Empty(JsonSchemaValidator.CheckSchemaSupport(schema));
+        Assert.Empty(JsonSchemaValidator.Validate("{}", schema));
+        Assert.Empty(JsonSchemaValidator.Validate("{\"a\":1,\"pin\":true}", schema));
+        Assert.NotEmpty(JsonSchemaValidator.Validate("{\"b\":1}", schema));
+        Assert.NotEmpty(JsonSchemaValidator.Validate("0", "{\"anyOf\":[{\"const\":1},{\"const\":2}]}"));
+        Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("{\"anyOf\":[]}"));
+        Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("{\"anyOf\":[{\"unsupportedKeyword\":true}]}"));
+    }
+
+    [Fact]
+    public void MaxPropertiesEnforcesBoundaryAndRefusesMalformedLimits()
+    {
+        const string schema = "{\"maxProperties\":1}";
+        Assert.Empty(JsonSchemaValidator.Validate("{\"a\":1}", schema));
+        Assert.NotEmpty(JsonSchemaValidator.Validate("{\"a\":1,\"b\":2}", schema));
+        Assert.Empty(JsonSchemaValidator.Validate("[]", schema));
+        Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("{\"maxProperties\":-1}"));
+        Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("{\"maxProperties\":\"1\"}"));
+    }
+
+    [Fact]
     public void AllOfWithIfThen_AppliesTheConditionalBranch()
     {
         // The shape honua-iac's operator contract uses: when status is `qualified`,
@@ -109,7 +135,6 @@ public sealed class JsonSchemaValidatorApplicatorTests
         // The fail-closed posture must survive the additions: anything the validator
         // cannot apply is reported instead of ignored.
         Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("""{ "oneOf": [ { "type": "string" } ] }"""));
-        Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("""{ "anyOf": [ { "type": "string" } ] }"""));
         Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("""{ "not": { "type": "string" } }"""));
         Assert.NotEmpty(JsonSchemaValidator.CheckSchemaSupport("""{ "type": "number", "exclusiveMinimum": 1 }"""));
 

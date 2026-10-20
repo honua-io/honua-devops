@@ -186,7 +186,8 @@ internal static class ProvisioningStackCatalog
             "aws-ecs",
             "aws",
             new HashSet<string>(StringComparer.Ordinal) { "small" },
-            ProjectsOperatorContract: true)
+            ProjectsOperatorContract: true),
+        new ProvisioningStack("aws-lambda", "aws-serverless", new HashSet<string>(StringComparer.Ordinal) { "small" }, ProjectsOperatorContract: true)
     ];
 
     internal static IReadOnlyList<string> Ids => [.. Stacks.Select(stack => stack.Id)];
