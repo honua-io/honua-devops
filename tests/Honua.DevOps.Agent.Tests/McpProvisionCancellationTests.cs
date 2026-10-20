@@ -12,13 +12,15 @@ namespace Honua.DevOps.Agent.Tests;
 /// <summary>Production stdio MCP dispatch and System runner; no cloud, Terraform or approval mutation.</summary>
 public sealed class McpProvisionCancellationTests(ITestOutputHelper output)
 {
-    [Fact]
-    public async Task CancelledPublicProvisionCall_StopsItsActualPlanProcessTree()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledPublicProvisionCall_StopsItsActualPlanProcessTree(bool traceProtocol)
     {
         if (!OperatingSystem.IsLinux()) return; // This control uses the Linux process birth/parent census.
         using TerraformTestRoot root = new();
         WriteOwnedPlanFixture(root, block: true);
-        McpServerFixture server = new() { TerraformFixtureRoot = root.Path, TerraformFixtureExecutable = root.PlanScript };
+        McpServerFixture server = new() { TerraformFixtureRoot = root.Path, TerraformFixtureExecutable = root.PlanScript, TraceOwnedProtocol = traceProtocol };
         await server.InitializeAsync();
         OwnedProcessIdentity[] owned = [];
         try
@@ -35,8 +37,9 @@ public sealed class McpProvisionCancellationTests(ITestOutputHelper output)
             }
             finally
             {
-                output.WriteLine("Public MCP original/current process census: " + DescribeProcesses(owned));
+                output.WriteLine($"Public MCP traceProtocol={traceProtocol}, original/current process census: " + DescribeProcesses(owned));
                 output.WriteLine("Owned MCP server stderr: " + string.Join("\n", server.CapturedOwnedServerErrors.Take(40)));
+                output.WriteLine("Owned MCP SDK protocol trace: " + string.Join("\n", server.CapturedOwnedProtocolTrace));
             }
             Assert.False(File.Exists(Path.Combine(root.Path, "plan-completed")));
             // Cancelling one request must not terminate the server or cancel unrelated requests.

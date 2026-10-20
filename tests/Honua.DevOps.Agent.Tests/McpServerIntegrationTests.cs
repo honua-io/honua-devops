@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Client;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 
 namespace Honua.DevOps.Agent.Tests;
@@ -27,10 +28,12 @@ public sealed class McpServerFixture : IAsyncLifetime
     // Existing shared integration fixture keeps its original defaults.
     internal string? TerraformFixtureRoot { get; init; }
     internal string? TerraformFixtureExecutable { get; init; }
+    internal bool TraceOwnedProtocol { get; init; }
 
     public McpClient Client { get; private set; } = null!;
     public ConcurrentQueue<string> CapturedBackendRequests { get; } = new();
     internal ConcurrentQueue<string> CapturedOwnedServerErrors { get; } = new();
+    internal ConcurrentQueue<string> CapturedOwnedProtocolTrace { get; } = new();
     public string AuditFilePath { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()
@@ -50,6 +53,8 @@ public sealed class McpServerFixture : IAsyncLifetime
         string agentDllPath = Path.Combine(AppContext.BaseDirectory, "Honua.DevOps.Agent.dll");
         Assert.True(File.Exists(agentDllPath), $"Expected agent assembly at {agentDllPath}.");
 
+        ILoggerFactory? protocolLogger = TerraformFixtureRoot is not null && TraceOwnedProtocol
+            ? new OwnedProtocolLoggerFactory(CapturedOwnedProtocolTrace) : null;
         StdioClientTransport transport = new(new StdioClientTransportOptions
         {
             Name = "honua-devops",
@@ -78,7 +83,7 @@ public sealed class McpServerFixture : IAsyncLifetime
         });
 
         using CancellationTokenSource startupCts = new(TimeSpan.FromMinutes(2));
-        Client = await McpClient.CreateAsync(transport, cancellationToken: startupCts.Token);
+        Client = await McpClient.CreateAsync(transport, loggerFactory: protocolLogger, cancellationToken: startupCts.Token);
     }
 
     public async Task DisposeAsync()
@@ -123,6 +128,28 @@ public sealed class McpServerFixture : IAsyncLifetime
             {
                 // best effort cleanup
             }
+        }
+    }
+
+    // Test-owned plan requests carry no credentials/approval material. Retain a finite
+    // pinned-SDK trace to distinguish local task cancellation from notification delivery.
+    private sealed class OwnedProtocolLoggerFactory(ConcurrentQueue<string> lines) : ILoggerFactory
+    {
+        public ILogger CreateLogger(string categoryName) => new OwnedProtocolLogger(lines);
+        public void AddProvider(ILoggerProvider provider) => throw new NotSupportedException();
+        public void Dispose() { }
+    }
+
+    private sealed class OwnedProtocolLogger(ConcurrentQueue<string> lines) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (lines.Count >= 100) return;
+            string value = formatter(state, exception);
+            lines.Enqueue(value.Length <= 4096 ? value : value[..4096]);
         }
     }
 
