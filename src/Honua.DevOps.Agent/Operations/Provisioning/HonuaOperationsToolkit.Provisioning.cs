@@ -1676,10 +1676,16 @@ internal sealed partial class HonuaOperationsToolkit
                     ["Repair the configured audit sink before retrying the exact plan."]);
             }
 
+            ProvisioningCleanupObligation cleanupOrigin = CreateCleanupObligation(substrate, savedPlan,
+                [planReference, metadataReference, approvalReference]);
+
             // The apply wrapper re-derives every bound fact from the live context and
             // refuses before any mutation. It never regenerates a plan and never
             // accepts variables, so the approved artifact is the only thing consumed.
-            ProvisioningProcessResult applyResult = await runner.RunAsync(
+            ProvisioningProcessResult applyResult;
+            try
+            {
+                applyResult = await runner.RunAsync(
                 "bash",
                 [
                     substrate.ApplyScript,
@@ -1687,12 +1693,24 @@ internal sealed partial class HonuaOperationsToolkit
                     "--metadata", savedPlan.Manifest.PlanMetadataFile,
                     "--approved-digest", savedPlan.Manifest.PlanMetadataDigest,
                     "--action", action == "destroy" ? "destroy" : "apply",
+                    "--claim-dir", cleanupOrigin.ClaimDirectory,
                     "--receipt-out", receiptPath
                 ],
                 substrate.IacRoot,
                 TimeSpan.FromMinutes(45),
                 SubstrateEnvironment(requireApproval: true),
                 cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                try { await CaptureCleanupTerminalAsync(cleanupOrigin, receiptPath, null, false); }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
+                    or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception) { /* Immutable obligation remains indeterminate. */ }
+                throw;
+            }
+            try { await CaptureCleanupTerminalAsync(cleanupOrigin, receiptPath, applyResult.ExitCode, !applyResult.TimedOut); }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception) { /* Inspection refuses missing or invalid originals. */ }
             steps.Add(ToBackendStep(
                 action == "destroy" ? "terraform-exact-destroy" : "terraform-exact-apply",
                 savedPlan.Manifest.Stack,

@@ -8,8 +8,10 @@ internal sealed partial class HonuaOperationsToolkit
     public async Task<OperationResponse> ProvisionInfrastructureAsync(
         string stack, string size, string action, string variablesJson, bool confirmed,
         string confirmation, string approvalReceiptJson = "", CancellationToken cancellationToken = default,
-        string idempotencyKey = "")
+        string idempotencyKey = "", string provisioningOperationId = "")
     {
+        if (NormalizeToken(action) == "inspect-cleanup")
+            return await InspectProvisioningCleanupAsync(stack, provisioningOperationId);
         if (NormalizeToken(action) == "apply" || (NormalizeToken(action) == "destroy" && confirmed))
         {
             string[] parts = confirmation.Split(':');
