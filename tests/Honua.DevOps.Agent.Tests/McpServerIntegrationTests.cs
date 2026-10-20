@@ -23,6 +23,11 @@ public sealed class McpServerFixture : IAsyncLifetime
     private Task? _backendLoop;
     private string? _workingDirectory;
 
+    // Explicit owned substrate overrides for public-protocol process controls only.
+    // Existing shared integration fixture keeps its original defaults.
+    internal string? TerraformFixtureRoot { get; init; }
+    internal string? TerraformFixtureExecutable { get; init; }
+
     public McpClient Client { get; private set; } = null!;
     public ConcurrentQueue<string> CapturedBackendRequests { get; } = new();
     public string AuditFilePath { get; private set; } = string.Empty;
@@ -62,8 +67,9 @@ public sealed class McpServerFixture : IAsyncLifetime
                 ["HONUA_DEVOPS_AUDIT_HOOK_TARGET"] = $"file://{AuditFilePath}",
                 ["HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS"] = "10",
                 ["HONUA_DEVOPS_ALLOWED_ENVIRONMENTS"] = "dev,staging,prod",
-                ["HONUA_DEVOPS_TERRAFORM_TARGETS"] = "lambda,eks",
-                ["HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"] = _workingDirectory,
+                ["HONUA_DEVOPS_TERRAFORM_TARGETS"] = TerraformFixtureRoot is null ? "lambda,eks" : "ecs",
+                ["HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"] = TerraformFixtureRoot ?? _workingDirectory,
+                ["HONUA_DEVOPS_TERRAFORM_BIN"] = TerraformFixtureExecutable,
                 ["HONUA_DEVOPS_DEPLOY_TARGET_ID"] = "",
                 ["HONUA_DEVOPS_SUPPORT_API_BASE_URL"] = ""
             }
