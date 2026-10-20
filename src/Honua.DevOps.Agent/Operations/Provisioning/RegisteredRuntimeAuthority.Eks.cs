@@ -10,6 +10,7 @@ internal sealed partial record RegisteredRuntimeAuthority
     private static readonly Dictionary<string, string> EksIdentityKeys = new(StringComparer.Ordinal)
     {
         ["kubernetes.cluster_arn"] = "clusterArn",
+        ["kubernetes.api_server"] = "apiServer",
         ["kubernetes.ca_sha256"] = "caSha256",
         ["kubernetes.namespace"] = "namespace",
         ["kubernetes.deployment_name"] = "deploymentName",
@@ -19,6 +20,7 @@ internal sealed partial record RegisteredRuntimeAuthority
         ["kubernetes.target_port"] = "targetPort",
         ["kubernetes.route_kind"] = "routeKind",
         ["kubernetes.route_name"] = "routeName",
+        ["kubernetes.public_url"] = "publicUrl",
         ["kubernetes.route_host"] = "routeHost",
         ["kubernetes.route_path"] = "routePath",
         ["kubernetes.route_path_type"] = "routePathType",
@@ -68,6 +70,9 @@ internal sealed partial record RegisteredRuntimeAuthority
             var hasFact = facts.ResourceIdentity.TryGetProperty(factName, out var fact);
             var hasRegistration = registered.TryGetValue(key, out var registeredValue);
             if (!hasFact && !hasRegistration && optional.Contains(factName)) continue;
+            // An externally managed public DNS alias can be supplied by the
+            // current Server registry. The live observer still has to prove it.
+            if (!hasFact && hasRegistration && factName is ("dnsZoneId" or "dnsRecordName")) continue;
             if (!hasFact || !hasRegistration) throw Refused();
             var expected = fact.ValueKind switch
             {
@@ -78,6 +83,9 @@ internal sealed partial record RegisteredRuntimeAuthority
             };
             if (registeredValue != expected) throw Refused();
         }
+
+        if (registered.ContainsKey("kubernetes.dns_zone_id") != registered.ContainsKey("kubernetes.dns_record_name"))
+            throw Refused();
 
         foreach (var key in EksUidKeys)
             if (!registered.TryGetValue(key, out var uid) || !Guid.TryParseExact(uid, "D", out var parsed) || parsed == Guid.Empty)

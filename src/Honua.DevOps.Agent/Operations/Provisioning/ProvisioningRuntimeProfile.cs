@@ -9,7 +9,7 @@ internal sealed record ProvisioningRuntimeProfile(string RuntimeKind, string Ter
     {
         null or "" or "aws-ecs" => new("aws-ecs", "ecs", "aws-ecs", "aws", "AwsEcs", "honua-aws-ecs-alb"),
         "aws-lambda" => new("aws-lambda", "lambda", "aws-lambda", "aws-serverless", "AwsLambda", "honua-gitops-aws-lambda"),
-        "aws-eks" => new("aws-eks", "eks", "aws-eks", "aws-eks", "Kubernetes", "honua-kubernetes-deployment"),
+        "aws-eks" => new("aws-eks", "eks", "aws-eks", "aws-eks-native", "Kubernetes", "honua-kubernetes-deployment"),
         _ => throw new InvalidOperationException("The host-configured provisioning runtime is unsupported.")
     };
 }

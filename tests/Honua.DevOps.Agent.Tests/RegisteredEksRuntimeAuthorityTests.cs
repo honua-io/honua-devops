@@ -20,8 +20,16 @@ public sealed class RegisteredEksRuntimeAuthorityTests
         {
             clusterArn = Cluster, apiServer = "https://cluster.eks.amazonaws.com", caSha256 = new string('a', 64),
             @namespace = "honua", deploymentName = "honua-server", containerName = "server", serviceName = "honua-server",
-            servicePort = 443, targetPort = 8080, routeKind = "LoadBalancerService", routeName = "honua-server",
-            publicUrl = "https://honua.example.com"
+            servicePort = "443", targetPort = "8080", routeKind = "LoadBalancerService", routeName = "honua-server",
+            publicUrl = "https://honua.example.com", serverServiceAccountName = "honua-server",
+            loadBalancerArn = "arn:aws:elasticloadbalancing:us-west-2:123456789012:loadbalancer/net/honua/0123456789abcdef",
+            serverRoleArn = "arn:aws:iam::123456789012:role/honua-server",
+            gpServiceAccountName = "honua-gp", gpRoleArn = "arn:aws:iam::123456789012:role/honua-gp",
+            serverPodIdentityAssociationId = "a-server123", gpPodIdentityAssociationId = "a-gp123",
+            certificateArn = "arn:aws:acm:us-west-2:123456789012:certificate/12345678-1234-1234-1234-123456789012",
+            dbConnectionSecretArn = "arn:aws:secretsmanager:us-west-2:123456789012:secret:db",
+            adminPasswordSecretArn = "arn:aws:secretsmanager:us-west-2:123456789012:secret:admin",
+            masterKeySecretArn = "arn:aws:secretsmanager:us-west-2:123456789012:secret:master"
         }));
 
     private static JsonObject Response() => new()
@@ -31,12 +39,14 @@ public sealed class RegisteredEksRuntimeAuthorityTests
         ["targetName"] = "honua-server", ["usesCustomProviderEndpoint"] = false,
         ["resourceParameters"] = new JsonObject
         {
-            ["kubernetes.cluster_arn"] = Cluster, ["kubernetes.ca_sha256"] = new string('a', 64),
+            ["kubernetes.cluster_arn"] = Cluster, ["kubernetes.api_server"] = "https://cluster.eks.amazonaws.com",
+            ["kubernetes.ca_sha256"] = new string('a', 64),
             ["kubernetes.cluster_uid"] = ClusterUid, ["kubernetes.namespace"] = "honua",
             ["kubernetes.deployment_name"] = "honua-server", ["kubernetes.container_name"] = "server",
             ["kubernetes.service_name"] = "honua-server", ["kubernetes.service_port"] = "443",
             ["kubernetes.target_port"] = "8080", ["kubernetes.route_kind"] = "LoadBalancerService",
-            ["kubernetes.route_name"] = "honua-server",
+            ["kubernetes.route_name"] = "honua-server", ["kubernetes.public_url"] = "https://honua.example.com",
+            ["kubernetes.load_balancer_arn"] = "arn:aws:elasticloadbalancing:us-west-2:123456789012:loadbalancer/net/honua/0123456789abcdef",
             ["kubernetes.deployment_uid"] = "a6955c9a-dafb-4c84-95f9-40a9bc573d32",
             ["kubernetes.service_uid"] = "be08f380-27ad-4688-814d-2b4f96906551",
             ["kubernetes.route_uid"] = "be08f380-27ad-4688-814d-2b4f96906551"
@@ -61,6 +71,7 @@ public sealed class RegisteredEksRuntimeAuthorityTests
 
     [Theory]
     [InlineData("kubernetes.cluster_arn")]
+    [InlineData("kubernetes.api_server")]
     [InlineData("kubernetes.ca_sha256")]
     [InlineData("kubernetes.namespace")]
     [InlineData("kubernetes.deployment_name")]
@@ -70,6 +81,8 @@ public sealed class RegisteredEksRuntimeAuthorityTests
     [InlineData("kubernetes.target_port")]
     [InlineData("kubernetes.route_kind")]
     [InlineData("kubernetes.route_name")]
+    [InlineData("kubernetes.public_url")]
+    [InlineData("kubernetes.load_balancer_arn")]
     [InlineData("kubernetes.cluster_uid")]
     [InlineData("kubernetes.deployment_uid")]
     [InlineData("kubernetes.service_uid")]
@@ -123,6 +136,16 @@ public sealed class RegisteredEksRuntimeAuthorityTests
         var facts = Facts() with { ResourceIdentity = JsonSerializer.SerializeToElement(identity) };
         Assert.Equal("honua.example.com", Read(response, facts).ResourceParameters["kubernetes.route_host"]);
         Assert.Throws<InvalidDataException>(() => Read(Response(), facts));
+    }
+
+    [Fact]
+    public void ExternallyManagedDnsCanComeFromCurrentRegistryOnlyAsAPairedRoutePin()
+    {
+        var response = Response();
+        response["resourceParameters"]!["kubernetes.dns_zone_id"] = "Z123456";
+        Assert.Throws<InvalidDataException>(() => Read(response));
+        response["resourceParameters"]!["kubernetes.dns_record_name"] = "honua.example.com";
+        Assert.Equal("Z123456", Read(response).ResourceParameters["kubernetes.dns_zone_id"]);
     }
 
     [Fact]

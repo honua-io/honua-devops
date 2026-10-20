@@ -208,7 +208,7 @@
           "$ref": "#/$defs/sha256"
         },
         "status": {
-          "const": "qualified"
+          "enum": ["qualified", "unqualified"]
         },
         "endpoint": {
           "type": "string",
@@ -219,6 +219,17 @@
     },
     "iacExecution": {
       "$ref": "#/$defs/iacExecution"
+    },
+    "nativeEksExecutionSeal": {
+      "type": "object",
+      "required": ["receiptSha256", "stateLineageAfter", "stateSerialAfter", "evidenceMode"],
+      "properties": {
+        "receiptSha256": { "$ref": "#/$defs/sha256" },
+        "stateLineageAfter": { "type": "string", "minLength": 1 },
+        "stateSerialAfter": { "type": "integer", "minimum": 0 },
+        "evidenceMode": { "const": "exact-executor-post-state" }
+      },
+      "additionalProperties": false
     },
     "execReceiptSha256": {
       "$ref": "#/$defs/sha256"
@@ -492,7 +503,20 @@
                   "updatedReplicas",
                   "servicePort",
                   "targetPort",
-                  "publicUrl"
+                  "publicUrl",
+                  "serverServiceAccountName",
+                  "gpServiceAccountName",
+                  "serverRoleArn",
+                  "gpRoleArn",
+                  "serverPodIdentityAssociationId",
+                  "gpPodIdentityAssociationId",
+                  "certificateArn",
+                  "dbConnectionSecretArn",
+                  "adminPasswordSecretArn",
+                  "masterKeySecretArn",
+                  "loadBalancerArn",
+                  "deploymentResourceVersion",
+                  "serviceResourceVersion"
                 ],
                 "properties": {
                   "clusterArn": {
@@ -594,6 +618,18 @@
                     "minLength": 1,
                     "maxLength": 63
                   },
+                  "serverServiceAccountName": { "type": "string", "minLength": 1, "maxLength": 253 },
+                  "gpServiceAccountName": { "type": "string", "minLength": 1, "maxLength": 253 },
+                  "serverRoleArn": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "gpRoleArn": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "serverPodIdentityAssociationId": { "type": "string", "pattern": "^a-[a-z0-9]+$" },
+                  "gpPodIdentityAssociationId": { "type": "string", "pattern": "^a-[a-z0-9]+$" },
+                  "certificateArn": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "dbConnectionSecretArn": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "adminPasswordSecretArn": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "masterKeySecretArn": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "deploymentResourceVersion": { "type": "string", "minLength": 1 },
+                  "serviceResourceVersion": { "type": "string", "minLength": 1 },
                   "routeHost": {
                     "type": "string",
                     "minLength": 1,
@@ -657,11 +693,6 @@
                       "anyOf": [
                         {
                           "required": [
-                            "loadBalancerArn"
-                          ]
-                        },
-                        {
-                          "required": [
                             "dnsZoneId"
                           ]
                         },
@@ -674,7 +705,6 @@
                     },
                     "then": {
                       "required": [
-                        "loadBalancerArn",
                         "dnsZoneId",
                         "dnsRecordName"
                       ]
@@ -1097,7 +1127,11 @@
         }
       },
       "then": {
+        "required": ["nativeEksExecutionSeal"],
         "properties": {
+          "operatorContract": {
+            "properties": { "status": { "const": "unqualified" } }
+          },
           "serverTarget": {
             "properties": {
               "runtimeKind": {
@@ -1107,6 +1141,13 @@
                 "const": "honua-kubernetes-deployment"
               }
             }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "operatorContract": {
+            "properties": { "status": { "const": "qualified" } }
           }
         }
       }

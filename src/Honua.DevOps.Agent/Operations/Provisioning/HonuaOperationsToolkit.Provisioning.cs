@@ -196,6 +196,8 @@ internal sealed partial class HonuaOperationsToolkit
         if (canonicalStack == "aws-lambda" && runtime.DeployTargetId !=
             $"{variables["name_prefix"]}-{environment}-honua-{variables["lambda_alias_name"]}")
             return ProvisioningRefusal("runtime-target-mismatch", "The proposed Lambda function/alias identity does not match the host-authorized registered plan target.", [], []);
+        if (canonicalStack == "aws-eks" && runtime.DeployTargetId != (string)variables["target_id"]!)
+            return ProvisioningRefusal("runtime-target-mismatch", "The native EKS root target does not match the host-authorized deploy target.", [], []);
         if (!runtime.AllowedEnvironments.Contains(environment, StringComparer.OrdinalIgnoreCase))
         {
             return ProvisioningRefusal(
@@ -500,7 +502,7 @@ internal sealed partial class HonuaOperationsToolkit
     {
         var profile = ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind);
         var canonicalStack = profile.StackId;
-        if (runtime.RuntimeKind is not ("aws-ecs" or "aws-lambda"))
+        if (runtime.RuntimeKind is not ("aws-ecs" or "aws-lambda" or "aws-eks"))
             return ProvisioningRefusal("runtime-handoff-unavailable", "This runtime requires an actual qualified native workload install and observed handoff; cluster-only facts cannot establish it.", [], []);
         if (!string.Equals(NormalizeToken(stack), canonicalStack, StringComparison.Ordinal))
         {
@@ -559,6 +561,21 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Re-run the governed apply with the current honua-iac v2 producer before creating a handoff."],
                 ["Legacy or missing contract versions are never upgraded by relabeling stored evidence."]);
         }
+        if (runtime.RuntimeKind == "aws-eks")
+        {
+            try { GetEvidenceStore().ValidateAppliedLineage(provisioningState.Lineage, requireHandoff: false); }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+            { return ProvisioningRefusal("native-eks-execution-unsealed", "The exact EKS apply evidence no longer joins to its approved plan and execution receipt.", [], []); }
+            if (provisioningState.OperatorContractStatus != "unqualified" ||
+                !NativeEksExecutionSeal.Matches(GetEvidenceStore(), provisioningState.Lineage,
+                    provisioningState.Execution, provisioningState.ExecReceiptSha256,
+                    provisioningState.OperatorContractDigest, provisioningState.RuntimeFacts,
+                    provisioningState.RuntimeImageDigest, provisioningState.Endpoint, provisioningState.AdminKeySecretRef))
+                return ProvisioningRefusal("native-eks-execution-unsealed",
+                    "The configured EKS output lacks a matching release-qualified exact-executor post-state seal.", [], []);
+        }
+        else if (provisioningState.OperatorContractStatus != "qualified")
+            return ProvisioningRefusal("operator-contract-unqualified", "The applied operator contract cannot back a handoff.", [], []);
 
         // Both runtime profiles use only the endpoint and locator retained by the applied contract.
         string contractEndpoint = provisioningState.Endpoint ?? string.Empty;
@@ -907,6 +924,17 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Re-run governed provisioning and generate a new handoff before verification."],
                 []);
         }
+        if (runtime.RuntimeKind == "aws-eks")
+        {
+            if (state.OperatorContractStatus != "unqualified" ||
+                !NativeEksExecutionSeal.Matches(GetEvidenceStore(), state.Lineage, state.Execution,
+                    state.ExecReceiptSha256, state.OperatorContractDigest, state.RuntimeFacts,
+                    state.RuntimeImageDigest, state.Endpoint, state.AdminKeySecretRef))
+                return ProvisioningRefusal("native-eks-execution-unsealed",
+                    "The configured EKS output lacks a matching exact-executor post-state seal.", [], []);
+        }
+        else if (state.OperatorContractStatus != "qualified")
+            return ProvisioningRefusal("operator-contract-unqualified", "An unqualified applied operator contract cannot back verification.", [], []);
 
         OperationResponse? verificationPolicy = AuthorizeRetainedHandoff("verify-install-handoff", state.Environment);
         if (verificationPolicy is not null) return verificationPolicy;
@@ -950,6 +978,24 @@ internal sealed partial class HonuaOperationsToolkit
             GetEvidenceStore().ValidateAppliedLineage(state.Lineage);
             if (state.VerificationReceipt is not null && state.ProvisionBinding is not null)
             {
+                if (runtime.RuntimeKind == "aws-eks")
+                {
+                    // A retry may restore an export after a lost response, but it
+                    // must not hand out yesterday's binding for a replaced workload.
+                    try
+                    {
+                        _ = await ObserveRuntimeAsync(state.RuntimeFacts!, registeredAuthority!,
+                            request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
+                        var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!,
+                            "verify_install_handoff", cancellationToken);
+                        if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
+                            return ProvisioningRefusal("registered-runtime-changed", "The registered EKS target changed before recovery; no binding was restored.", [], []);
+                    }
+                    catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception or KeyNotFoundException or FormatException)
+                    { return ProvisioningRefusal("runtime-observation-failed", "The native EKS workload or route changed before recovery; no binding was restored.", [], []); }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    { return ProvisioningRefusal("runtime-observation-timeout", "The native EKS recovery observation timed out; no binding was restored.", [], []); }
+                }
                 if (!await RestoreVerificationAsync(state, Path.GetDirectoryName(fullPath)!, overwrite, cancellationToken))
                     return ProvisioningRefusal("verification-evidence-exists", "Verification evidence already exists; nothing was overwritten.", [], []);
                 return VerifiedLineageResponse(state.Lineage, []);
@@ -965,14 +1011,14 @@ internal sealed partial class HonuaOperationsToolkit
         {
             try
             {
-                runtimeObservation = await new AwsLambdaRuntimeObservation(provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance)
-                    .ObserveAsync(state.RuntimeFacts!, request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
+                runtimeObservation = await ObserveRuntimeAsync(state.RuntimeFacts!, registeredAuthority,
+                    request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
                 // Recheck credential/grants/registry AFTER waiting for provider reads.
                 var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!, "verify_install_handoff", cancellationToken);
                 if (JsonSerializer.Serialize(currentAuthority) != JsonSerializer.Serialize(registeredAuthority))
                     return ProvisioningRefusal("registered-runtime-changed", "The registered runtime authority changed while installation was observed.", [], []);
             }
-            catch (Exception exception) when (exception is InvalidDataException or IOException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception or KeyNotFoundException or FormatException)
             { return ProvisioningRefusal("runtime-observation-failed", "The actual provider runtime, route, alias or immutable image did not match the approved target; no binding was emitted.", [], []); }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             { return ProvisioningRefusal("runtime-observation-timeout", "The bounded provider observation did not finish; no binding was emitted.", [], []); }
@@ -1004,10 +1050,10 @@ internal sealed partial class HonuaOperationsToolkit
                 // Public probes can outlive an alias or route change without any
                 // registry change. Persist a fresh provider observation, not the
                 // one captured before those probes started.
-                runtimeObservation = await new AwsLambdaRuntimeObservation(provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance)
-                    .ObserveAsync(state.RuntimeFacts!, request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
+                runtimeObservation = await ObserveRuntimeAsync(state.RuntimeFacts!, registeredAuthority,
+                    request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
             }
-            catch (Exception exception) when (exception is InvalidDataException or IOException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception or KeyNotFoundException or FormatException)
             { return ProvisioningRefusal("runtime-observation-failed", "The provider runtime, route, alias or immutable image changed during public installation probes; no verified binding was emitted.", [], []); }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             { return ProvisioningRefusal("runtime-observation-timeout", "The final provider observation did not finish within its timeout; no verified binding was emitted.", [], []); }
@@ -1142,6 +1188,17 @@ internal sealed partial class HonuaOperationsToolkit
                 targetName = registeredAuthority.TargetName, resourceParameters = registeredAuthority.ResourceParameters,
                 usesCustomProviderEndpoint = registeredAuthority.UsesCustomProviderEndpoint
             });
+            if (registeredAuthority.RuntimeKind == "aws-eks")
+            {
+                var seal = state.Lineage.EvidenceRefs!.Single(reference => reference.Kind == "eks-execution-seal");
+                binding["nativeEksExecutionSeal"] = JsonSerializer.SerializeToNode(new
+                {
+                    receiptSha256 = seal.Sha256,
+                    stateLineageAfter = state.Execution!.State.LineageAfter,
+                    stateSerialAfter = state.Execution.State.SerialAfter,
+                    evidenceMode = "exact-executor-post-state"
+                });
+            }
             bindingBytes = binding.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
         }
 
@@ -1338,9 +1395,24 @@ internal sealed partial class HonuaOperationsToolkit
 
     private static string DefaultNamePrefixFor(string environment) => $"honua-{environment}";
 
+    private Task<RuntimeProviderObservation> ObserveRuntimeAsync(ProvisionedRuntimeFacts facts,
+        RegisteredRuntimeAuthority authority, string endpoint, string imageDigest, CancellationToken cancellationToken)
+    {
+        var runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
+        return facts.RuntimeKind switch
+        {
+            "aws-lambda" => new AwsLambdaRuntimeObservation(runner)
+                .ObserveAsync(facts, endpoint, imageDigest, cancellationToken),
+            "aws-eks" => new AwsEksRuntimeObservation(runner)
+                .ObserveAsync(facts, authority, endpoint, imageDigest, cancellationToken),
+            _ => throw new InvalidDataException("No live provider observation exists for this runtime.")
+        };
+    }
+
     private static Dictionary<string, object?> ParseProvisioningVariables(string stack, string variablesJson)
     {
         if (stack == "aws-ecs") return ParseAwsEcsSmallVariables(variablesJson);
+        if (stack == "aws-eks") return ParseAwsEksVariables(variablesJson);
         if (stack != "aws-lambda") throw new InvalidOperationException("No qualified variable contract is available for this runtime.");
         if (variablesJson.Length > 16384) throw new InvalidOperationException("variablesJson exceeds the bounded Lambda plan scope.");
         using var document = ParseLambdaVariableDocument(variablesJson);
@@ -1382,6 +1454,99 @@ internal sealed partial class HonuaOperationsToolkit
             throw new InvalidOperationException("The migration image must use the serving image's repository managed by the selected Lambda root.");
         if (!variables.ContainsKey("name_prefix")) variables["name_prefix"] = DefaultNamePrefixFor((string)variables["environment"]!);
         return variables;
+    }
+
+    private static Dictionary<string, object?> ParseAwsEksVariables(string variablesJson)
+    {
+        if (variablesJson.Length > 16384) throw new InvalidOperationException("variablesJson exceeds the bounded native EKS plan scope.");
+        using var document = ParseLambdaVariableDocument(variablesJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("EKS variablesJson must be an object.");
+        var variables = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["environment"] = DefaultProvisioningEnvironment,
+            ["workload_identity_mode"] = "pod_identity",
+            ["namespace"] = "honua",
+            ["deployment_name"] = "honua-server",
+            ["container_name"] = "server",
+            ["server_service_account_name"] = "honua-server",
+            ["gp_job_service_account_name"] = "honua-gp"
+        };
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (!names.Add(property.Name)) throw new InvalidOperationException("Duplicate EKS variables are not accepted.");
+            variables[property.Name] = property.Name switch
+            {
+                "region" => ValidateString(property.Name, property.Value,
+                    new Regex("^[a-z]{2}(-gov)?-[a-z]+-[0-9]$", RegexOptions.CultureInvariant)),
+                "environment" or "target_id" or "tenant_id" or "cluster_name" or "namespace" or
+                    "deployment_name" or "container_name" or "server_service_account_name" or
+                    "gp_job_service_account_name" => ValidateString(property.Name, property.Value,
+                    new Regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", RegexOptions.CultureInvariant)),
+                "image_reference" or "gp_job_image_reference" => ValidateLambdaImage(property.Value),
+                "server_role_arn" or "gp_job_role_arn" => ValidateString(property.Name, property.Value,
+                    new Regex("^arn:aws(-us-gov|-cn)?:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", RegexOptions.CultureInvariant)),
+                "server_pod_identity_association_id" or "gp_job_pod_identity_association_id" =>
+                    ValidateString(property.Name, property.Value,
+                        new Regex("^a-[a-z0-9]+$", RegexOptions.CultureInvariant)),
+                "workload_identity_mode" => ValidateChoice(property.Name, property.Value, "pod_identity"),
+                "public_hostname" => ValidateString(property.Name, property.Value,
+                    new Regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", RegexOptions.CultureInvariant)),
+                "certificate_arn" => ValidateString(property.Name, property.Value,
+                    new Regex("^arn:aws(-us-gov|-cn)?:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$", RegexOptions.CultureInvariant)),
+                "route53_zone_id" => ValidateString(property.Name, property.Value,
+                    new Regex("^Z[A-Z0-9]+$", RegexOptions.CultureInvariant)),
+                "load_balancer_controller" => ValidateChoice(property.Name, property.Value,
+                    "legacy-service-controller", "aws-load-balancer-controller"),
+                "artifact_capabilities" => ValidateEksArtifactCapabilities(property.Value),
+                _ => throw new InvalidOperationException("The variable is outside the secretless native EKS allowlist.")
+            };
+        }
+        foreach (var required in new[] { "region", "cluster_name", "target_id", "tenant_id", "image_reference",
+                     "gp_job_image_reference", "server_role_arn", "gp_job_role_arn", "public_hostname",
+                     "certificate_arn", "load_balancer_controller", "artifact_capabilities",
+                     "server_pod_identity_association_id", "gp_job_pod_identity_association_id" })
+            if (!variables.ContainsKey(required)) throw new InvalidOperationException("A required native EKS identity or public route variable is missing.");
+        var capabilities = (Dictionary<string, object>)variables["artifact_capabilities"]!;
+        if (!((string)variables["image_reference"]!).EndsWith("@" + capabilities["server_image_digest"], StringComparison.Ordinal) ||
+            !((string)variables["gp_job_image_reference"]!).EndsWith("@" + capabilities["gp_job_image_digest"], StringComparison.Ordinal))
+            throw new InvalidOperationException("The native EKS artifact capability digests must match the immutable image references.");
+        if (string.Equals((string)variables["server_role_arn"]!, (string)variables["gp_job_role_arn"]!, StringComparison.Ordinal) ||
+            string.Equals((string)variables["server_service_account_name"]!, (string)variables["gp_job_service_account_name"]!, StringComparison.Ordinal) ||
+            string.Equals((string)variables["server_pod_identity_association_id"]!,
+                (string)variables["gp_job_pod_identity_association_id"]!, StringComparison.Ordinal))
+            throw new InvalidOperationException("The server and GP job require separate workload identities.");
+        return variables;
+    }
+
+    private static Dictionary<string, object> ValidateEksArtifactCapabilities(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("EKS artifact capabilities must be an object.");
+        var names = value.EnumerateObject().Select(p => p.Name).ToArray();
+        if (names.Length != 3 || names.Distinct(StringComparer.Ordinal).Count() != 3 ||
+            names.Any(name => name is not ("server_image_digest" or "gp_job_image_digest" or "supported_workload_identities")))
+            throw new InvalidOperationException("EKS artifact capabilities must contain only the two image digests and supported workload identities.");
+        string Digest(string name)
+        {
+            var field = value.GetProperty(name);
+            if (field.ValueKind != JsonValueKind.String || field.GetString() is not { } digest ||
+                !Regex.IsMatch(digest, "^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant))
+                throw new InvalidOperationException("EKS artifact capability digest is invalid.");
+            return digest;
+        }
+        var supported = value.GetProperty("supported_workload_identities");
+        if (supported.ValueKind != JsonValueKind.Array || supported.GetArrayLength() is < 1 or > 2 ||
+            supported.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String ||
+                item.GetString() is not ("pod_identity" or "irsa")) ||
+            supported.EnumerateArray().Select(item => item.GetString()).Distinct(StringComparer.Ordinal).Count() != supported.GetArrayLength() ||
+            !supported.EnumerateArray().Any(item => item.GetString() == "pod_identity"))
+            throw new InvalidOperationException("The native EKS qualification path requires an artifact that supports EKS Pod Identity.");
+        return new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["server_image_digest"] = Digest("server_image_digest"),
+            ["gp_job_image_digest"] = Digest("gp_job_image_digest"),
+            ["supported_workload_identities"] = supported.EnumerateArray().Select(item => item.GetString()!).Order(StringComparer.Ordinal).ToArray()
+        };
     }
 
     private static JsonDocument ParseLambdaVariableDocument(string variablesJson)
@@ -1636,6 +1801,10 @@ internal sealed partial class HonuaOperationsToolkit
 
         if (stack == "aws-lambda")
             return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TF_VAR_honua_admin_password"));
+        if (stack == "aws-eks")
+            return new[] { "TF_VAR_db_connection_secret_arn", "TF_VAR_admin_password_secret_arn",
+                "TF_VAR_master_key_secret_arn" }.All(name =>
+                !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name)));
         return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TF_VAR_honua_admin_password"))
             && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TF_VAR_honua_connection_encryption_master_key"));
     }
@@ -1857,6 +2026,19 @@ internal sealed partial class HonuaOperationsToolkit
                 EvidenceRefs: [planReference, metadataReference, approvalReference,
                     evidenceStore.Put("apply", Encoding.UTF8.GetBytes(receiptDocument))]);
 
+            if (runtime.RuntimeKind == "aws-eks" && operatorContract is { RuntimeFacts: not null, ImageDigest: not null })
+            {
+                // The configured Terraform projection cannot know its own final
+                // state serial. Only the exact executor's post-apply receipt can
+                // seal it. This evidence still needs live provider/public probes.
+                var seal = NativeEksExecutionSeal.Build(lineage, execution, receiptSha,
+                    operatorContract.ContractDigest, operatorContract.RuntimeFacts,
+                    operatorContract.ImageDigest, operatorContract.Endpoint, operatorContract.AdminKeySecretRef);
+                if (seal is not null)
+                    lineage = lineage with { EvidenceRefs = [.. lineage.EvidenceRefs!,
+                        evidenceStore.Put("eks-execution-seal", Encoding.UTF8.GetBytes(seal))] };
+            }
+
             SaveProvisioningState(new ProvisioningState(
                 lineage,
                 savedPlan.Manifest.Stack,
@@ -1896,6 +2078,11 @@ internal sealed partial class HonuaOperationsToolkit
                     operatorContract is null
                         ? "No operator contract was read for this action."
                         : $"Operator contract {operatorContract.Status}, digest {operatorContract.ContractDigest}, endpoint {operatorContract.Endpoint}.",
+                    runtime.RuntimeKind == "aws-eks"
+                        ? lineage.EvidenceRefs!.Any(reference => reference.Kind == "eks-execution-seal")
+                            ? "The configured EKS contract was joined to the exact executor's observed post-state receipt; live provider and public probes remain required."
+                            : "The native workload apply has no release-qualified post-state seal and cannot authorize install_handoff."
+                        : "Operator contract qualification gate evaluated.",
                     action == "destroy"
                         ? "Destroy ran only at break-glass tier after its exact elicitation challenge."
                         : "Apply ran only in a non-production environment after its exact elicitation challenge."
@@ -1905,7 +2092,9 @@ internal sealed partial class HonuaOperationsToolkit
                     :
                     [
                         "Run readiness and smoke checks before install_handoff.",
-                        $"Call install_handoff with provisioningOperationId={savedPlan.Manifest.ProvisioningOperationId}; the endpoint and admin-key secret reference come from the operator contract and need not be supplied.",
+                        runtime.RuntimeKind == "aws-eks"
+                            ? $"Call install_handoff with provisioningOperationId={savedPlan.Manifest.ProvisioningOperationId} only if this apply emitted an EKS execution seal; endpoint and secret reference come from the configured contract."
+                            : $"Call install_handoff with provisioningOperationId={savedPlan.Manifest.ProvisioningOperationId}; the endpoint and admin-key secret reference come from the operator contract and need not be supplied.",
                         "Retain the state lineage/serial, backend config digest and execution role identity as deployment evidence."
                     ],
                 ValidationChecks:
@@ -2001,14 +2190,16 @@ internal sealed partial class HonuaOperationsToolkit
                     runtime.DeployTargetId!, expectedEnvironment, out contract, out _) ||
                 !ProvisionedRuntimeFacts.TryReadOutputs(outputResult.StandardOutput, profile, runtime.DeployTargetId!,
                     expectedEnvironment, out var runtimeFacts, out _) ||
-                runtimeFacts!.AccountId != contract!.AccountId || runtimeFacts.Region != contract.Region || runtimeFacts.Partition != contract.Partition)
+                runtimeFacts!.AccountId != contract!.AccountId || runtimeFacts.Region != contract.Region || runtimeFacts.Partition != contract.Partition ||
+                profile.RuntimeKind == "aws-eks" && (runtimeFacts.ResourceIdentity.GetProperty("adminPasswordSecretArn").GetString() != contract.AdminKeySecretRef ||
+                    contract.ImageDigest is null || !contract.ImageDigest.StartsWith("sha256:", StringComparison.Ordinal)))
                 return (null, ProvisioningRefusal("runtime-contract-invalid", "The same applied output must carry matching target-specific operator and runtime identities for the host-authorized target.", [], []));
             contract = contract with { RuntimeFacts = runtimeFacts };
         }
 
         // The contract itself states that certified consumers must reject an
         // unqualified contract, so this is a gate rather than an annotation.
-        if (!contract!.IsQualified)
+        if (!contract!.IsQualified && runtime.RuntimeKind != "aws-eks")
         {
             return (null, ProvisioningRefusal(
                 "operator-contract-unqualified",
