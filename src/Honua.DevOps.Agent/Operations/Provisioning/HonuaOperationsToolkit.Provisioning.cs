@@ -613,6 +613,8 @@ internal sealed partial class HonuaOperationsToolkit
             try { _ = await gateway.AuthorizeRuntimeHandoffAsync(runtime, provisioningState.RuntimeFacts, "install_handoff", cancellationToken); }
             catch (Exception exception) when (exception is InvalidDataException or HttpRequestException or JsonException)
             { return ProvisioningRefusal("registered-runtime-unverified", "The current server cannot authorize the exact applied runtime resource identity.", [], []); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { return ProvisioningRefusal("registered-runtime-unverified", "Current runtime authorization did not finish within its timeout; no handoff was written.", [], []); }
         }
 
         string proxyPackage = runtime.McpProxyPackage?.Trim() ?? string.Empty;
@@ -911,6 +913,8 @@ internal sealed partial class HonuaOperationsToolkit
             try { registeredAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts, "verify_install_handoff", cancellationToken); }
             catch (Exception exception) when (exception is InvalidDataException or HttpRequestException or JsonException)
             { return ProvisioningRefusal("registered-runtime-unverified", "The current server cannot authorize the exact applied runtime resource identity.", [], []); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { return ProvisioningRefusal("registered-runtime-unverified", "Current runtime authorization did not finish within its timeout; no verified binding was emitted.", [], []); }
         }
 
         if (!_spine.TryAuthorizeLocalMutation(
@@ -978,6 +982,18 @@ internal sealed partial class HonuaOperationsToolkit
 
         if (registeredAuthority is not null)
         {
+            try
+            {
+                // Public probes can outlive an alias or route change without any
+                // registry change. Persist a fresh provider observation, not the
+                // one captured before those probes started.
+                runtimeObservation = await new AwsLambdaRuntimeObservation(provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance)
+                    .ObserveAsync(state.RuntimeFacts!, request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
+            }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or HttpRequestException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            { return ProvisioningRefusal("runtime-observation-failed", "The provider runtime, route, alias or immutable image changed during public installation probes; no verified binding was emitted.", [], []); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { return ProvisioningRefusal("runtime-observation-timeout", "The final provider observation did not finish within its timeout; no verified binding was emitted.", [], []); }
             try
             {
                 // Public readiness/auth/MCP probes may wait or perform network retries.

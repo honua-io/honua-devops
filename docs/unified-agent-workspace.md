@@ -70,9 +70,12 @@ strings, secrets and arbitrary environment overrides remain out of band. This
 requires a matching `honua-iac` root that implements the isolated migration
 profile; it does not establish public artifact availability or live execution.
 
-Native EKS has target-aware handoff checks for an existing Deployment, serving
-port and public route. It is not in the Terraform provisioning stack allowlist.
-Its runtime profile is `honua-kubernetes-deployment`, with no Argo dependency;
+Native EKS provisioning and install-handoff verification are not implemented in
+this DevOps surface. Its profile identifies `honua-kubernetes-deployment`, but
+`install_handoff` refuses EKS rather than treating cluster metadata as proof of a
+running workload. It is not in the Terraform provisioning stack allowlist.
+The complete workflow still requires native Deployment, serving-port and public
+route observation and actual qualification, with no Argo dependency;
 that profile alone is not evidence of provisioning, rollout or rollback.
 
 ## Git and Studio configuration

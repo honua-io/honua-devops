@@ -12,6 +12,10 @@ public sealed partial class TerraformProvisioningTests
     [InlineData("revoked")]
     [InlineData("timeout")]
     [InlineData("tenant-changed")]
+    [InlineData("alias-changed")]
+    [InlineData("route-changed")]
+    [InlineData("install-authorization-timeout")]
+    [InlineData("verify-authorization-timeout")]
     public async Task LambdaActualProducerShapeFlowsThroughReviewedApplyAndRechecksAuthorityAfterPublicProbes(string outcome)
     {
         using var root = new TerraformTestRoot(rootName: "aws-serverless");
@@ -27,18 +31,22 @@ public sealed partial class TerraformProvisioningTests
             region = facts!.Region, name_prefix = "honua-contract", environment = "dev",
             honua_image_uri = deployment.GetProperty("identity").GetProperty("image_reference").GetString()
         });
+        var provider = new AwsLambdaRuntimeObservationTests.Reader("valid", facts, endpoint);
         var runner = new LambdaHandoffRunner(new FakeSubstrateRunner
         {
             TerraformOutputJson = outputsJson,
             ExactPlanMetadataJson = ProvisioningSubstrateFixtures.ReadFixture("documents/lambda-exact-plan-metadata.json"),
             ExecReceiptJson = ProvisioningSubstrateFixtures.ReadFixture("documents/lambda-exec-receipt.json")
-        }, new AwsLambdaRuntimeObservationTests.Reader("valid", facts, endpoint));
+        }, provider);
         var publicProbesFinished = false;
         var authorizationCalls = 0;
         var handler = new TestHttpMessageHandler(request =>
         {
             Assert.EndsWith("/api/v1/agent/devops/authorize", request.RequestUri!.AbsolutePath);
             authorizationCalls++;
+            if (authorizationCalls == 1 && outcome == "install-authorization-timeout"
+                || authorizationCalls == 2 && outcome == "verify-authorization-timeout")
+                throw new TaskCanceledException("Bounded initial canonical authorization timed out.");
             if (publicProbesFinished && outcome == "timeout")
                 throw new TaskCanceledException("Bounded canonical authorization timed out.");
             if (publicProbesFinished && outcome == "revoked")
@@ -60,7 +68,16 @@ public sealed partial class TerraformProvisioningTests
         var planner = new HonuaOperationsToolkit(runtime, gateway, provisioningProcessRunner: runner);
         var plan = await planner.ProvisionInfrastructureAsync("aws-lambda", "small", "plan", variables, false, "");
         Assert.Equal("terraform-plan-ready", plan.Status);
-        var verifier = new CallbackInstallVerifier(() => publicProbesFinished = true);
+        var verifier = new CallbackInstallVerifier(() =>
+        {
+            publicProbesFinished = true;
+            provider.ScenarioOverride = outcome switch
+            {
+                "alias-changed" => "wrong-version",
+                "route-changed" => "wrong-route",
+                _ => null
+            };
+        });
         var toolkit = new HonuaOperationsToolkit(runtime with { ExecutionMode = ExecutionMode.Execute, ExecutionTier = ExecutionTier.ExecuteLowerEnv },
             gateway, ProvisioningSubstrateFixtures.DirectAllowedPolicy(), provisioningProcessRunner: runner, installHandoffVerifier: verifier);
         var apply = await toolkit.ProvisionInfrastructureAsync("aws-lambda", "small", "apply", variables, true,
@@ -69,10 +86,26 @@ public sealed partial class TerraformProvisioningTests
         Assert.True(apply.Status == "infrastructure-provisioned", apply.Status + ": " + apply.Summary);
         var directory = Path.Combine(root.Path, "lambda-handoff");
         var handoff = await toolkit.InstallHandoffAsync("aws-lambda", "", "", directory, false, apply.ProvisioningLineage!.ProvisioningOperationId);
+        if (outcome == "install-authorization-timeout")
+        {
+            Assert.Equal("registered-runtime-unverified", handoff.Status);
+            Assert.False(File.Exists(Path.Combine(directory, "honua-mcp-proxy.handoff.json")));
+            Assert.False(publicProbesFinished);
+            return;
+        }
         Assert.Equal("install-handoff-written", handoff.Status);
         var result = await toolkit.VerifyInstallHandoffAsync(Path.Combine(directory, "honua-mcp-proxy.handoff.json"), false);
+        if (outcome == "verify-authorization-timeout")
+        {
+            Assert.Equal("registered-runtime-unverified", result.Status);
+            Assert.False(File.Exists(Path.Combine(directory, "honua-devops-provision-binding.v2.json")));
+            Assert.False(publicProbesFinished);
+            return;
+        }
         Assert.True(publicProbesFinished);
-        Assert.Equal(4, authorizationCalls); // install, pre-observation, post-observation, post-public-probes
+        var providerChanged = outcome is "alias-changed" or "route-changed";
+        Assert.Equal(providerChanged ? 3 : 4, authorizationCalls); // final authority follows the second provider observation
+        Assert.Equal(2, provider.Commands.Count(command => command.Contains("get-alias")));
         var bindingPath = Path.Combine(directory, "honua-devops-provision-binding.v2.json");
         if (outcome == "allowed")
         {
@@ -83,7 +116,8 @@ public sealed partial class TerraformProvisioningTests
         }
         else
         {
-            Assert.Equal(outcome is "revoked" or "timeout" ? "registered-runtime-unverified" : "registered-runtime-changed", result.Status);
+            Assert.Equal(providerChanged ? "runtime-observation-failed"
+                : outcome is "revoked" or "timeout" ? "registered-runtime-unverified" : "registered-runtime-changed", result.Status);
             Assert.False(File.Exists(bindingPath));
             Assert.False(File.Exists(Path.Combine(directory, "honua-install-verification.receipt.json")));
         }

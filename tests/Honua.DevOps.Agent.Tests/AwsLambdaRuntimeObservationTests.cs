@@ -73,6 +73,7 @@ public sealed class AwsLambdaRuntimeObservationTests
         private string Route => facts?.ResourceIdentity.GetProperty("apiGatewayRouteId").GetString() ?? "route123";
         public List<IReadOnlyList<string>> Commands { get; } = [];
         public List<string> Executables { get; } = [];
+        public string? ScenarioOverride { get; set; }
         public bool CanRun(string fileName) => fileName == "aws";
         public Task<ProvisioningProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, string workingDirectory,
             TimeSpan timeout, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancellationToken = default)
@@ -80,19 +81,20 @@ public sealed class AwsLambdaRuntimeObservationTests
             Assert.NotNull(environment);
             Assert.Equal("true", environment["AWS_IGNORE_CONFIGURED_ENDPOINT_URLS"]);
             Executables.Add(fileName); Commands.Add(arguments);
+            var activeScenario = ScenarioOverride ?? scenario;
             object response = arguments[1] switch
             {
-                "get-caller-identity" => new { account = scenario == "wrong-account" ? "999999999999" : "123456789012", arn = "arn:aws:sts::123456789012:assumed-role/host/session" },
-                "get-alias" => new { arn = Alias, version = scenario == "wrong-version" ? "43" : Version,
-                    weights = scenario == "weighted-alias" ? new Dictionary<string, double> { ["43"] = 0.1 } : [] },
+                "get-caller-identity" => new { account = activeScenario == "wrong-account" ? "999999999999" : "123456789012", arn = "arn:aws:sts::123456789012:assumed-role/host/session" },
+                "get-alias" => new { arn = Alias, version = activeScenario == "wrong-version" ? Version + "0" : Version,
+                    weights = activeScenario == "weighted-alias" ? new Dictionary<string, double> { ["43"] = 0.1 } : [] },
                 "get-function" => new { arn = Function + ":" + Version, version = Version, state = "Active", lastUpdateStatus = "Successful",
-                    image = "registry.example/honua@" + (scenario == "wrong-image" ? "sha256:" + new string('b', 64) : Digest),
+                    image = "registry.example/honua@" + (activeScenario == "wrong-image" ? "sha256:" + new string('b', 64) : Digest),
                     secret = "DO_NOT_PERSIST_PROVIDER_SECRET" },
-                "get-route" => new { id = Route, key = "ANY /{proxy+}", target = scenario == "wrong-route" ? "integrations/other" : "integrations/" + Integration },
-                "get-integration" => new { id = Integration, type = "AWS_PROXY", uri = scenario == "wrong-integration" ? Function + ":other" :
+                "get-route" => new { id = Route, key = "ANY /{proxy+}", target = activeScenario == "wrong-route" ? "integrations/other" : "integrations/" + Integration },
+                "get-integration" => new { id = Integration, type = "AWS_PROXY", uri = activeScenario == "wrong-integration" ? Function + ":other" :
                     "arn:aws:apigateway:" + Region + ":lambda:path/2015-03-31/functions/" + Alias + "/invocations" },
-                "get-api" => new { id = Api, endpoint, disabled = scenario == "disabled-endpoint" },
-                "get-stage" => new { name = "$default", autoDeploy = scenario != "wrong-stage" },
+                "get-api" => new { id = Api, endpoint, disabled = activeScenario == "disabled-endpoint" },
+                "get-stage" => new { name = "$default", autoDeploy = activeScenario != "wrong-stage" },
                 _ => new { incomplete = true }
             };
             return Task.FromResult(new ProvisioningProcessResult(0, JsonSerializer.Serialize(response), "", false));
