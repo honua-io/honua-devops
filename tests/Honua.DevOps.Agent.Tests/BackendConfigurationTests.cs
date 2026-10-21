@@ -113,6 +113,20 @@ public class BackendConfigurationTests
         Assert.Equal("turn-2", configuration.HonuaTurnId);
     }
 
+    [Fact]
+    public void Load_TreatsEmptyOptionalTurnPlaceholdersAsUnbound()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_HONUA_WORKSPACE_ID", "");
+        environment.Set("HONUA_DEVOPS_HONUA_TURN_ID", "");
+
+        BackendConfiguration configuration = BackendConfiguration.Load();
+
+        Assert.Null(configuration.HonuaWorkspaceId);
+        Assert.Null(configuration.HonuaTurnId);
+    }
+
     [Theory]
     [InlineData("workspace", null)]
     [InlineData(null, "turn")]

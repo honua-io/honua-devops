@@ -102,8 +102,10 @@ internal sealed record BackendConfiguration(
 
         string? honuaApiKey = Normalize(Environment.GetEnvironmentVariable(HonuaApiKeyVariable));
         string? otelApiKey = Normalize(Environment.GetEnvironmentVariable(OTelApiKeyVariable));
-        string? honuaWorkspaceId = Environment.GetEnvironmentVariable(HonuaWorkspaceIdVariable);
-        string? honuaTurnId = Environment.GetEnvironmentVariable(HonuaTurnIdVariable);
+        // Deployment templates commonly emit empty placeholders for optional values.
+        // Do not trim nonempty IDs: whitespace is not part of the canonical identifier.
+        string? honuaWorkspaceId = EmptyToNull(Environment.GetEnvironmentVariable(HonuaWorkspaceIdVariable));
+        string? honuaTurnId = EmptyToNull(Environment.GetEnvironmentVariable(HonuaTurnIdVariable));
         ValidateHonuaTurnBinding(honuaWorkspaceId, honuaTurnId);
 
         string honuaReadinessPath = ParseRelativePathWithLegacy(
@@ -258,6 +260,8 @@ internal sealed record BackendConfiguration(
     private static bool IsCanonicalBindingId(string value) =>
         value.Length is >= 1 and <= 128 && value.All(character =>
             character is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-');
+
+    private static string? EmptyToNull(string? value) => value?.Length == 0 ? null : value;
 
     private static bool ParseBoolean(string? value, bool fallback, string variableName)
     {
