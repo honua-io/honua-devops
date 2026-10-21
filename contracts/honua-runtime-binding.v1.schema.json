@@ -267,7 +267,18 @@
               "routeName",
               "servicePort",
               "targetPort",
-              "publicUrl"
+              "publicUrl",
+              "serverServiceAccountName",
+              "serverRoleArn",
+              "gpServiceAccountName",
+              "gpRoleArn",
+              "serverPodIdentityAssociationId",
+              "gpPodIdentityAssociationId",
+              "certificateArn",
+              "dbConnectionSecretArn",
+              "adminPasswordSecretArn",
+              "masterKeySecretArn",
+              "loadBalancerArn"
             ],
             "properties": {
               "clusterArn": {
@@ -327,6 +338,56 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 63
+              },
+              "serverServiceAccountName": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                "maxLength": 253
+              },
+              "gpServiceAccountName": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                "maxLength": 253
+              },
+              "serverRoleArn": {
+                "type": "string",
+                "pattern": "^arn:aws(-us-gov|-cn)?:iam::[0-9]{12}:role/.+$",
+                "maxLength": 1024
+              },
+              "gpRoleArn": {
+                "type": "string",
+                "pattern": "^arn:aws(-us-gov|-cn)?:iam::[0-9]{12}:role/.+$",
+                "maxLength": 1024
+              },
+              "serverPodIdentityAssociationId": {
+                "type": "string",
+                "pattern": "^a-[a-z0-9]+$",
+                "maxLength": 128
+              },
+              "gpPodIdentityAssociationId": {
+                "type": "string",
+                "pattern": "^a-[a-z0-9]+$",
+                "maxLength": 128
+              },
+              "certificateArn": {
+                "type": "string",
+                "pattern": "^arn:aws(-us-gov|-cn)?:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$",
+                "maxLength": 1024
+              },
+              "dbConnectionSecretArn": {
+                "type": "string",
+                "pattern": "^arn:aws(-us-gov|-cn)?:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$",
+                "maxLength": 1024
+              },
+              "adminPasswordSecretArn": {
+                "type": "string",
+                "pattern": "^arn:aws(-us-gov|-cn)?:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$",
+                "maxLength": 1024
+              },
+              "masterKeySecretArn": {
+                "type": "string",
+                "pattern": "^arn:aws(-us-gov|-cn)?:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$",
+                "maxLength": 1024
               },
               "routeHost": {
                 "type": "string",
@@ -391,11 +452,6 @@
                   "anyOf": [
                     {
                       "required": [
-                        "loadBalancerArn"
-                      ]
-                    },
-                    {
-                      "required": [
                         "dnsZoneId"
                       ]
                     },
@@ -408,7 +464,6 @@
                 },
                 "then": {
                   "required": [
-                    "loadBalancerArn",
                     "dnsZoneId",
                     "dnsRecordName"
                   ]

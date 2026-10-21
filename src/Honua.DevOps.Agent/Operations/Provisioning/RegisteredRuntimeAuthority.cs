@@ -3,10 +3,21 @@ using System.Text.Json;
 namespace Honua.DevOps.Agent.Operations;
 
 /// <summary>Exact safe registry projection returned by current canonical server authorization.</summary>
-internal sealed record RegisteredRuntimeAuthority(string ServerTargetId, string DeployTargetId, string Environment,
+internal sealed partial record RegisteredRuntimeAuthority(string ServerTargetId, string DeployTargetId, string Environment,
     string? TenantId, string RuntimeKind, string Backend, string TargetName,
     IReadOnlyDictionary<string, string> ResourceParameters, bool UsesCustomProviderEndpoint)
 {
+    internal bool HasSameAuthorityAs(RegisteredRuntimeAuthority? other)
+        => other is not null && ServerTargetId == other.ServerTargetId && DeployTargetId == other.DeployTargetId &&
+            Environment == other.Environment && TenantId == other.TenantId &&
+            RuntimeKind == other.RuntimeKind && Backend == other.Backend && TargetName == other.TargetName &&
+            UsesCustomProviderEndpoint == other.UsesCustomProviderEndpoint &&
+            ResourceParameters.Count == other.ResourceParameters.Count &&
+            ResourceParameters.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Zip(other.ResourceParameters.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                .All(pair => string.Equals(pair.First.Key, pair.Second.Key, StringComparison.Ordinal) &&
+                    string.Equals(pair.First.Value, pair.Second.Value, StringComparison.Ordinal));
+
     private static readonly HashSet<string> LambdaKeys = new(StringComparer.Ordinal)
     {
         "aws.region", "lambda.region", "aws.lambda.function_name", "lambda.function_name", "lambda.alias_function_name",
@@ -76,6 +87,11 @@ internal sealed partial class BackendGateway
         }, cancellationToken);
         if (!result.CallResult.IsSuccess || result.Payload is null)
             throw new InvalidDataException("Fresh canonical target authorization is unavailable.");
-        return RegisteredRuntimeAuthority.ReadLambda(result.Payload.RootElement, runtime, facts);
+        return facts.RuntimeKind switch
+        {
+            "aws-lambda" => RegisteredRuntimeAuthority.ReadLambda(result.Payload.RootElement, runtime, facts),
+            "aws-eks" => RegisteredRuntimeAuthority.ReadEks(result.Payload.RootElement, runtime, facts),
+            _ => throw new InvalidDataException("Current canonical runtime authorization is unavailable for this runtime.")
+        };
     }
 }

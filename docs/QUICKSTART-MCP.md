@@ -1,5 +1,12 @@
 # Quickstart: honua-devops as an MCP server
 
+This page covers direct registration of the private operator process. The
+[unified agent workspace](unified-agent-workspace.md) keeps one public
+`honua-agent-mcp` registration across bootstrap, optional provisioning and the
+installed server. In that setup, the host configures this private adapter and
+performs the authenticated target handoff through the gateway. Use the unified
+workspace path for the end-to-end conversational GIS experience.
+
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
 MCP-capable host) can call the same 27 operator tools the interactive agent

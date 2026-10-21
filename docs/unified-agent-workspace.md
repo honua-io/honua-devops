@@ -1,6 +1,6 @@
 ---
 type: reference
-description: Private ECS provisioning integration behind the unified public MCP connection and canonical server approval workflow.
+description: Private provisioning integration behind the unified public MCP connection and canonical server approval workflow.
 ---
 
 # Unified agent workspace integration
@@ -26,13 +26,14 @@ plus optional `create_scoped_gitops_pull_request` and
 The caller cannot invoke `record_gitops_proposal_decision`, private experimental
 rollback, arbitrary process execution, or any unlisted tool through this bridge.
 
-## ECS and Lambda provisioning and authenticated handoff
+## ECS, Lambda and native EKS provisioning and authenticated handoff
 
-The implemented provisioning adapters are `aws-ecs` and `aws-lambda`, size
+The provisioning adapters are `aws-ecs`, `aws-lambda` and `aws-eks`, size
 `small`, using `Provisioning/HonuaOperationsToolkit.Provisioning.cs` and the
 existing exact-plan Terraform substrate. The host selects the runtime through
 `HONUA_DEVOPS_RUNTIME_KIND`; a prompt cannot change that authorization binding.
-ECS uses the `aws` Terraform root and Lambda uses `aws-serverless`.
+ECS uses the `aws` Terraform root, Lambda uses `aws-serverless`, and EKS
+uses `aws-eks-native` to install a native workload into an existing EKS cluster.
 Plan produces a durable provisioning operation, saved-plan
 metadata digest and review challenge. A separate trusted issuer signs approval
 for that exact operation, plan, action, stack and environment. Apply consumes the
@@ -70,13 +71,25 @@ strings, secrets and arbitrary environment overrides remain out of band. This
 requires a matching `honua-iac` root that implements the isolated migration
 profile; it does not establish public artifact availability or live execution.
 
-Native EKS provisioning and install-handoff verification are not implemented in
-this DevOps surface. Its profile identifies `honua-kubernetes-deployment`, but
-`install_handoff` refuses EKS rather than treating cluster metadata as proof of a
-running workload. It is not in the Terraform provisioning stack allowlist.
-The complete workflow still requires native Deployment, serving-port and public
-route observation and actual qualification, with no Argo dependency;
-that profile alone is not evidence of provisioning, rollout or rollback.
+Native EKS uses the `honua-kubernetes-deployment` runtime profile. Terraform
+outputs describe configured resources and remain unqualified. The exact-plan
+executor seals the actual post-apply state lineage and serial against its
+approved plan and execution receipt; it never predicts a future serial or applies
+a second plan to manufacture qualification. `install_handoff` requires that seal.
+
+`verify_install_handoff` compares the registered target with fresh read-only AWS
+and Kubernetes observations: cluster API and CA, native Deployment identity,
+generation, image and ready/updated/available replicas, serving Service and
+EndpointSlice-to-Pod ownership, public TLS NLB and DNS alias, and separate server
+and GP Pod Identity associations. Public health, authenticated Admin and MCP
+probes must also pass. Authority is rechecked after probing; configured output or
+a stored observation alone cannot establish a verified handoff. The GP association
+check verifies its configured identity, not that a GP Job has executed with it.
+
+This workflow requires no Argo installation, CRD or third-party rollout
+controller. Live install, upgrade, failed-upgrade and rollback qualification is
+still outstanding. The implemented observer and contract tests do not establish
+that a customer deployment has completed those workflows.
 
 ## Git and Studio configuration
 

@@ -38,7 +38,9 @@ internal sealed record ProvisionedRuntimeFacts(string RuntimeKind, string Target
             foreach (var property in identity.EnumerateObject().Where(property => property.Name.EndsWith("Arn", StringComparison.Ordinal)))
             {
                 var arn = property.Value.GetString()!.Split(':', 6);
-                if (arn.Length != 6 || arn[0] != "arn" || arn[1] != partition || arn[3] != region || arn[4] != account) return false;
+                if (arn.Length != 6 || arn[0] != "arn" || arn[1] != partition || arn[4] != account ||
+                    (arn[2] == "iam" ? arn[3] != "" || !arn[5].StartsWith("role/", StringComparison.Ordinal)
+                        : arn[3] != region)) return false;
             }
             if (kind == "aws-lambda")
             {
