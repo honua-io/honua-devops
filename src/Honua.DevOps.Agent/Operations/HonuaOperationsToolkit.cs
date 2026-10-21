@@ -1099,7 +1099,7 @@ internal sealed partial class HonuaOperationsToolkit(
             ExecutionMode: runtime.ExecutionMode,
             ExecutionTier: runtime.ExecutionTier);
         IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry
-            .ResolveMany(ValidateDeploymentTargets(runtime.TerraformDeploymentTargets))
+            .ResolveMany(SelectPlannerTargets())
             .Select(adapter => adapter.BuildWorkflow(adapterRequest))
             .ToArray();
 
@@ -1151,7 +1151,7 @@ internal sealed partial class HonuaOperationsToolkit(
             $"Review the metadata-release-aware plan, then route merge/reconcile for branch `{changeSet.BranchName}` through the governed GitOps/approval path."
         ];
         actions.AddRange(BuildMetadataReleasePlanActions(metadataRelease));
-        actions.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
+        actions.AddRange(BuildGitOpsPlanActions(gitOpsPlan, includeCommands: !IsBoundNativeEks()));
 
         return Task.FromResult(new OperationResponse(
             Status: changeSet.Readiness,
@@ -2179,7 +2179,7 @@ internal sealed partial class HonuaOperationsToolkit(
             }
         }
 
-        foreach (GitOpsStateTransitionPlan transition in plan.StateTransitions)
+        foreach (GitOpsStateTransitionPlan transition in includeCommands ? plan.StateTransitions : Enumerable.Empty<GitOpsStateTransitionPlan>())
         {
             string mutation = transition.MutatesState ? "mutating" : "read-only";
             string approval = transition.RequiresApproval ? "approval-required" : "no-approval";

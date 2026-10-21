@@ -12,7 +12,23 @@ namespace Honua.DevOps.Agent.Operations;
 /// <summary>Host-owned input witness for the exact-plan wrapper; never an MCP tool result.</summary>
 internal static class PrivatePlanHostEvidence
 {
-    internal static bool IsSupportedHost => OperatingSystem.IsLinux();
+    internal static bool IsSupportedHost
+    {
+        get
+        {
+            if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/stat") ||
+                !Directory.Exists("/proc/self/fd")) return false;
+            try
+            {
+                return (File.GetUnixFileMode("/usr/bin/stat") &
+                    (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+    }
     private const string SidecarName = "private-host-evidence.json";
     private const int MaxVariablesBytes = 16 * 1024;
     private const int MaxInputBytes = 8 * 1024 * 1024;
@@ -28,6 +44,35 @@ internal static class PrivatePlanHostEvidence
         string PlanMetadataDigest, string MetadataContentSha256, string VariablesSha256,
         string VariablesBase64, string[] ExecutedInputEntries, string InputDigest,
         DateTimeOffset ExpiresAtUtc);
+
+    // Only the generated, allowlisted small-plan varfile is qualified for the
+    // v1 export. Ambient Terraform variables and auto files may contain secrets;
+    // their raw hashes must not cross the host evidence boundary.
+    internal static bool IsExportEligibleInputClosure(string root, IReadOnlyDictionary<string, string>? overlay)
+    {
+        bool hasAmbientVariables = false;
+        foreach (DictionaryEntry value in Environment.GetEnvironmentVariables())
+        {
+            if (value.Key is not string name) continue;
+            if (name.StartsWith("TF_CLI_ARGS", StringComparison.Ordinal) &&
+                !string.IsNullOrEmpty(value.Value as string))
+                throw new InvalidDataException("Terraform CLI argument environment is unsupported for private host evidence.");
+            if (name.StartsWith("TF_VAR_", StringComparison.Ordinal)) hasAmbientVariables = true;
+        }
+        if (overlay is not null)
+        {
+            if (overlay.Any(item => item.Key.StartsWith("TF_CLI_ARGS", StringComparison.Ordinal)
+                && !string.IsNullOrEmpty(item.Value)))
+                throw new InvalidDataException("Terraform CLI argument environment is unsupported for private host evidence.");
+            if (overlay.Keys.Any(name => name.StartsWith("TF_VAR_", StringComparison.Ordinal))) hasAmbientVariables = true;
+        }
+        if (File.Exists(Path.Combine(root, "terraform.tfvars.json")))
+            throw new InvalidDataException("terraform.tfvars.json is unsupported for private host evidence.");
+        return !hasAmbientVariables && !Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .Any(name => name == "terraform.tfvars" || name!.EndsWith(".auto.tfvars", StringComparison.Ordinal)
+                || name.EndsWith(".auto.tfvars.json", StringComparison.Ordinal));
+    }
 
     internal static Snapshot Capture(string root, string variableFile, IReadOnlyDictionary<string, string>? overlay)
     {
@@ -95,6 +140,10 @@ internal static class PrivatePlanHostEvidence
             entries.Add($"{kind}{reference}={Sha(bytes)}");
         }
     }
+
+    internal static bool IsSafeGeneratedOnlySnapshot(Snapshot snapshot, string variableFile)
+        => snapshot.Entries is [var entry] &&
+            entry.StartsWith($"varfile:{Path.GetFullPath(variableFile)}=", StringComparison.Ordinal);
 
     internal static bool MatchesMetadata(Snapshot snapshot, string metadataJson)
     {
@@ -182,6 +231,11 @@ internal static class PrivatePlanHostEvidence
                 !sidecar.ExecutedInputEntries.SequenceEqual(
                     sidecar.ExecutedInputEntries.Order(StringComparer.Ordinal), StringComparer.Ordinal))
                 throw new InvalidDataException("Private plan input entries are invalid.");
+            if (sidecar.ExecutedInputEntries.Length != 1 ||
+                !sidecar.ExecutedInputEntries[0].StartsWith($"varfile:{variablesPath}=", StringComparison.Ordinal))
+                throw new InvalidDataException("Private plan input closure is not eligible for host export.");
+            if (sidecar.ExecutedInputEntries[0] != $"varfile:{variablesPath}={Sha(variablesBytes)}")
+                throw new InvalidDataException("Private plan input entry does not hash the executed generated variables.");
             DateTimeOffset expiry = DateTimeOffset.Parse(
                 metadata.RootElement.GetProperty("expires_at_utc").GetString()!, CultureInfo.InvariantCulture);
             if (variablesBytes.Length is < 2 or > MaxVariablesBytes ||
@@ -331,7 +385,14 @@ internal static class PrivatePlanHostEvidence
         process.StartInfo.ArgumentList.Add(format);
         process.StartInfo.ArgumentList.Add("--");
         process.StartInfo.ArgumentList.Add(path);
-        if (!process.Start()) throw new InvalidDataException("Private plan file type could not be checked.");
+        try
+        {
+            if (!process.Start()) throw new InvalidDataException("Private plan file type could not be checked.");
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            throw new InvalidDataException("Private plan file type could not be checked.", exception);
+        }
         string value = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
         if (process.ExitCode != 0 || value.Length > 128)

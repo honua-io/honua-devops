@@ -44,6 +44,7 @@ public class HonuaOperationsToolkitDeployTests
             Assert.DoesNotContain("terraform -chdir", wire, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("honua-gitops plan", wire, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("honua-gitops rollback", wire, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(response.Actions, action => action.StartsWith("GitOps transition", StringComparison.Ordinal));
             Assert.DoesNotContain("Adapter plan release (aks)", wire, StringComparison.Ordinal);
         }
     }

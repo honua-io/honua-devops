@@ -39,6 +39,43 @@ public sealed class HonuaOperationsToolkitMetadataReleasePlanTests
     """;
 
     [Fact]
+    public async Task NativeEksMetadataReleaseUsesBoundHostAndOmitsGenericMutationGuidance()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient client = new(handler);
+        using BackendGateway gateway = new(CreateBackendConfiguration(), client);
+        OperationRuntime runtime = CreateRuntime() with
+        {
+            TerraformDeploymentTargets = ["lambda", "eks", "aks"],
+            RuntimeKind = "aws-eks",
+            RuntimeBackend = "honua-kubernetes-deployment",
+            ServerTargetId = "server-eks-dev",
+            DeployTargetId = "deploy-eks-dev"
+        };
+        HonuaOperationsToolkit toolkit = new(runtime, gateway);
+
+        OperationResponse response = await toolkit.PlanMetadataReleaseGitOpsAsync(ReadyPackage);
+
+        Assert.Empty(handler.CapturedRequests);
+        Assert.Equal(MetadataChangeSetReadiness.Ready, response.Status);
+        Assert.DoesNotContain(response.Actions, action => action.StartsWith("GitOps command", StringComparison.Ordinal)
+            || action.StartsWith("GitOps transition", StringComparison.Ordinal));
+        Assert.DoesNotContain("Adapter plan release (aks)", string.Join("\n", response.Actions), StringComparison.Ordinal);
+        Assert.Contains("aws-eks-native", System.Text.Json.JsonSerializer.Serialize(response.ReleaseOrchestration),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EksOnlyMetadataReleaseWithoutBoundHostRefusesGenericPlanner()
+    {
+        using BackendGateway gateway = new(CreateBackendConfiguration(), new HttpClient());
+        HonuaOperationsToolkit toolkit = new(CreateRuntime() with { TerraformDeploymentTargets = ["eks"] }, gateway);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            toolkit.PlanMetadataReleaseGitOpsAsync(ReadyPackage));
+    }
+
+    [Fact]
     public async Task PlanMetadataReleaseGitOpsAsync_ReadyPackage_CarriesChangeSetAndPopulatedPlanSummary()
     {
         TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));

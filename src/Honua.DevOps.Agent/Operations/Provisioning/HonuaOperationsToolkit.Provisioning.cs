@@ -266,7 +266,7 @@ internal sealed partial class HonuaOperationsToolkit
             }
         }
 
-        if (!HasSecretInput(terraformRoot, canonicalStack))
+        if (!HasSecretInput(terraformRoot, canonicalStack, variables))
         {
             return ProvisioningRefusal(
                 "secret-input-required",
@@ -296,13 +296,21 @@ internal sealed partial class HonuaOperationsToolkit
             // Protected host evidence is qualified for Linux/WSL. Other hosts keep
             // their existing plan behavior but cannot export this evidence.
             PrivatePlanHostEvidence.Snapshot? inputWitness = null;
+            bool hostEvidenceEligible = false;
             if (PrivatePlanHostEvidence.IsSupportedHost)
             {
                 try
                 {
-                    inputWitness = PrivatePlanHostEvidence.Capture(terraformRoot, variableFile, planEnvironment);
+                    hostEvidenceEligible = PrivatePlanHostEvidence.IsExportEligibleInputClosure(
+                        terraformRoot, planEnvironment);
+                    if (hostEvidenceEligible)
+                    {
+                        inputWitness = PrivatePlanHostEvidence.Capture(terraformRoot, variableFile, planEnvironment);
+                        if (!PrivatePlanHostEvidence.IsSafeGeneratedOnlySnapshot(inputWitness, variableFile))
+                            throw new InvalidDataException("Private host evidence input closure changed during capture.");
+                    }
                 }
-                catch (InvalidDataException)
+                catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
                 {
                     return ProvisioningRefusal("exact-plan-input-unsupported",
                         "The Terraform input closure cannot be witnessed by this host; no plan was started.", [], []);
@@ -396,20 +404,19 @@ internal sealed partial class HonuaOperationsToolkit
             ExactPlanMetadata metadata = planMetadata!;
             // The wrapper's source identity is relative to the IaC checkout;
             // the host manifest keeps the resolved absolute execution path.
-            string? sourceTerraformRoot = inputWitness is null
-                ? null : Path.GetRelativePath(substrate.IacRoot, terraformRoot);
+            string sourceTerraformRoot = Path.GetRelativePath(substrate.IacRoot, terraformRoot);
             if (metadata.SavedPlanSha256 != ComputeSha256(planFile))
                 return ProvisioningRefusal("exact-plan-metadata-invalid", "The plan metadata names different saved-plan bytes.", [], []);
-            if (inputWitness is not null && (metadata.ActorId != planActorId || metadata.TerraformRoot != sourceTerraformRoot ||
+            if (metadata.ActorId != planActorId || metadata.TerraformRoot != sourceTerraformRoot ||
                 metadata.TargetId != ResolveTargetId(canonicalStack, environment) ||
-                metadata.Action != (normalizedAction == "destroy" ? "destroy" : "apply")))
+                metadata.Action != (normalizedAction == "destroy" ? "destroy" : "apply"))
                 return ProvisioningRefusal("exact-plan-metadata-invalid",
                     "The exact-plan metadata names a different actor, root, target, or action; this plan cannot be approved.", [], []);
             if (inputWitness is not null &&
                 !PrivatePlanHostEvidence.MatchesMetadata(inputWitness, Encoding.UTF8.GetString(metadataBytes)))
                 return ProvisioningRefusal("exact-plan-input-mismatch",
                     "The exact-plan metadata differs from the inputs captured before execution; this plan cannot be approved.", [], []);
-            if (inputWitness is not null && !ExactPlanCanonicalDigest.Matches(Encoding.UTF8.GetString(metadataBytes)))
+            if (!ExactPlanCanonicalDigest.Matches(Encoding.UTF8.GetString(metadataBytes)))
                 return ProvisioningRefusal("exact-plan-metadata-invalid",
                     "The exact-plan metadata canonical digest is invalid; this plan cannot be approved.", [], []);
 
@@ -469,6 +476,9 @@ internal sealed partial class HonuaOperationsToolkit
                     : $"Terraform plan ready for `{canonicalStack}` size `{canonicalSize}` in `{environment}`: {planSummary}",
                 Findings:
                 [
+                    hostEvidenceEligible
+                        ? "Protected host evidence: eligible; export requires a fresh protected sidecar and exact saved-plan checks."
+                        : "Protected host evidence: host-evidence-unsupported; this legacy plan has no exportable host input witness.",
                     $"Deployable root: {terraformRoot}.",
                     $"Saved plan token: {planToken} (expires in {SavedPlanLifetimeSeconds / 60} minutes).",
                     "Planned through the honua-iac governed exact-plan substrate (`scripts/terraform-exact-plan.sh`); no hand-rolled Terraform argv was used.",
@@ -1559,6 +1569,10 @@ internal sealed partial class HonuaOperationsToolkit
                     new Regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", RegexOptions.CultureInvariant)),
                 "certificate_arn" => ValidateString(property.Name, property.Value,
                     new Regex("^arn:aws(-us-gov|-cn)?:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$", RegexOptions.CultureInvariant)),
+                "db_connection_secret_arn" or "admin_password_secret_arn" or "master_key_secret_arn" =>
+                    ValidateString(property.Name, property.Value,
+                        new Regex("^arn:aws(-us-gov|-cn)?:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$",
+                            RegexOptions.CultureInvariant)),
                 "route53_zone_id" => ValidateString(property.Name, property.Value,
                     new Regex("^Z[A-Z0-9]+$", RegexOptions.CultureInvariant)),
                 "load_balancer_controller" => ValidateChoice(property.Name, property.Value,
@@ -1572,6 +1586,19 @@ internal sealed partial class HonuaOperationsToolkit
                      "certificate_arn", "load_balancer_controller", "artifact_capabilities",
                      "server_pod_identity_association_id", "gp_job_pod_identity_association_id" })
             if (!variables.ContainsKey(required)) throw new InvalidOperationException("A required native EKS identity or public route variable is missing.");
+        string serverRole = (string)variables["server_role_arn"]!;
+        string secretAuthority = serverRole[..serverRole.IndexOf(":iam::", StringComparison.Ordinal)];
+        string secretAccount = serverRole.Split(':')[4];
+        string gpRole = (string)variables["gp_job_role_arn"]!;
+        if (!gpRole.StartsWith($"{secretAuthority}:iam::{secretAccount}:role/", StringComparison.Ordinal))
+            throw new InvalidOperationException("Native EKS server and GP workload roles must belong to the same AWS partition and account.");
+        foreach (string name in new[] { "db_connection_secret_arn", "admin_password_secret_arn", "master_key_secret_arn" })
+        {
+            if (!variables.TryGetValue(name, out object? value)) continue;
+            string expectedPrefix = $"{secretAuthority}:secretsmanager:{variables["region"]}:{secretAccount}:secret:";
+            if (!((string)value!).StartsWith(expectedPrefix, StringComparison.Ordinal))
+                throw new InvalidOperationException($"The native EKS `{name}` reference must match the selected region and workload account.");
+        }
         var capabilities = (Dictionary<string, object>)variables["artifact_capabilities"]!;
         if (!((string)variables["image_reference"]!).EndsWith("@" + capabilities["server_image_digest"], StringComparison.Ordinal) ||
             !((string)variables["gp_job_image_reference"]!).EndsWith("@" + capabilities["gp_job_image_digest"], StringComparison.Ordinal))
@@ -1857,8 +1884,11 @@ internal sealed partial class HonuaOperationsToolkit
         }
     }
 
-    private static bool HasSecretInput(string terraformRoot, string stack)
+    private static bool HasSecretInput(string terraformRoot, string stack, IReadOnlyDictionary<string, object?> variables)
     {
+        if (stack == "aws-eks" && new[] { "db_connection_secret_arn", "admin_password_secret_arn",
+                "master_key_secret_arn" }.All(name => variables.ContainsKey(name)))
+            return true;
         if (File.Exists(Path.Combine(terraformRoot, "terraform.tfvars")))
         {
             return true;
