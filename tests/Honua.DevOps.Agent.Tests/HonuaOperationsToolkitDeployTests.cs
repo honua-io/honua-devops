@@ -11,6 +11,41 @@ namespace Honua.DevOps.Agent.Tests;
 public class HonuaOperationsToolkitDeployTests
 {
     [Fact]
+    public async Task EksPublicPlannerResponses_DescribeNativeHandoffAndGovernedDayTwo()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        OperationRuntime runtime = CreateRuntime() with
+        {
+            TerraformDeploymentTargets = ["eks"],
+            RuntimeKind = "aws-eks",
+            RuntimeBackend = "honua-kubernetes-deployment"
+        };
+        HonuaOperationsToolkit toolkit = new(runtime, gateway);
+
+        OperationResponse engine = await toolkit.PlanGitOpsEngineAsync(
+            "roads-api", "dev", "release-2", "plan", "review EKS change");
+        OperationResponse deployment = await toolkit.DeployServiceWithGitOpsAsync(
+            "roads-api", "dev", "release-2", "dryrun", "review EKS change");
+
+        foreach (OperationResponse response in new[] { engine, deployment })
+        {
+            string wire = JsonSerializer.Serialize(response);
+            Assert.Contains("aws-eks-native", wire, StringComparison.Ordinal);
+            Assert.Contains("honua-kubernetes-deployment", wire, StringComparison.Ordinal);
+            Assert.Contains("separate human approval", wire, StringComparison.Ordinal);
+            Assert.Contains("server-sealed protected recovery", wire, StringComparison.Ordinal);
+            Assert.Contains("Adapter recovery (eks)", wire, StringComparison.Ordinal);
+            Assert.DoesNotContain("Adapter rollback (eks)", wire, StringComparison.Ordinal);
+            Assert.DoesNotContain("helm", wire, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("argo", wire, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("kubectl", wire, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("terraform -chdir", wire, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("honua-gitops plan", wire, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("honua-gitops rollback", wire, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
     public async Task DeployServiceWithGitOpsAsync_ThrowsOnInvalidEnvironmentInput()
     {
         using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));

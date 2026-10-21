@@ -83,7 +83,7 @@ internal static class ReleaseOrchestrationPlanner
                     "target-validation",
                     "rollback-classification"
                 ],
-                adapterWorkflows.Select(workflow => workflow.Validate.SuggestedCommands.First()).ToArray()),
+                adapterWorkflows.Select(workflow => Guidance(workflow.Validate)).ToArray()),
             new(
                 ReleaseStageKind.Backup,
                 "Capture an application and infrastructure recovery checkpoint before rollout.",
@@ -121,7 +121,7 @@ internal static class ReleaseOrchestrationPlanner
                 [
                     "release-evidence"
                 ],
-                adapterWorkflows.Select(workflow => workflow.ApplyRelease.SuggestedCommands.First()).ToArray()),
+                adapterWorkflows.Select(workflow => Guidance(workflow.ApplyRelease)).ToArray()),
             new(
                 ReleaseStageKind.Smoke,
                 "Verify post-rollout health with the shared smoke contract before promotion.",
@@ -171,7 +171,7 @@ internal static class ReleaseOrchestrationPlanner
                 "rollback-evidence",
                 "rollback-classification"
             ],
-            adapterWorkflows.Select(workflow => workflow.Rollback.SuggestedCommands.First()).ToArray()));
+            adapterWorkflows.Select(workflow => Guidance(workflow.Rollback)).ToArray()));
 
         return new ReleaseOrchestrationPlan(
             Strategy: strategy,
@@ -222,6 +222,9 @@ internal static class ReleaseOrchestrationPlanner
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    private static string Guidance(RuntimeAdapterStepPlan step)
+        => step.SuggestedCommands.FirstOrDefault() ?? step.Summary;
 
     private static string BuildStrategy(IReadOnlyList<RuntimeAdapterCapability> capabilities)
     {
