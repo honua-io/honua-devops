@@ -24,6 +24,12 @@ internal sealed class TestHttpMessageHandler(Func<HttpRequestMessage, HttpRespon
             ApiKey = request.Headers.TryGetValues("X-API-Key", out IEnumerable<string>? apiKeys)
                 ? apiKeys.SingleOrDefault()
                 : null,
+            HonuaWorkspaceId = request.Headers.TryGetValues("X-Honua-Workspace", out IEnumerable<string>? workspaceIds)
+                ? workspaceIds.SingleOrDefault()
+                : null,
+            HonuaTurnId = request.Headers.TryGetValues("X-Honua-Turn", out IEnumerable<string>? turnIds)
+                ? turnIds.SingleOrDefault()
+                : null,
             McpSessionId = request.Headers.TryGetValues("Mcp-Session-Id", out IEnumerable<string>? sessionIds)
                 ? sessionIds.SingleOrDefault()
                 : null
@@ -50,6 +56,10 @@ internal sealed record CapturedRequest(
     internal string? AuthorizationParameter { get; init; }
 
     internal string? ApiKey { get; init; }
+
+    internal string? HonuaWorkspaceId { get; init; }
+
+    internal string? HonuaTurnId { get; init; }
 
     internal string? McpSessionId { get; init; }
 }

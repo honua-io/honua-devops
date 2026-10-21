@@ -170,6 +170,7 @@ Backends (same variables as every other `honua-devops` mode — see README
 | --- | --- |
 | `HONUA_DEVOPS_HONUA_API_BASE_URL` | Honua API (readiness, admin, metrics, manifest, deploy-control). Default `http://localhost:8080`. |
 | `HONUA_DEVOPS_HONUA_API_KEY` | Sent as `X-API-Key` for Honua admin/metrics contracts. |
+| `HONUA_DEVOPS_HONUA_WORKSPACE_ID`, `HONUA_DEVOPS_HONUA_TURN_ID` | Optional paired current-turn binding for an external agent child. Both use 1–128 ASCII letters, digits, `_` or `-`; when set, only Honua Server requests carry `X-Honua-Workspace` and `X-Honua-Turn`. Restart the child for a different turn. |
 | `HONUA_DEVOPS_OTEL_BASE_URL` | OTEL collector health probe (preflight). Default `http://localhost:4318`. |
 | `HONUA_DEVOPS_OTEL_API_KEY` | Optional OTEL bearer token. |
 | `HONUA_DEVOPS_SUPPORT_API_BASE_URL` | Optional; enables `process_pending_tickets`. |

@@ -97,6 +97,53 @@ public class BackendConfigurationTests
         Assert.Equal("api/v1/admin/deploy/operations", configuration.HonuaDeployOperationsPath);
     }
 
+    [Fact]
+    public void Load_SnapshotsOptionalCanonicalHonuaTurnBinding()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_HONUA_WORKSPACE_ID", "workspace_1");
+        environment.Set("HONUA_DEVOPS_HONUA_TURN_ID", "turn-2");
+
+        BackendConfiguration configuration = BackendConfiguration.Load();
+        environment.Set("HONUA_DEVOPS_HONUA_WORKSPACE_ID", "other-workspace");
+        environment.Set("HONUA_DEVOPS_HONUA_TURN_ID", "other-turn");
+
+        Assert.Equal("workspace_1", configuration.HonuaWorkspaceId);
+        Assert.Equal("turn-2", configuration.HonuaTurnId);
+    }
+
+    [Theory]
+    [InlineData("workspace", null)]
+    [InlineData(null, "turn")]
+    [InlineData("", "turn")]
+    [InlineData("workspace", "")]
+    [InlineData("workspace/child", "turn")]
+    [InlineData("workspace", "turn\r\nX-API-Key: stolen")]
+    public void Load_RejectsIncompleteOrNoncanonicalHonuaTurnBinding(string? workspace, string? turn)
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_HONUA_WORKSPACE_ID", workspace);
+        environment.Set("HONUA_DEVOPS_HONUA_TURN_ID", turn);
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(BackendConfiguration.Load);
+
+        Assert.Contains("HONUA_DEVOPS_HONUA_WORKSPACE_ID", exception.Message);
+        Assert.Contains("HONUA_DEVOPS_HONUA_TURN_ID", exception.Message);
+    }
+
+    [Fact]
+    public void Load_RejectsOverlongHonuaTurnBinding()
+    {
+        using TestEnvironmentVariableScope environment = new();
+        ResetBackendVariables(environment);
+        environment.Set("HONUA_DEVOPS_HONUA_WORKSPACE_ID", new string('w', 129));
+        environment.Set("HONUA_DEVOPS_HONUA_TURN_ID", "turn");
+
+        Assert.Throws<InvalidOperationException>(BackendConfiguration.Load);
+    }
+
     private static void ResetBackendVariables(TestEnvironmentVariableScope environment)
     {
         string[] variableNames =
@@ -104,6 +151,8 @@ public class BackendConfigurationTests
             "HONUA_DEVOPS_HONUA_API_BASE_URL",
             "HONUA_DEVOPS_OTEL_BASE_URL",
             "HONUA_DEVOPS_HONUA_API_KEY",
+            "HONUA_DEVOPS_HONUA_WORKSPACE_ID",
+            "HONUA_DEVOPS_HONUA_TURN_ID",
             "HONUA_DEVOPS_OTEL_API_KEY",
             "HONUA_DEVOPS_HONUA_READINESS_PATH",
             "HONUA_DEVOPS_HONUA_HEALTH_PATH",

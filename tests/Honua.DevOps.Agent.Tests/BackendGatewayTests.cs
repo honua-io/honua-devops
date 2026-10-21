@@ -37,6 +37,101 @@ public class BackendGatewayTests
             () => BackendGateway.BuildEndpoint(baseUri, "/https://evil.example/v1/logs/search"));
     }
 
+    [Fact]
+    public async Task BoundHonuaGateway_SendsImmutableTurnHeadersOnReadAndPlanOnlyToHonua()
+    {
+        // Same origin for every backend makes accidental host-based propagation visible.
+        Uri sharedOrigin = new("http://localhost:8080/");
+        BackendConfiguration configuration = BackendConfigurationFixture.Create() with
+        {
+            HonuaApiBaseUri = sharedOrigin,
+            OTelBaseUri = sharedOrigin,
+            SupportApiBaseUri = sharedOrigin,
+            HonuaApiKey = "operator-key",
+            HonuaWorkspaceId = "workspace_1",
+            HonuaTurnId = "turn-2"
+        };
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(configuration, httpClient);
+        using SupportGateway support = new(configuration, httpClient);
+
+        await gateway.ProbeHonuaAsync(CancellationToken.None);
+        using GitOpsDeployBackendResult plan = await gateway.PlanGitOpsDeployAsync(
+            service: "roads-api",
+            environments: ["dev"],
+            revision: "main",
+            action: "sync",
+            changeSummary: "plan",
+            gitOpsTool: "honua-gitops",
+            terraformRepository: "https://github.com/honua-io/honua-iac",
+            terraformRef: "main",
+            deploymentTargets: ["eks"],
+            executionMode: ExecutionMode.Plan,
+            executionTier: ExecutionTier.Plan,
+            allowedEnvironments: ["dev"],
+            deployTargetId: "prod-api",
+            CancellationToken.None);
+        int honuaCount = handler.CapturedRequests.Count;
+        await gateway.ProbeOtelAsync(CancellationToken.None);
+        await support.ListPendingTicketsAsync();
+
+        Assert.True(honuaCount > 1);
+        Assert.All(handler.CapturedRequests.Take(honuaCount), request =>
+        {
+            Assert.Equal("workspace_1", request.HonuaWorkspaceId);
+            Assert.Equal("turn-2", request.HonuaTurnId);
+            Assert.Equal("operator-key", request.ApiKey);
+        });
+        Assert.Contains(handler.CapturedRequests.Take(honuaCount), request => request.Method == "POST");
+        Assert.All(handler.CapturedRequests.Skip(honuaCount), request =>
+        {
+            Assert.Null(request.HonuaWorkspaceId);
+            Assert.Null(request.HonuaTurnId);
+        });
+    }
+
+    [Fact]
+    public async Task UnboundHonuaGateway_LeavesTurnHeadersAbsent()
+    {
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using BackendGateway gateway = new(BackendConfigurationFixture.Create(), httpClient);
+
+        await gateway.ProbeHonuaAsync(CancellationToken.None);
+
+        CapturedRequest request = Assert.Single(handler.CapturedRequests);
+        Assert.Null(request.HonuaWorkspaceId);
+        Assert.Null(request.HonuaTurnId);
+    }
+
+    [Fact]
+    public void BoundHonuaGateway_RejectsHalfBindingEvenFromDirectConfiguration()
+    {
+        BackendConfiguration configuration = BackendConfigurationFixture.Create() with { HonuaWorkspaceId = "workspace" };
+
+        Assert.Throws<InvalidOperationException>(() => new BackendGateway(configuration));
+    }
+
+    [Fact]
+    public async Task BoundHonuaGateway_RejectsForeignEndpointBeforeSendingTurnHeaders()
+    {
+        BackendConfiguration configuration = BackendConfigurationFixture.Create() with
+        {
+            HonuaReadinessPath = "https://foreign.example/healthz/ready",
+            HonuaWorkspaceId = "workspace",
+            HonuaTurnId = "turn"
+        };
+        TestHttpMessageHandler handler = new(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        using HttpClient httpClient = new(handler);
+        using BackendGateway gateway = new(configuration, httpClient);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => gateway.ProbeHonuaAsync(CancellationToken.None));
+
+        Assert.Empty(handler.CapturedRequests);
+    }
+
     // Issue #153: the planning/diff route to /manifest/apply is pinned to dryRun=true and
     // verifies it rather than trusting the caller. A planning path that a boolean can switch
     // into a write is exactly the shared-authority bug the actuation spine exists to remove.
