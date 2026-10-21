@@ -51,6 +51,30 @@ public sealed class PrivatePlanHostEvidenceTests
     }
 
     [Fact]
+    public async Task IacSourceHelperAndExecutionReceiptUseTheRelativeLogicalRoot()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using TerraformTestRoot root = new();
+        string helper = Path.Combine(root.Path, "tf-exec-contract.sh");
+        await File.WriteAllTextAsync(helper,
+            ProvisioningSubstrateFixtures.ReadFixture("cleanup/tf-exec-contract.sh"));
+        ProvisioningProcessResult actual = await SystemProvisioningProcessRunner.Instance.RunAsync(
+            "bash",
+            ["-c", "source \"$1\"; iac_source_doc \"$2\" \"$3\" true", "source-root-contract",
+                helper, root.Path, root.AwsRoot],
+            root.Path, TimeSpan.FromSeconds(5));
+        Assert.Equal(0, actual.ExitCode);
+        using JsonDocument source = JsonDocument.Parse(actual.StandardOutput);
+        string expected = Path.GetRelativePath(root.Path, root.AwsRoot);
+        Assert.Equal(expected, source.RootElement.GetProperty("terraform_root").GetString());
+        using JsonDocument retainedPlan = JsonDocument.Parse(ProvisioningSubstrateFixtures.ExactPlanMetadataJson);
+        using JsonDocument retainedReceipt = JsonDocument.Parse(ProvisioningSubstrateFixtures.ExecReceiptJson);
+        Assert.Equal(expected, retainedPlan.RootElement.GetProperty("source").GetProperty("terraform_root").GetString());
+        Assert.Equal(expected,
+            retainedReceipt.RootElement.GetProperty("cleanup").GetProperty("teardown_root").GetString());
+    }
+
+    [Fact]
     public async Task FifoAutoFileIsRejectedWithoutOpeningABlockingReader()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -216,6 +240,9 @@ public sealed class PrivatePlanHostEvidenceTests
             JsonElement document = evidence.RootElement;
             Assert.Equal(operationId, document.GetProperty("provisioningOperationId").GetString());
             Assert.Equal(plan.ProvisioningLineage.PlanSha256, document.GetProperty("planSha256").GetString());
+            Assert.Equal(root.AwsRoot, document.GetProperty("hostTerraformRoot").GetString());
+            Assert.Equal(Path.GetRelativePath(root.Path, root.AwsRoot),
+                document.GetProperty("sourceTerraformRoot").GetString());
             string[] entries = document.GetProperty("executedInputEntries").EnumerateArray()
                 .Select(item => item.GetString()!).ToArray();
             Assert.Contains(entries, entry => entry.StartsWith("autofile:terraform.tfvars=", StringComparison.Ordinal));

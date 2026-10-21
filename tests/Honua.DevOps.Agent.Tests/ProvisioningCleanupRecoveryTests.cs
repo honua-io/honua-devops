@@ -274,7 +274,11 @@ public sealed class ProvisioningCleanupRecoveryTests
                 retry = await executor.ProvisionInfrastructureAsync("aws-ecs", "small", "destroy", "{}", true,
                     ProvisioningSubstrateFixtures.ExtractChallenge(retry, "confirmation="), approval);
             }
-            Assert.Equal("destroy-recovery-refused", retry.Status);
+            // The protected input witness now refuses reordered wrapper refs
+            // before a recovery plan can be approved; other mutations reach the
+            // original recovery relation guard.
+            Assert.Equal(mutation == "input-order" ? "exact-plan-input-mismatch" : "destroy-recovery-refused",
+                retry.Status);
             Assert.Equal(1, runner.Mutations);
         }
         finally

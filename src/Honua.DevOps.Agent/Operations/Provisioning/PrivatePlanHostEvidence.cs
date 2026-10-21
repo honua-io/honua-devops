@@ -21,7 +21,8 @@ internal static class PrivatePlanHostEvidence
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     internal sealed record Snapshot(byte[] VariablesBytes, string[] Entries, string InputDigest, string[] InputRefs);
-    private sealed record Sidecar(string ProvisioningOperationId, string ActorId, string TerraformRoot,
+    private sealed record Sidecar(string ProvisioningOperationId, string ActorId,
+        string HostTerraformRoot, string SourceTerraformRoot,
         string? TargetId, string Action,
         string PlanSha256,
         string PlanMetadataDigest, string MetadataContentSha256, string VariablesSha256,
@@ -106,16 +107,23 @@ internal static class PrivatePlanHostEvidence
 
     internal static byte[] ReadMetadata(string path) => BoundedRead(path, MaxMetadataBytes);
 
-    internal static void Save(string directory, string operationId, string actorId, string terraformRoot,
+    internal static void Save(string directory, string operationId, string actorId,
+        string hostTerraformRoot, string sourceTerraformRoot,
         string planSha,
         ExactPlanMetadata metadata, byte[] metadataBytes, Snapshot snapshot)
     {
         if (metadataBytes.Length is < 1 or > MaxMetadataBytes ||
             !MatchesMetadata(snapshot, StrictUtf8.GetString(metadataBytes)) ||
             !ExactPlanCanonicalDigest.Matches(StrictUtf8.GetString(metadataBytes)) ||
-            metadata.ActorId != actorId || metadata.TerraformRoot != terraformRoot)
+            metadata.ActorId != actorId || metadata.TerraformRoot != sourceTerraformRoot ||
+            !Path.IsPathFullyQualified(hostTerraformRoot) ||
+            Path.IsPathFullyQualified(sourceTerraformRoot) ||
+            sourceTerraformRoot.Split('/').Any(segment => segment is "" or "." or "..") ||
+            !hostTerraformRoot.EndsWith(Path.DirectorySeparatorChar + sourceTerraformRoot,
+                StringComparison.Ordinal))
             throw new InvalidDataException("The exact plan metadata differs from the executed input witness.");
-        var sidecar = new Sidecar(operationId, actorId, terraformRoot, metadata.TargetId, metadata.Action,
+        var sidecar = new Sidecar(operationId, actorId, hostTerraformRoot, sourceTerraformRoot,
+            metadata.TargetId, metadata.Action,
             planSha, metadata.PlanMetadataDigest, Sha(metadataBytes),
             Sha(snapshot.VariablesBytes), Convert.ToBase64String(snapshot.VariablesBytes), snapshot.Entries,
             snapshot.InputDigest, metadata.ExpiresAtUtc);
@@ -182,14 +190,21 @@ internal static class PrivatePlanHostEvidence
                 !IsSha(sidecar.InputDigest) ||
                 sidecar.ProvisioningOperationId != operationId ||
                 metadata.RootElement.GetProperty("actor_id").GetString() != sidecar.ActorId ||
-                metadata.RootElement.GetProperty("source").GetProperty("terraform_root").GetString() != sidecar.TerraformRoot ||
+                metadata.RootElement.GetProperty("source").GetProperty("terraform_root").GetString() != sidecar.SourceTerraformRoot ||
                 metadata.RootElement.GetProperty("target_id").GetString() != sidecar.TargetId ||
                 metadata.RootElement.GetProperty("action").GetString() != sidecar.Action ||
                 sidecar.ExpiresAtUtc <= DateTimeOffset.UtcNow.AddMinutes(1) ||
                 expiry != sidecar.ExpiresAtUtc ||
                 manifest.RootElement.GetProperty("Token").GetString() != token ||
                 manifest.RootElement.GetProperty("ProvisioningOperationId").GetString() != operationId ||
-                manifest.RootElement.GetProperty("TerraformRoot").GetString() != sidecar.TerraformRoot ||
+                manifest.RootElement.GetProperty("TerraformRoot").GetString() != sidecar.HostTerraformRoot ||
+                string.IsNullOrEmpty(sidecar.HostTerraformRoot) ||
+                string.IsNullOrEmpty(sidecar.SourceTerraformRoot) ||
+                !Path.IsPathFullyQualified(sidecar.HostTerraformRoot) ||
+                Path.IsPathFullyQualified(sidecar.SourceTerraformRoot) ||
+                sidecar.SourceTerraformRoot.Split('/').Any(segment => segment is "" or "." or "..") ||
+                !sidecar.HostTerraformRoot.EndsWith(Path.DirectorySeparatorChar + sidecar.SourceTerraformRoot,
+                    StringComparison.Ordinal) ||
                 manifest.RootElement.GetProperty("DestroyPlan").GetBoolean() != (sidecar.Action == "destroy") ||
                 manifest.RootElement.GetProperty("PlanSha256").GetString() != sidecar.PlanSha256 ||
                 manifest.RootElement.GetProperty("PlanMetadataFile").GetString() != metadataPath ||
@@ -216,6 +231,8 @@ internal static class PrivatePlanHostEvidence
                 provisioningOperationId = operationId,
                 planSha256 = sidecar.PlanSha256,
                 planMetadataDigest = sidecar.PlanMetadataDigest,
+                hostTerraformRoot = sidecar.HostTerraformRoot,
+                sourceTerraformRoot = sidecar.SourceTerraformRoot,
                 metadataContentSha256 = sidecar.MetadataContentSha256,
                 planMetadataJson = metadataJson,
                 executedVariablesJson = variablesJson,

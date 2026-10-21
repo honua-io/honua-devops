@@ -394,9 +394,13 @@ internal sealed partial class HonuaOperationsToolkit
             // deletions it is being asked to confirm. Without it the response tells the
             // caller to "review the complete plan" while handing it only three numbers.
             ExactPlanMetadata metadata = planMetadata!;
+            // The wrapper's source identity is relative to the IaC checkout;
+            // the host manifest keeps the resolved absolute execution path.
+            string? sourceTerraformRoot = inputWitness is null
+                ? null : Path.GetRelativePath(substrate.IacRoot, terraformRoot);
             if (metadata.SavedPlanSha256 != ComputeSha256(planFile))
                 return ProvisioningRefusal("exact-plan-metadata-invalid", "The plan metadata names different saved-plan bytes.", [], []);
-            if (inputWitness is not null && (metadata.ActorId != planActorId || metadata.TerraformRoot != terraformRoot ||
+            if (inputWitness is not null && (metadata.ActorId != planActorId || metadata.TerraformRoot != sourceTerraformRoot ||
                 metadata.TargetId != ResolveTargetId(canonicalStack, environment) ||
                 metadata.Action != (normalizedAction == "destroy" ? "destroy" : "apply")))
                 return ProvisioningRefusal("exact-plan-metadata-invalid",
@@ -446,7 +450,7 @@ internal sealed partial class HonuaOperationsToolkit
                 try
                 {
                     PrivatePlanHostEvidence.Save(planDirectory, provisioningOperationId, planActorId,
-                        terraformRoot, metadata.SavedPlanSha256, metadata, metadataBytes, inputWitness);
+                        terraformRoot, sourceTerraformRoot!, metadata.SavedPlanSha256, metadata, metadataBytes, inputWitness);
                 }
                 catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
                 {

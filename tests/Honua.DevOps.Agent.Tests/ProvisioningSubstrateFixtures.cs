@@ -476,7 +476,9 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         JsonNode document = JsonNode.Parse(metadata)!;
         OriginalPlanMetadataDigest = document["plan_metadata_digest"]?.GetValue<string>();
         OriginalPlanTerraformRoot = document["source"]?["terraform_root"]?.GetValue<string>();
-        LastPlanTerraformRoot = call.Option("--root");
+        // The real IaC wrapper records its source root relative to the checkout,
+        // even though --root and the host's saved-plan manifest are absolute.
+        LastPlanTerraformRoot = Path.GetRelativePath(call.WorkingDirectory, call.Option("--root")!);
         document["actor_id"] = call.Option("--actor");
         document["source"]!["terraform_root"] = LastPlanTerraformRoot;
         document["target_id"] = call.Option("--target-id");
