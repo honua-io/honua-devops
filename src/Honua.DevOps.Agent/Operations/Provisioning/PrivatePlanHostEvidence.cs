@@ -84,7 +84,7 @@ internal static class PrivatePlanHostEvidence
         {
             if (reference.Length is < 1 or > 256 || reference.Contains('=') || reference.Contains('\n')
                 || reference.Contains('\r') || reference.Contains('\\') ||
-                (kind == "varfile:" && (!Path.IsPathFullyQualified(reference) || !reference.StartsWith('/')))
+                (kind == "varfile:" && (!Path.IsPathFullyQualified(reference) || !reference.StartsWith('/'))))
                 throw new InvalidDataException("Terraform input path is unsupported for private host evidence.");
             string segments = kind == "varfile:" ? reference[1..] : reference;
             if (segments.Split('/').Any(segment => segment is "" or "." or ".."
