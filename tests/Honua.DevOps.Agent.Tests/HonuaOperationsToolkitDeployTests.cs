@@ -48,12 +48,15 @@ public class HonuaOperationsToolkitDeployTests
         }
     }
 
-    [Fact]
-    public async Task EksOnlyCatalogWithoutBoundHost_RefusesPlannerGuidance()
+    [Theory]
+    [InlineData("eks")]
+    [InlineData("EKS")]
+    [InlineData("Eks")]
+    public async Task EksOnlyCatalogWithoutBoundHost_RefusesPlannerGuidance(string target)
     {
         using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         HonuaOperationsToolkit toolkit = new(
-            CreateRuntime() with { TerraformDeploymentTargets = ["eks"] }, gateway);
+            CreateRuntime() with { TerraformDeploymentTargets = [target] }, gateway);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => toolkit.PlanGitOpsEngineAsync(
             "roads-api", "dev", "release-2", "plan", "review EKS change"));

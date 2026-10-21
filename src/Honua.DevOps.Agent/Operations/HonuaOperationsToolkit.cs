@@ -1992,7 +1992,7 @@ internal sealed partial class HonuaOperationsToolkit(
             return ["eks"];
         }
 
-        string[] selected = configured.Where(target => target != "eks").ToArray();
+        string[] selected = configured.Where(target => !target.Equals("eks", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (selected.Length == 0)
         {
             throw new InvalidOperationException("EKS planning requires a bound aws-eks host runtime and registered Server/deploy target.");
