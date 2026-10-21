@@ -620,9 +620,11 @@ public sealed class ProvisioningCleanupRecoveryTests
                 ClaimDirectory = call.Option("--claim-dir")!;
                 SawPrewrittenObligation = File.Exists(Path.Combine(Path.GetDirectoryName(ClaimDirectory)!, "obligation.json"));
                 JsonNode receipt = JsonNode.Parse(ProvisioningSubstrateFixtures.ExecReceiptJson)!;
+                JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(
+                    PlanPath + ".metadata.json", cancellationToken))!;
+                receipt["cleanup"]!["teardown_root"] = metadata["source"]!["terraform_root"]!.DeepClone();
                 if (_destroyRecovery)
                 {
-                    JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(PlanPath + ".metadata.json", cancellationToken))!;
                     receipt["action"] = "destroy";
                     receipt["actor_id"] = metadata["actor_id"]!.DeepClone();
                     receipt["plan_metadata_digest"] = metadata["plan_metadata_digest"]!.DeepClone();

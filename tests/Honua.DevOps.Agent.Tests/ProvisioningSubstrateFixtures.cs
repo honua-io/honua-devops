@@ -385,6 +385,10 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
 
     private string? OriginalPlanMetadataDigest { get; set; }
 
+    private string? OriginalPlanTerraformRoot { get; set; }
+
+    private string? LastPlanTerraformRoot { get; set; }
+
     internal string? LastPlanActorId { get; private set; }
 
     internal string PlanSummary { get; set; } = "Plan: 7 to add, 0 to change, 0 to destroy.";
@@ -471,8 +475,10 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         string metadata = PlanDocumentJson;
         JsonNode document = JsonNode.Parse(metadata)!;
         OriginalPlanMetadataDigest = document["plan_metadata_digest"]?.GetValue<string>();
+        OriginalPlanTerraformRoot = document["source"]?["terraform_root"]?.GetValue<string>();
+        LastPlanTerraformRoot = call.Option("--root");
         document["actor_id"] = call.Option("--actor");
-        document["source"]!["terraform_root"] = call.Option("--root");
+        document["source"]!["terraform_root"] = LastPlanTerraformRoot;
         document["target_id"] = call.Option("--target-id");
         document["action"] = call.Option("--action");
         document["created_at_utc"] = DateTimeOffset.UtcNow.ToString("O");
@@ -522,6 +528,10 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         if (receipt["actor_id"]?.GetValue<string>() ==
             "honua-devops:urn:honua:provisioning:00000000000000000000000000000000")
             receipt["actor_id"] = LastPlanActorId;
+        // A real apply wrapper reports the exact planned root. Preserve deliberately
+        // substituted receipt roots so mismatch regressions still exercise the guard.
+        if (receipt["cleanup"]?["teardown_root"]?.GetValue<string>() == OriginalPlanTerraformRoot)
+            receipt["cleanup"]!["teardown_root"] = LastPlanTerraformRoot;
         LastWrittenExecDocumentJson = receipt.ToJsonString();
         File.WriteAllText(call.Option("--receipt-out")!, LastWrittenExecDocumentJson);
         return Success("Apply complete! Resources: 7 added, 0 changed, 0 destroyed.");
