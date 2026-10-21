@@ -72,11 +72,11 @@ internal sealed class EksRuntimeAdapter : RuntimeAdapterBase
 
     public override RuntimeAdapterStepPlan PlanRelease(RuntimeAdapterRequest request) => Guidance(
         base.PlanRelease(request),
-        "Use install_handoff and verify_install_handoff to bind the observed EKS workload to the current honua-kubernetes-deployment Server target; plan day-2 changes through plan_gitops_engine.");
+        "Use install_handoff and verify_install_handoff to prove the observed EKS workload is bound to the host-selected honua-kubernetes-deployment Server target; plan day-2 changes through plan_gitops_engine.");
 
     public override RuntimeAdapterStepPlan ApplyRelease(RuntimeAdapterRequest request) => Guidance(
         base.ApplyRelease(request),
-        "Propose the day-2 change for the current honua-kubernetes-deployment Server target as a durable operation; a separate human approval and Server policy gate precede submission.");
+        "Propose the day-2 change for the verified honua-kubernetes-deployment Server target as a durable operation; a separate human approval and Server policy gate precede submission.");
 
     public override RuntimeAdapterStepPlan Verify(RuntimeAdapterRequest request) => Guidance(
         base.Verify(request),

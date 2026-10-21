@@ -16,9 +16,11 @@ public class HonuaOperationsToolkitDeployTests
         using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
         OperationRuntime runtime = CreateRuntime() with
         {
-            TerraformDeploymentTargets = ["eks"],
+            TerraformDeploymentTargets = ["azure-functions", "lambda", "eks", "aks", "ecs", "aca"],
             RuntimeKind = "aws-eks",
-            RuntimeBackend = "honua-kubernetes-deployment"
+            RuntimeBackend = "honua-kubernetes-deployment",
+            ServerTargetId = "server-eks-dev",
+            DeployTargetId = "deploy-eks-dev"
         };
         HonuaOperationsToolkit toolkit = new(runtime, gateway);
 
@@ -42,7 +44,21 @@ public class HonuaOperationsToolkitDeployTests
             Assert.DoesNotContain("terraform -chdir", wire, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("honua-gitops plan", wire, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("honua-gitops rollback", wire, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Adapter plan release (aks)", wire, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public async Task EksOnlyCatalogWithoutBoundHost_RefusesPlannerGuidance()
+    {
+        using BackendGateway gateway = CreateGateway(_ => TestHttpMessageHandler.JsonOk(new { status = "ok" }));
+        HonuaOperationsToolkit toolkit = new(
+            CreateRuntime() with { TerraformDeploymentTargets = ["eks"] }, gateway);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => toolkit.PlanGitOpsEngineAsync(
+            "roads-api", "dev", "release-2", "plan", "review EKS change"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => toolkit.DeployServiceWithGitOpsAsync(
+            "roads-api", "dev", "release-2", "dryrun", "review EKS change"));
     }
 
     [Fact]
@@ -135,8 +151,8 @@ public class HonuaOperationsToolkitDeployTests
         Assert.Equal(60, response.Evidence.SupportSessionTtlMinutes);
         Assert.True(response.Evidence.SupportSessionCustomerVisible);
         Assert.True(response.Evidence.BreakGlassPostActionReviewRequired);
-        Assert.Contains(response.Actions, action => action.Contains("Adapter plan infra (eks):", StringComparison.Ordinal));
-        Assert.Contains(response.ValidationChecks, check => check.Equals("adapter-verify:eks", StringComparison.Ordinal));
+        Assert.Contains(response.Actions, action => action.Contains("Adapter plan infra (aks):", StringComparison.Ordinal));
+        Assert.Contains(response.ValidationChecks, check => check.Equals("adapter-verify:aks", StringComparison.Ordinal));
         Assert.Contains(response.ValidationChecks, check => check.Equals("gitops-drift:service-state", StringComparison.Ordinal));
         Assert.Equal("manifest-export", response.GitOpsPlan!.ActualStateSource);
         Assert.Contains(response.GitOpsPlan.SupportedOperations, operation => operation == "diff");
