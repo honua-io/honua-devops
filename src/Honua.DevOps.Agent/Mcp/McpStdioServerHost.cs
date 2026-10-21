@@ -67,6 +67,17 @@ internal static class McpStdioServerHost
                     Title = "Honua AI DevOps operator",
                     Version = typeof(McpStdioServerHost).Assembly.GetName().Version?.ToString(3) ?? "1.0.0"
                 },
+                // The adapter must refuse an older child that silently ignores turn-binding env.
+                // Advertise support only for this process's validated, paired binding snapshot.
+                Capabilities = backendConfiguration.HonuaWorkspaceId is not null && backendConfiguration.HonuaTurnId is not null
+                    ? new ServerCapabilities
+                    {
+                        Experimental = new Dictionary<string, object>
+                        {
+                            ["honua.io/devops-turn-binding"] = new { version = 1 }
+                        }
+                    }
+                    : null,
                 ToolCollection = toolCollection,
                 ServerInstructions =
                     "honua-devops operator tools for the connected Honua environment. " +

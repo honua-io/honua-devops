@@ -176,6 +176,11 @@ Backends (same variables as every other `honua-devops` mode — see README
 | `HONUA_DEVOPS_SUPPORT_API_BASE_URL` | Optional; enables `process_pending_tickets`. |
 | `HONUA_DEVOPS_DEPLOY_TARGET_ID` | Optional; without it `create_gitops_proposal` returns a blocked `target-unconfigured` projection. |
 
+When the pair is valid and present, MCP initialization advertises
+`capabilities.experimental["honua.io/devops-turn-binding"] = {"version":1}`.
+An external adapter must require this marker for bound calls so an older child
+that ignores the pair cannot silently run unbound.
+
 Runtime controls (defaults shown are the safe defaults):
 
 | Variable | Default |
