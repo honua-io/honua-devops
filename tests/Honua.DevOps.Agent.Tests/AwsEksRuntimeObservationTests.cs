@@ -32,6 +32,7 @@ public sealed class AwsEksRuntimeObservationTests
     [InlineData("unready-endpoint", false)]
     [InlineData("not-yet-available", false)]
     [InlineData("deployment-advanced", false)]
+    [InlineData("old-replica-set", false)]
     public async Task NativeWorkloadIsQualifiedOnlyByFreshProviderAndRouteReads(string scenario, bool accepted)
     {
         using var key = RSA.Create(2048);
@@ -83,6 +84,21 @@ public sealed class AwsEksRuntimeObservationTests
             Assert.NotNull(await observer.ObserveAsync(facts, authority, Endpoint, Digest, CancellationToken.None));
         else
             await Assert.ThrowsAsync<InvalidDataException>(() => observer.ObserveAsync(facts, authority, Endpoint, Digest, CancellationToken.None));
+    }
+
+    [Fact]
+    public void RecoveryRestoresOnlyTheSameObservedWorkloadIdentity()
+    {
+        var original = JsonSerializer.SerializeToElement(new { deploymentUid = DeploymentUid, replicaSetUid = ReplicaSetUid,
+            deploymentResourceVersion = "42", serviceResourceVersion = "40" });
+        var binding = JsonSerializer.SerializeToUtf8Bytes(new { runtime = new { resourceIdentity = original } });
+        RuntimeProviderObservation Observation(JsonElement identity) => new(identity, DateTimeOffset.UtcNow, "{}", new string('a', 64));
+        Assert.True(HonuaOperationsToolkit.MatchesRetainedEksObservation(binding, Observation(original)));
+        Assert.False(HonuaOperationsToolkit.MatchesRetainedEksObservation(binding, Observation(JsonSerializer.SerializeToElement(new
+        {
+            deploymentUid = DeploymentUid, replicaSetUid = Guid.NewGuid().ToString(),
+            deploymentResourceVersion = "43", serviceResourceVersion = "40"
+        }))));
     }
 
     private static ProvisionedRuntimeFacts Facts(string caSha) => new("aws-eks", "Kubernetes", "honua-kubernetes-deployment",
@@ -164,7 +180,9 @@ public sealed class AwsEksRuntimeObservationTests
                     "/api/v1/namespaces/honua/pods/honua-server-pod" => Pod(),
                     "/apis/apps/v1/namespaces/honua/replicasets/honua-server-rs" => new
                     {
-                        metadata = new { uid = ReplicaSetUid, ownerReferences = new[] { new { kind = "Deployment", uid = DeploymentUid } } }
+                        metadata = new { uid = ReplicaSetUid,
+                            annotations = new Dictionary<string, string> { ["deployment.kubernetes.io/revision"] = scenario == "old-replica-set" ? "0" : "1" },
+                            ownerReferences = new[] { new { kind = "Deployment", uid = DeploymentUid } } }
                     },
                     _ when path.StartsWith("/apis/discovery.k8s.io/v1/namespaces/honua/endpointslices?", StringComparison.Ordinal)
                         => new { items = new[] { new { metadata = new { ownerReferences = new[] { new { uid = ServiceUid } } },

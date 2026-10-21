@@ -83,6 +83,7 @@ internal sealed class AwsEksRuntimeObservation(IProvisioningProcessRunner runner
             var deployed = deployment.RootElement;
             MatchPin(authority, "kubernetes.deployment_uid", Text(deployed.GetProperty("metadata"), "uid"));
             var deploymentResourceVersion = Text(deployed.GetProperty("metadata"), "resourceVersion");
+            var deploymentRevision = Text(deployed.GetProperty("metadata").GetProperty("annotations"), "deployment.kubernetes.io/revision");
             var spec = deployed.GetProperty("spec");
             var status = deployed.GetProperty("status");
             if (deployed.GetProperty("metadata").GetProperty("generation").GetInt64() !=
@@ -254,6 +255,7 @@ internal sealed class AwsEksRuntimeObservation(IProvisioningProcessRunner runner
                     using var liveReplicaSet = await KubernetesAsync(configPath,
                         $"/apis/apps/v1/namespaces/{ns}/replicasets/{replicaSet}", bounded.Token);
                     if (Text(liveReplicaSet.RootElement.GetProperty("metadata"), "uid") != Text(owner, "uid") ||
+                        Text(liveReplicaSet.RootElement.GetProperty("metadata").GetProperty("annotations"), "deployment.kubernetes.io/revision") != deploymentRevision ||
                         !liveReplicaSet.RootElement.GetProperty("metadata").GetProperty("ownerReferences").EnumerateArray()
                             .Any(parent => Text(parent, "kind") == "Deployment" &&
                                 Text(parent, "uid") == Text(deployed.GetProperty("metadata"), "uid"))) Refuse();
@@ -295,7 +297,7 @@ internal sealed class AwsEksRuntimeObservation(IProvisioningProcessRunner runner
                 serviceUid, routeUid = serviceUid, deploymentResourceVersion, serviceResourceVersion,
                 loadBalancerArn, loadBalancerHost = lbHost,
                 serverPodIdentityAssociationId = serverAssociation, gpPodIdentityAssociationId = gpAssociation,
-                deploymentRevision = Text(deployed.GetProperty("metadata").GetProperty("annotations"), "deployment.kubernetes.io/revision"),
+                deploymentRevision,
                 observedAtUtc = observedAt,
                 scope = "Read-only AWS and Kubernetes configuration, ready workload endpoints, active TLS listener and public route; public authentication and MCP probes are separately required."
             });

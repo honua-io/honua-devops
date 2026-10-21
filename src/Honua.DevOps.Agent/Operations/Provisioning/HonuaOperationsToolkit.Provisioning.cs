@@ -984,8 +984,10 @@ internal sealed partial class HonuaOperationsToolkit
                     // must not hand out yesterday's binding for a replaced workload.
                     try
                     {
-                        _ = await ObserveRuntimeAsync(state.RuntimeFacts!, registeredAuthority!,
+                        var recoveredObservation = await ObserveRuntimeAsync(state.RuntimeFacts!, registeredAuthority!,
                             request.BaseUrl, state.RuntimeImageDigest!, cancellationToken);
+                        if (!MatchesRetainedEksObservation(GetEvidenceStore().Read(state.ProvisionBinding), recoveredObservation))
+                            return ProvisioningRefusal("runtime-observation-changed", "The EKS workload changed after verification; the stored binding cannot be restored.", [], []);
                         var currentAuthority = await gateway.AuthorizeRuntimeHandoffAsync(runtime, state.RuntimeFacts!,
                             "verify_install_handoff", cancellationToken);
                         if (!currentAuthority.HasSameAuthorityAs(registeredAuthority))
@@ -1001,7 +1003,7 @@ internal sealed partial class HonuaOperationsToolkit
                 return VerifiedLineageResponse(state.Lineage, []);
             }
         }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException or JsonException)
         {
             return ProvisioningRefusal("lineage-evidence-invalid", "Retained lineage evidence is missing, substituted, or duplicated; no readiness claim is made.", [], []);
         }
@@ -1394,6 +1396,14 @@ internal sealed partial class HonuaOperationsToolkit
     private const string DefaultProvisioningEnvironment = "dev";
 
     private static string DefaultNamePrefixFor(string environment) => $"honua-{environment}";
+
+    internal static bool MatchesRetainedEksObservation(byte[] bindingBytes, RuntimeProviderObservation observed)
+    {
+        using var binding = JsonDocument.Parse(bindingBytes);
+        return binding.RootElement.TryGetProperty("runtime", out var runtime) &&
+            runtime.TryGetProperty("resourceIdentity", out var identity) &&
+            JsonElement.DeepEquals(identity, observed.ResourceIdentity);
+    }
 
     private Task<RuntimeProviderObservation> ObserveRuntimeAsync(ProvisionedRuntimeFacts facts,
         RegisteredRuntimeAuthority authority, string endpoint, string imageDigest, CancellationToken cancellationToken)
