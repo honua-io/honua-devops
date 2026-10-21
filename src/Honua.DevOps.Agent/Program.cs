@@ -47,6 +47,14 @@ try
         return;
     }
 
+    if (options.ExportProvisionPlanHostEvidence is not null)
+    {
+        Environment.ExitCode = await PrivatePlanHostEvidence.ExportAsync(
+            options.ExportProvisionPlanHostEvidence, Console.Out, Console.Error,
+            cancellationTokenSource.Token);
+        return;
+    }
+
     if (options.ListTools)
     {
         OperationRuntime listRuntime = OperationRuntime.Load();

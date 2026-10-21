@@ -20,7 +20,8 @@ internal sealed record CliOptions(
     bool Mcp,
     string? AwaitApproval,
     BlindEvalCliOptions? EvalBlind,
-    IssueProvisionApprovalCliOptions? IssueProvisionApproval = null)
+    IssueProvisionApprovalCliOptions? IssueProvisionApproval = null,
+    string? ExportProvisionPlanHostEvidence = null)
 {
     private const string ProviderFlag = "--provider";
     private const string PromptFlag = "--prompt";
@@ -45,6 +46,7 @@ internal sealed record CliOptions(
     private const string EvalFixtureFlag = "--eval-fixture";
     private const string ProviderEnvironmentVariable = "HONUA_DEVOPS_PROVIDER";
     internal const string IssueProvisionApprovalFlag = "--issue-provision-approval";
+    internal const string ExportProvisionPlanHostEvidenceFlag = "--export-provision-plan-host-evidence";
     private const string FromPlanResponseFlag = "--from-plan-response";
     private const string ActionFlag = "--action";
     private const string SigningModeFlag = "--signing-mode";
@@ -101,6 +103,9 @@ Options:
                               provision_infrastructure plan and print ONLY the receipt JSON on stdout.
                               Run it as the approving principal, never as the agent that applies.
                               Requires --from-plan-response, --action, --signing-mode and --issuer.
+  --export-provision-plan-host-evidence <operation-id>
+                              Host-only export of protected, nonsecret exact-plan input evidence for
+                              an observed provisioning operation. This is not an MCP tool or approval.
   --from-plan-response <path> Saved provision_infrastructure action=plan response (tool result JSON).
   --action <apply|destroy>    The mutation being approved; must match the plan.
   --signing-mode <kms-mac|local-hmac-dev>
@@ -192,6 +197,7 @@ Examples:
         string? decision = null;
         string? approvalStack = null;
         string? approvalEnvironment = null;
+        string? exportProvisionPlanHostEvidence = null;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -337,6 +343,13 @@ Examples:
                 continue;
             }
 
+            if (argument.Equals(ExportProvisionPlanHostEvidenceFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                exportProvisionPlanHostEvidence = RequireValue(args, ref index,
+                    ExportProvisionPlanHostEvidenceFlag, "an observed provisioning operation id");
+                continue;
+            }
+
             if (argument.Equals(FromPlanResponseFlag, StringComparison.OrdinalIgnoreCase))
             {
                 fromPlanResponse = RequireValue(args, ref index, FromPlanResponseFlag, "a plan response file path");
@@ -408,6 +421,19 @@ Examples:
         {
             throw new InvalidOperationException(
                 $"{FromPlanResponseFlag}, {ActionFlag}, {SigningModeFlag}, {IssuerFlag}, {TtlMinutesFlag}, {DecisionFlag}, {StackFlag} and {EnvironmentFlag} require {IssueProvisionApprovalFlag}.");
+        }
+
+        if (exportProvisionPlanHostEvidence is not null)
+        {
+            if (issueApproval || anyApprovalOption || providerValue is not null || prompt is not null || preflight || listTools ||
+                listOperations || showOperation is not null || listen || intakeListen ||
+                bugReportListen || mcp || awaitApproval is not null || evalBlind ||
+                evalFaultSet is not null || evalMode is not null || evalOutput is not null ||
+                evalCommit is not null || evalPassThreshold is not null || evalFixture is not null)
+                throw new InvalidOperationException("Private plan evidence export cannot be combined with another command.");
+            return new CliOptions(ProviderKind.Codex, null, false, help, false, false, null,
+                operationLimit, false, false, false, false, null, null,
+                ExportProvisionPlanHostEvidence: exportProvisionPlanHostEvidence);
         }
 
         if (issueApproval && !help)

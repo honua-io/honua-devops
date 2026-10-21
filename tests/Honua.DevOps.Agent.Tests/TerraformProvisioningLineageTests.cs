@@ -79,7 +79,7 @@ public sealed partial class TerraformProvisioningTests
         // acknowledgement window so a restarted host can reconcile it safely.
         Assert.True(File.Exists(Assert.Single(runner.Calls, c => c.Operation == "terraform-exact-plan.sh").Option("--plan-out")));
         ProvisioningEvidenceReference execution = Assert.Single(lineage.EvidenceRefs!, r => r.Kind == "apply");
-        Assert.Equal(Encoding.UTF8.GetBytes(ProvisioningSubstrateFixtures.ExecReceiptJson), store.Read(execution));
+        Assert.Equal(Encoding.UTF8.GetBytes(runner.LastWrittenExecDocumentJson!), store.Read(execution));
         Assert.Equal(execution.Reference, lineage.ActuatorReceiptReference);
         ProvisioningEvidenceReference approval = Assert.Single(lineage.EvidenceRefs!, r => r.Kind == "approval");
         Assert.Equal(approval.Sha256, lineage.ApprovalReceiptSha256);

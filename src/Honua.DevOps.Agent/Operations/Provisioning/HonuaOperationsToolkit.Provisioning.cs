@@ -266,7 +266,7 @@ internal sealed partial class HonuaOperationsToolkit
             }
         }
 
-        if (!HasSecretInput(terraformRoot, canonicalStack))
+        if (!HasSecretInput(terraformRoot, canonicalStack, variables))
         {
             return ProvisioningRefusal(
                 "secret-input-required",
@@ -291,6 +291,31 @@ internal sealed partial class HonuaOperationsToolkit
                 variableFile,
                 JsonSerializer.Serialize(variables, new JsonSerializerOptions { WriteIndented = true }),
                 cancellationToken);
+            ProtectSavedPlan(variableFile);
+            IReadOnlyDictionary<string, string>? planEnvironment = SubstrateEnvironment(requireApproval: false);
+            // Protected host evidence is qualified for Linux/WSL. Other hosts keep
+            // their existing plan behavior but cannot export this evidence.
+            PrivatePlanHostEvidence.Snapshot? inputWitness = null;
+            bool hostEvidenceEligible = false;
+            if (PrivatePlanHostEvidence.IsSupportedHost)
+            {
+                try
+                {
+                    hostEvidenceEligible = PrivatePlanHostEvidence.IsExportEligibleInputClosure(
+                        terraformRoot, planEnvironment);
+                    if (hostEvidenceEligible)
+                    {
+                        inputWitness = PrivatePlanHostEvidence.Capture(terraformRoot, variableFile, planEnvironment);
+                        if (!PrivatePlanHostEvidence.IsSafeGeneratedOnlySnapshot(inputWitness, variableFile))
+                            throw new InvalidDataException("Private host evidence input closure changed during capture.");
+                    }
+                }
+                catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
+                {
+                    return ProvisioningRefusal("exact-plan-input-unsupported",
+                        "The Terraform input closure cannot be witnessed by this host; no plan was started.", [], []);
+                }
+            }
 
             IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
             List<OperationBackendStep> steps = [];
@@ -299,6 +324,8 @@ internal sealed partial class HonuaOperationsToolkit
             // check, the input digest, the state read, and the saved-plan binding.
             // honua-devops supplies the root, the action, the inputs and the actor,
             // and consumes the metadata document the wrapper writes.
+            string planActorId = recoverySeed is null ? $"honua-devops:{provisioningOperationId}"
+                : RecoveryActor(recoverySeed, provisioningOperationId);
             List<string> planArguments =
             [
                 substrate!.PlanScript,
@@ -307,8 +334,7 @@ internal sealed partial class HonuaOperationsToolkit
                 "--plan-out", planFile,
                 "--metadata-out", planMetadataFile,
                 "--var-file", variableFile,
-                "--actor", recoverySeed is null ? $"honua-devops:{provisioningOperationId}"
-                    : RecoveryActor(recoverySeed, provisioningOperationId),
+                "--actor", planActorId,
                 "--target-id", ResolveTargetId(canonicalStack, environment),
                 "--expires-in", SavedPlanLifetimeSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)
             ];
@@ -318,7 +344,7 @@ internal sealed partial class HonuaOperationsToolkit
                 planArguments,
                 substrate.IacRoot,
                 TimeSpan.FromMinutes(20),
-                SubstrateEnvironment(requireApproval: false),
+                planEnvironment,
                 cancellationToken);
             steps.Add(ToBackendStep("terraform-exact-plan", canonicalStack, planResult, mutatesState: false));
             if (!planResult.Succeeded)
@@ -345,10 +371,12 @@ internal sealed partial class HonuaOperationsToolkit
 
             ExactPlanMetadata? planMetadata;
             string metadataError;
+            byte[] metadataBytes;
             try
             {
+                metadataBytes = PrivatePlanHostEvidence.ReadMetadata(planMetadataFile);
                 if (!ExactPlanMetadata.TryRead(
-                        await File.ReadAllTextAsync(planMetadataFile, cancellationToken),
+                        Encoding.UTF8.GetString(metadataBytes),
                         await File.ReadAllTextAsync(substrate.ExactPlanSchemaPath, cancellationToken),
                         out planMetadata,
                         out metadataError))
@@ -360,7 +388,7 @@ internal sealed partial class HonuaOperationsToolkit
                         ["An unreadable plan binding cannot be approved; no apply was started."]);
                 }
             }
-            catch (IOException exception)
+            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
             {
                 return ProvisioningRefusal(
                     "exact-plan-metadata-invalid",
@@ -374,8 +402,23 @@ internal sealed partial class HonuaOperationsToolkit
             // deletions it is being asked to confirm. Without it the response tells the
             // caller to "review the complete plan" while handing it only three numbers.
             ExactPlanMetadata metadata = planMetadata!;
+            // The wrapper's source identity is relative to the IaC checkout;
+            // the host manifest keeps the resolved absolute execution path.
+            string sourceTerraformRoot = Path.GetRelativePath(substrate.IacRoot, terraformRoot);
             if (metadata.SavedPlanSha256 != ComputeSha256(planFile))
                 return ProvisioningRefusal("exact-plan-metadata-invalid", "The plan metadata names different saved-plan bytes.", [], []);
+            if (metadata.ActorId != planActorId || metadata.TerraformRoot != sourceTerraformRoot ||
+                metadata.TargetId != ResolveTargetId(canonicalStack, environment) ||
+                metadata.Action != (normalizedAction == "destroy" ? "destroy" : "apply"))
+                return ProvisioningRefusal("exact-plan-metadata-invalid",
+                    "The exact-plan metadata names a different actor, root, target, or action; this plan cannot be approved.", [], []);
+            if (inputWitness is not null &&
+                !PrivatePlanHostEvidence.MatchesMetadata(inputWitness, Encoding.UTF8.GetString(metadataBytes)))
+                return ProvisioningRefusal("exact-plan-input-mismatch",
+                    "The exact-plan metadata differs from the inputs captured before execution; this plan cannot be approved.", [], []);
+            if (!ExactPlanCanonicalDigest.Matches(Encoding.UTF8.GetString(metadataBytes)))
+                return ProvisioningRefusal("exact-plan-metadata-invalid",
+                    "The exact-plan metadata canonical digest is invalid; this plan cannot be approved.", [], []);
 
             ProvisioningProcessResult showResult = await runner.RunAsync(
                 "terraform",
@@ -391,6 +434,7 @@ internal sealed partial class HonuaOperationsToolkit
                 : BuildRecoveryContext(recoverySeed, provisioningOperationId, metadata, variableFile, planMetadataFile);
             bool destroyPlan = normalizedAction == "destroy";
             ProtectSavedPlan(planFile);
+            ProtectSavedPlan(planMetadataFile);
             SavePlanManifest(
                 planDirectory,
                 new SavedTerraformPlanManifest(
@@ -408,6 +452,19 @@ internal sealed partial class HonuaOperationsToolkit
                     planMetadataFile,
                     metadata,
                     VariablesDigest: ComputeVariablesDigest(variables), Recovery: recovery));
+            if (inputWitness is not null)
+            {
+                try
+                {
+                    PrivatePlanHostEvidence.Save(planDirectory, provisioningOperationId, planActorId,
+                        terraformRoot, sourceTerraformRoot!, metadata.SavedPlanSha256, metadata, metadataBytes, inputWitness);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
+                {
+                    return ProvisioningRefusal("exact-plan-host-evidence-invalid",
+                        "The private host evidence could not be bound to the saved plan; this plan cannot be approved.", [], []);
+                }
+            }
             keepPlanDirectory = true;
             string nextAction = destroyPlan ? "destroy" : "apply";
             string challenge = $"{nextAction}:{canonicalStack}:{environment}:{planToken}";
@@ -419,6 +476,9 @@ internal sealed partial class HonuaOperationsToolkit
                     : $"Terraform plan ready for `{canonicalStack}` size `{canonicalSize}` in `{environment}`: {planSummary}",
                 Findings:
                 [
+                    hostEvidenceEligible
+                        ? "Protected host evidence: eligible; export requires a fresh protected sidecar and exact saved-plan checks."
+                        : "Protected host evidence: host-evidence-unsupported; this legacy plan has no exportable host input witness.",
                     $"Deployable root: {terraformRoot}.",
                     $"Saved plan token: {planToken} (expires in {SavedPlanLifetimeSeconds / 60} minutes).",
                     "Planned through the honua-iac governed exact-plan substrate (`scripts/terraform-exact-plan.sh`); no hand-rolled Terraform argv was used.",
@@ -1509,6 +1569,10 @@ internal sealed partial class HonuaOperationsToolkit
                     new Regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", RegexOptions.CultureInvariant)),
                 "certificate_arn" => ValidateString(property.Name, property.Value,
                     new Regex("^arn:aws(-us-gov|-cn)?:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f-]+$", RegexOptions.CultureInvariant)),
+                "db_connection_secret_arn" or "admin_password_secret_arn" or "master_key_secret_arn" =>
+                    ValidateString(property.Name, property.Value,
+                        new Regex("^arn:aws(-us-gov|-cn)?:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$",
+                            RegexOptions.CultureInvariant)),
                 "route53_zone_id" => ValidateString(property.Name, property.Value,
                     new Regex("^Z[A-Z0-9]+$", RegexOptions.CultureInvariant)),
                 "load_balancer_controller" => ValidateChoice(property.Name, property.Value,
@@ -1522,6 +1586,19 @@ internal sealed partial class HonuaOperationsToolkit
                      "certificate_arn", "load_balancer_controller", "artifact_capabilities",
                      "server_pod_identity_association_id", "gp_job_pod_identity_association_id" })
             if (!variables.ContainsKey(required)) throw new InvalidOperationException("A required native EKS identity or public route variable is missing.");
+        string serverRole = (string)variables["server_role_arn"]!;
+        string secretAuthority = serverRole[..serverRole.IndexOf(":iam::", StringComparison.Ordinal)];
+        string secretAccount = serverRole.Split(':')[4];
+        string gpRole = (string)variables["gp_job_role_arn"]!;
+        if (!gpRole.StartsWith($"{secretAuthority}:iam::{secretAccount}:role/", StringComparison.Ordinal))
+            throw new InvalidOperationException("Native EKS server and GP workload roles must belong to the same AWS partition and account.");
+        foreach (string name in new[] { "db_connection_secret_arn", "admin_password_secret_arn", "master_key_secret_arn" })
+        {
+            if (!variables.TryGetValue(name, out object? value)) continue;
+            string expectedPrefix = $"{secretAuthority}:secretsmanager:{variables["region"]}:{secretAccount}:secret:";
+            if (!((string)value!).StartsWith(expectedPrefix, StringComparison.Ordinal))
+                throw new InvalidOperationException($"The native EKS `{name}` reference must match the selected region and workload account.");
+        }
         var capabilities = (Dictionary<string, object>)variables["artifact_capabilities"]!;
         if (!((string)variables["image_reference"]!).EndsWith("@" + capabilities["server_image_digest"], StringComparison.Ordinal) ||
             !((string)variables["gp_job_image_reference"]!).EndsWith("@" + capabilities["gp_job_image_digest"], StringComparison.Ordinal))
@@ -1807,8 +1884,11 @@ internal sealed partial class HonuaOperationsToolkit
         }
     }
 
-    private static bool HasSecretInput(string terraformRoot, string stack)
+    private static bool HasSecretInput(string terraformRoot, string stack, IReadOnlyDictionary<string, object?> variables)
     {
+        if (stack == "aws-eks" && new[] { "db_connection_secret_arn", "admin_password_secret_arn",
+                "master_key_secret_arn" }.All(name => variables.ContainsKey(name)))
+            return true;
         if (File.Exists(Path.Combine(terraformRoot, "terraform.tfvars")))
         {
             return true;
@@ -2242,6 +2322,8 @@ internal sealed partial class HonuaOperationsToolkit
 
     private static string GetSavedPlanRoot()
         => Path.GetFullPath(Path.Combine(Path.GetTempPath(), "honua-devops-terraform-plans"));
+
+    internal static string SavedPlanRootForHostEvidence() => GetSavedPlanRoot();
 
     private static string GetProvisioningStateRoot()
         => Path.GetFullPath(Path.Combine(

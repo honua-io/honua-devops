@@ -67,6 +67,16 @@ public sealed class RuntimeAdapterCatalogTests
         Assert.Equal("plan-release", workflow.PlanRelease.Operation);
         Assert.Equal("verify", workflow.Verify.Operation);
         Assert.Equal("rollback", workflow.Rollback.Operation);
-        Assert.Contains("helm upgrade --install", workflow.PlanRelease.SuggestedCommands.First(), StringComparison.Ordinal);
+        Assert.Empty(workflow.PlanInfrastructure.SuggestedCommands);
+        Assert.Empty(workflow.PlanRelease.SuggestedCommands);
+        Assert.Empty(workflow.ApplyRelease.SuggestedCommands);
+        Assert.Empty(workflow.Rollback.SuggestedCommands);
+        Assert.Contains("aws-eks-native", workflow.PlanInfrastructure.Summary, StringComparison.Ordinal);
+        Assert.Contains("honua-kubernetes-deployment", workflow.PlanRelease.Summary, StringComparison.Ordinal);
+        Assert.Contains("separate human approval", workflow.ApplyRelease.Summary, StringComparison.Ordinal);
+        Assert.Contains("server-sealed", workflow.Rollback.Summary, StringComparison.Ordinal);
+
+        RuntimeAdapterWorkflow aks = RuntimeAdapterRegistry.Resolve("aks").BuildWorkflow(request);
+        Assert.Contains("helm upgrade --install", aks.PlanRelease.SuggestedCommands.First(), StringComparison.Ordinal);
     }
 }

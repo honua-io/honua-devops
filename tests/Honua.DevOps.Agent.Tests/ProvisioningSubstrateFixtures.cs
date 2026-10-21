@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
 using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.OperatorPolicy;
@@ -372,7 +373,23 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
 
     internal string PlanDocumentJson { get; set; } = ProvisioningSubstrateFixtures.ExactPlanMetadataJson;
 
+    internal bool PreservePlanInputMismatch { get; set; }
+
+    internal bool PreservePlanCanonicalMismatch { get; set; }
+
     internal string ExecDocumentJson { get; set; } = ProvisioningSubstrateFixtures.ExecReceiptJson;
+
+    internal string? LastWrittenExecDocumentJson { get; private set; }
+
+    internal string? LastPlanMetadataDigest { get; private set; }
+
+    private string? OriginalPlanMetadataDigest { get; set; }
+
+    private string? OriginalPlanTerraformRoot { get; set; }
+
+    private string? LastPlanTerraformRoot { get; set; }
+
+    internal string? LastPlanActorId { get; private set; }
 
     internal string PlanSummary { get; set; } = "Plan: 7 to add, 0 to change, 0 to destroy.";
 
@@ -455,7 +472,39 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         string planOut = call.Option("--plan-out")!;
         string metadataOut = call.Option("--metadata-out")!;
         File.WriteAllText(planOut, "fake saved terraform plan");
-        File.WriteAllText(metadataOut, PlanDocumentJson);
+        string metadata = PlanDocumentJson;
+        JsonNode document = JsonNode.Parse(metadata)!;
+        OriginalPlanMetadataDigest = document["plan_metadata_digest"]?.GetValue<string>();
+        OriginalPlanTerraformRoot = document["source"]?["terraform_root"]?.GetValue<string>();
+        // The real IaC wrapper records its source root relative to the checkout,
+        // even though --root and the host's saved-plan manifest are absolute.
+        LastPlanTerraformRoot = Path.GetRelativePath(call.WorkingDirectory, call.Option("--root")!);
+        document["actor_id"] = call.Option("--actor");
+        document["source"]!["terraform_root"] = LastPlanTerraformRoot;
+        document["target_id"] = call.Option("--target-id");
+        document["action"] = call.Option("--action");
+        document["created_at_utc"] = DateTimeOffset.UtcNow.ToString("O");
+        document["expires_at_utc"] = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O");
+        if (PrivatePlanHostEvidence.IsSupportedHost && !PreservePlanInputMismatch)
+        {
+            PrivatePlanHostEvidence.Snapshot input = PrivatePlanHostEvidence.Capture(
+                call.Option("--root")!, call.Option("--var-file")!, call.Environment);
+            document["inputs"]!["input_digest"] = input.InputDigest;
+            document["inputs"]!["input_refs"] = new JsonArray(
+                input.InputRefs.Select(reference => (JsonNode?)JsonValue.Create(reference)).ToArray());
+        }
+        if (!PreservePlanCanonicalMismatch)
+        {
+            using JsonDocument canonical = JsonDocument.Parse(document.ToJsonString());
+            document["plan_metadata_digest"] = ExactPlanCanonicalDigest.Compute(canonical.RootElement);
+        }
+        metadata = document.ToJsonString();
+        using (JsonDocument saved = JsonDocument.Parse(metadata))
+        {
+            LastPlanMetadataDigest = saved.RootElement.GetProperty("plan_metadata_digest").GetString();
+            LastPlanActorId = saved.RootElement.GetProperty("actor_id").GetString();
+        }
+        File.WriteAllText(metadataOut, metadata);
         return Success(PlanSummary);
     }
 
@@ -472,7 +521,21 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
             return Refusal(ApplyRefusalReason);
         }
 
-        File.WriteAllText(call.Option("--receipt-out")!, ExecDocumentJson);
+        JsonNode receipt = JsonNode.Parse(ExecDocumentJson)!;
+        foreach (string field in new[] { "plan_metadata_digest", "approved_digest" })
+        {
+            if (receipt[field]?.GetValue<string>() == OriginalPlanMetadataDigest)
+                receipt[field] = LastPlanMetadataDigest;
+        }
+        if (receipt["actor_id"]?.GetValue<string>() ==
+            "honua-devops:urn:honua:provisioning:00000000000000000000000000000000")
+            receipt["actor_id"] = LastPlanActorId;
+        // A real apply wrapper reports the exact planned root. Preserve deliberately
+        // substituted receipt roots so mismatch regressions still exercise the guard.
+        if (receipt["cleanup"]?["teardown_root"]?.GetValue<string>() == OriginalPlanTerraformRoot)
+            receipt["cleanup"]!["teardown_root"] = LastPlanTerraformRoot;
+        LastWrittenExecDocumentJson = receipt.ToJsonString();
+        File.WriteAllText(call.Option("--receipt-out")!, LastWrittenExecDocumentJson);
         return Success("Apply complete! Resources: 7 added, 0 changed, 0 destroyed.");
     }
 

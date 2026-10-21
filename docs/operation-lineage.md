@@ -67,6 +67,27 @@ cannot be projected and must be reconciled.
 
 ## Machine-readable evidence
 
+On Linux/WSL, the same pinned `honua-devops` executable can export the private
+host input witness for an observed plan with
+`--export-provision-plan-host-evidence <provisioningOperationId>`. This CLI mode is
+not an MCP tool and grants no signing, approval, or apply authority. It checks the
+owner-only saved plan, manifest, metadata, generated nonsecret variables, input
+hash entries, canonical metadata digest, expiry, and plan SHA before emitting
+bounded nonsecret JSON. Version 1 host export admits only the generated
+allowlisted nonsecret varfile: ambient `TF_VAR_*` and Terraform auto/tfvars
+files may carry secrets, so a plan using them keeps its normal saved-plan status
+and approval path but reports `host-evidence-unsupported` and has no exportable
+sidecar. Export also refuses older retained sidecars containing those unsafe
+entries. On eligible Linux plans, input digest/ref mismatch refuses the plan and
+deletes its saved directory. Existing plans created before the protected sidecar
+was introduced cannot be upgraded by recomputing mutable inputs later. Windows,
+macOS, or Linux hosts without the required stat/procfs facilities keep their
+prior planning behavior, but protected export refuses there. This does not
+qualify ECS/Lambda secret-input cloud workflows for protected host attestation.
+The native EKS small-plan allowlist accepts three validated Secrets Manager ARN
+references in the generated varfile, so that path can qualify without exporting
+raw credential inputs; the IaC root still resolves actual secret values itself.
+
 CLI/function/MCP responses serialize `provisioningLineage.evidenceRefs` and
 `serverOperations`. JSONL copies the same fields even when its input has already
 crossed JSON serialization. No summary parsing is required.

@@ -274,6 +274,9 @@ public sealed class ProvisioningCleanupRecoveryTests
                 retry = await executor.ProvisionInfrastructureAsync("aws-ecs", "small", "destroy", "{}", true,
                     ProvisioningSubstrateFixtures.ExtractChallenge(retry, "confirmation="), approval);
             }
+            // This fixture supplies terraform.tfvars, so the retry remains a
+            // legacy plan without an exportable host witness. Its independently
+            // retained recovery relation still rejects the reordered refs.
             Assert.Equal("destroy-recovery-refused", retry.Status);
             Assert.Equal(1, runner.Mutations);
         }
@@ -620,13 +623,15 @@ public sealed class ProvisioningCleanupRecoveryTests
                 ClaimDirectory = call.Option("--claim-dir")!;
                 SawPrewrittenObligation = File.Exists(Path.Combine(Path.GetDirectoryName(ClaimDirectory)!, "obligation.json"));
                 JsonNode receipt = JsonNode.Parse(ProvisioningSubstrateFixtures.ExecReceiptJson)!;
+                JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(
+                    PlanPath + ".metadata.json", cancellationToken))!;
+                receipt["cleanup"]!["teardown_root"] = metadata["source"]!["terraform_root"]!.DeepClone();
+                receipt["actor_id"] = metadata["actor_id"]!.DeepClone();
+                receipt["plan_metadata_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
+                receipt["approved_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
                 if (_destroyRecovery)
                 {
-                    JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(PlanPath + ".metadata.json", cancellationToken))!;
                     receipt["action"] = "destroy";
-                    receipt["actor_id"] = metadata["actor_id"]!.DeepClone();
-                    receipt["plan_metadata_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
-                    receipt["approved_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
                     receipt["state_before"] = metadata["state_before"]!.DeepClone();
                     receipt["state_after"]!["serial"] = 12 + Mutations;
                     if (Mutations >= SuccessAfterMutation) await File.WriteAllTextAsync(PlanPath + ".success", "owned normal exit", cancellationToken);

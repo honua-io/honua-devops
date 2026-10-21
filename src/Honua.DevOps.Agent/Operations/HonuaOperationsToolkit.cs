@@ -159,7 +159,7 @@ internal sealed partial class HonuaOperationsToolkit(
         string normalizedGitOpsTool = ValidateGitOpsTool(runtime.GitOpsTool);
         string normalizedTerraformRepository = SanitizePayloadValue(runtime.TerraformRepository, "terraform repository");
         string normalizedTerraformRef = ValidateRevision(runtime.TerraformRef, "terraform ref");
-        string[] normalizedDeploymentTargets = ValidateDeploymentTargets(runtime.TerraformDeploymentTargets);
+        string[] normalizedDeploymentTargets = SelectPlannerTargets();
 
         // Release posture: cross-environment promotion is experimental/off. A `promote` action or
         // any multi-environment deploy is a cross-environment promotion; refuse it and keep the
@@ -284,9 +284,9 @@ internal sealed partial class HonuaOperationsToolkit(
         ];
         actionsList.AddRange(BuildOperatorPolicyActions());
         actionsList.AddRange(BuildRuntimeAdapterActions(adapterWorkflows, authorization.DryRun));
-        actionsList.AddRange(BuildReleaseOrchestrationActions(releaseOrchestration));
+        actionsList.AddRange(BuildReleaseOrchestrationActions(releaseOrchestration, IsBoundNativeEks()));
         actionsList.AddRange(BuildServiceBundleReconciliationActions(serviceBundleReconciliation));
-        actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
+        actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan, includeCommands: !IsBoundNativeEks()));
 
         List<string> deployFindings =
         [
@@ -728,7 +728,7 @@ internal sealed partial class HonuaOperationsToolkit(
         string normalizedGitOpsTool = ValidateGitOpsTool(runtime.GitOpsTool);
         string normalizedTerraformRepository = SanitizePayloadValue(runtime.TerraformRepository, "terraform repository");
         string normalizedTerraformRef = ValidateRevision(runtime.TerraformRef, "terraform ref");
-        string[] normalizedDeploymentTargets = ValidateDeploymentTargets(runtime.TerraformDeploymentTargets);
+        string[] normalizedDeploymentTargets = SelectPlannerTargets();
         DeploymentAuthorization authorization = AuthorizeDeployment(targetEnvironments, normalizedAction) with
         {
             DryRun = true,
@@ -796,9 +796,9 @@ internal sealed partial class HonuaOperationsToolkit(
         ];
         actionsList.AddRange(BuildOperatorPolicyActions());
         actionsList.AddRange(BuildRuntimeAdapterActions(adapterWorkflows, dryRun: true));
-        actionsList.AddRange(BuildReleaseOrchestrationActions(releaseOrchestration));
+        actionsList.AddRange(BuildReleaseOrchestrationActions(releaseOrchestration, IsBoundNativeEks()));
         actionsList.AddRange(BuildServiceBundleReconciliationActions(serviceBundleReconciliation));
-        actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
+        actionsList.AddRange(BuildGitOpsPlanActions(gitOpsPlan, includeCommands: !IsBoundNativeEks()));
 
         return new OperationResponse(
             Status: backendResult.CombinedResult.IsSuccess ? "gitops-engine-plan" : "backend-error",
@@ -1099,7 +1099,7 @@ internal sealed partial class HonuaOperationsToolkit(
             ExecutionMode: runtime.ExecutionMode,
             ExecutionTier: runtime.ExecutionTier);
         IReadOnlyList<RuntimeAdapterWorkflow> adapterWorkflows = RuntimeAdapterRegistry
-            .ResolveMany(ValidateDeploymentTargets(runtime.TerraformDeploymentTargets))
+            .ResolveMany(SelectPlannerTargets())
             .Select(adapter => adapter.BuildWorkflow(adapterRequest))
             .ToArray();
 
@@ -1151,7 +1151,7 @@ internal sealed partial class HonuaOperationsToolkit(
             $"Review the metadata-release-aware plan, then route merge/reconcile for branch `{changeSet.BranchName}` through the governed GitOps/approval path."
         ];
         actions.AddRange(BuildMetadataReleasePlanActions(metadataRelease));
-        actions.AddRange(BuildGitOpsPlanActions(gitOpsPlan));
+        actions.AddRange(BuildGitOpsPlanActions(gitOpsPlan, includeCommands: !IsBoundNativeEks()));
 
         return Task.FromResult(new OperationResponse(
             Status: changeSet.Readiness,
@@ -1960,13 +1960,45 @@ internal sealed partial class HonuaOperationsToolkit(
         foreach (RuntimeAdapterWorkflow workflow in workflows)
         {
             yield return $"Adapter validate ({workflow.Capability.Target}): {workflow.Validate.Summary}";
-            yield return $"Adapter plan infra ({workflow.Capability.Target}): {workflow.PlanInfrastructure.SuggestedCommands.First()}";
+            yield return $"Adapter plan infra ({workflow.Capability.Target}): {Guidance(workflow.PlanInfrastructure)}";
             yield return dryRun
-                ? $"Adapter plan release ({workflow.Capability.Target}): {workflow.PlanRelease.SuggestedCommands.First()}"
-                : $"Adapter apply release ({workflow.Capability.Target}): {workflow.ApplyRelease.SuggestedCommands.First()}";
-            yield return $"Adapter verify ({workflow.Capability.Target}): {workflow.Verify.SuggestedCommands.First()}";
-            yield return $"Adapter rollback ({workflow.Capability.Target}): {workflow.Rollback.SuggestedCommands.First()}";
+                ? $"Adapter plan release ({workflow.Capability.Target}): {Guidance(workflow.PlanRelease)}"
+                : $"Adapter apply release ({workflow.Capability.Target}): {Guidance(workflow.ApplyRelease)}";
+            yield return $"Adapter verify ({workflow.Capability.Target}): {Guidance(workflow.Verify)}";
+            string recoveryLabel = workflow.Capability.Target == "eks" ? "recovery" : "rollback";
+            yield return $"Adapter {recoveryLabel} ({workflow.Capability.Target}): {Guidance(workflow.Rollback)}";
         }
+    }
+
+    private static string Guidance(RuntimeAdapterStepPlan step)
+        => step.SuggestedCommands.FirstOrDefault() ?? step.Summary;
+
+    private bool IsBoundNativeEks()
+        => runtime.RuntimeKind == "aws-eks"
+            && runtime.RuntimeBackend == "honua-kubernetes-deployment"
+            && !string.IsNullOrWhiteSpace(runtime.ServerTargetId)
+            && !string.IsNullOrWhiteSpace(runtime.DeployTargetId);
+
+    private string[] SelectPlannerTargets()
+    {
+        string[] configured = ValidateDeploymentTargets(runtime.TerraformDeploymentTargets);
+        if (runtime.RuntimeKind == "aws-eks")
+        {
+            if (!IsBoundNativeEks() || !configured.Contains("eks", StringComparer.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Native EKS planning requires the exact host backend, registered Server/deploy target, and EKS target.");
+            }
+
+            return ["eks"];
+        }
+
+        string[] selected = configured.Where(target => !target.Equals("eks", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (selected.Length == 0)
+        {
+            throw new InvalidOperationException("EKS planning requires a bound aws-eks host runtime and registered Server/deploy target.");
+        }
+
+        return selected;
     }
 
     private IEnumerable<string> BuildOperatorPolicyActions()
@@ -2024,9 +2056,19 @@ internal sealed partial class HonuaOperationsToolkit(
             .Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static IEnumerable<string> BuildReleaseOrchestrationActions(ReleaseOrchestrationPlan plan)
+    private static IEnumerable<string> BuildReleaseOrchestrationActions(
+        ReleaseOrchestrationPlan plan,
+        bool nativeEksBound)
     {
         yield return $"Promotion policy `{plan.PromotionPolicy.Gate}` requires: {string.Join(", ", plan.PromotionPolicy.RequiredEvidence)}";
+        if (nativeEksBound)
+        {
+            // Generic rollback stage text is not the native EKS or Server recovery path.
+            yield return "EKS release progression requires a verified honua-kubernetes-deployment Server target, a durable proposed operation, and separate human approval before submission.";
+            yield return "On EKS failure, inspect the Server operation and propose a corrected revision; only qualified server-sealed protected recovery may restore a prior version.";
+            yield break;
+        }
+
         yield return $"Rollback policy `{plan.RollbackPolicy.FallbackMode}` triggers on: {string.Join(", ", plan.RollbackPolicy.Triggers)}";
 
         foreach (ReleasePromotionStep step in plan.PromotionSequence)
@@ -2115,7 +2157,7 @@ internal sealed partial class HonuaOperationsToolkit(
             CapabilitiesPayload: null);
     }
 
-    private static IEnumerable<string> BuildGitOpsPlanActions(GitOpsPlan plan)
+    private static IEnumerable<string> BuildGitOpsPlanActions(GitOpsPlan plan, bool includeCommands = true)
     {
         yield return $"GitOps engine `{plan.Engine}` gate status: {plan.GateStatus}.";
         yield return $"GitOps diff summary: {plan.DiffSummary}.";
@@ -2130,14 +2172,14 @@ internal sealed partial class HonuaOperationsToolkit(
                 yield return $"GitOps drift `{environment.Environment}/{drift.Scope}`: {drift.Status}.";
             }
 
-            foreach (GitOpsCommandPlan command in environment.Commands)
+            foreach (GitOpsCommandPlan command in includeCommands ? environment.Commands : Enumerable.Empty<GitOpsCommandPlan>())
             {
                 string approvalSuffix = command.RequiresApproval ? " (approval-gated)" : string.Empty;
                 yield return $"GitOps command `{environment.Environment}/{command.Operation}`{approvalSuffix}: {command.Command}";
             }
         }
 
-        foreach (GitOpsStateTransitionPlan transition in plan.StateTransitions)
+        foreach (GitOpsStateTransitionPlan transition in includeCommands ? plan.StateTransitions : Enumerable.Empty<GitOpsStateTransitionPlan>())
         {
             string mutation = transition.MutatesState ? "mutating" : "read-only";
             string approval = transition.RequiresApproval ? "approval-required" : "no-approval";
