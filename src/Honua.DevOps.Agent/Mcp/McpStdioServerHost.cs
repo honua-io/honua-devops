@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Honua.DevOps.Agent.Operations;
 using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.OperatorPolicy;
@@ -74,7 +75,7 @@ internal static class McpStdioServerHost
                     {
                         Experimental = new Dictionary<string, object>
                         {
-                            ["honua.io/devops-turn-binding"] = new { version = 1 }
+                            ["honua.io/devops-turn-binding"] = JsonSerializer.SerializeToElement(new { version = 1 })
                         }
                     }
                     : null,

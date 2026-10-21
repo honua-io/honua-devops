@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Honua.DevOps.Agent.Operations;
 using ModelContextProtocol.Client;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
@@ -64,7 +65,7 @@ public sealed class McpServerFixture : IAsyncLifetime
             Command = "dotnet",
             Arguments = [agentDllPath, "--mcp"],
             WorkingDirectory = _workingDirectory,
-            StandardErrorLines = TerraformFixtureRoot is null ? null : CapturedOwnedServerErrors.Enqueue,
+            StandardErrorLines = CapturedOwnedServerErrors.Enqueue,
             EnvironmentVariables = new Dictionary<string, string?>
             {
                 ["HONUA_DEVOPS_HONUA_API_BASE_URL"] = baseUrl,
@@ -424,9 +425,18 @@ public sealed class McpTurnBindingCapabilityTests
     public async Task BoundChild_AdvertisesVersionedCapabilityAndSendsMatchingHonuaHeaders()
     {
         McpServerFixture fixture = new() { BoundWorkspaceId = "workspace_1", BoundTurnId = "turn-2" };
-        await fixture.InitializeAsync();
         try
         {
+            try
+            {
+                await fixture.InitializeAsync();
+            }
+            catch (Exception exception)
+            {
+                string diagnostic = Redaction.Scrub(string.Join(" | ", fixture.CapturedOwnedServerErrors.TakeLast(4)));
+                throw new InvalidOperationException($"Bound MCP child initialization failed: {diagnostic}", exception);
+            }
+
             JsonElement capabilities = JsonSerializer.SerializeToElement(fixture.Client.ServerCapabilities.Experimental);
             JsonElement binding = capabilities.GetProperty("honua.io/devops-turn-binding");
             Assert.Equal(1, binding.GetProperty("version").GetInt32());
