@@ -627,12 +627,12 @@ public sealed class ProvisioningCleanupRecoveryTests
                 JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(
                     PlanPath + ".metadata.json", cancellationToken))!;
                 receipt["cleanup"]!["teardown_root"] = metadata["source"]!["terraform_root"]!.DeepClone();
+                receipt["actor_id"] = metadata["actor_id"]!.DeepClone();
+                receipt["plan_metadata_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
+                receipt["approved_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
                 if (_destroyRecovery)
                 {
                     receipt["action"] = "destroy";
-                    receipt["actor_id"] = metadata["actor_id"]!.DeepClone();
-                    receipt["plan_metadata_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
-                    receipt["approved_digest"] = metadata["plan_metadata_digest"]!.DeepClone();
                     receipt["state_before"] = metadata["state_before"]!.DeepClone();
                     receipt["state_after"]!["serial"] = 12 + Mutations;
                     if (Mutations >= SuccessAfterMutation) await File.WriteAllTextAsync(PlanPath + ".success", "owned normal exit", cancellationToken);
