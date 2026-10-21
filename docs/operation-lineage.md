@@ -67,6 +67,19 @@ cannot be projected and must be reconciled.
 
 ## Machine-readable evidence
 
+On Linux/WSL, the same pinned `honua-devops` executable can export the private
+host input witness for an observed plan with
+`--export-provision-plan-host-evidence <provisioningOperationId>`. This CLI mode is
+not an MCP tool and grants no signing, approval, or apply authority. It checks the
+owner-only saved plan, manifest, metadata, generated nonsecret variables, input
+hash entries, canonical metadata digest, expiry, and plan SHA before emitting
+bounded nonsecret JSON. Linux plans fail and their saved directory is deleted if
+the wrapper's input digest or refs differ from the captured inputs. Existing
+plans created before the protected sidecar was introduced cannot be upgraded by
+recomputing mutable inputs later. Windows and macOS keep their prior planning
+behavior, but this protected export explicitly refuses there; they are outside
+the Linux/WSL host-attestation qualification target.
+
 CLI/function/MCP responses serialize `provisioningLineage.evidenceRefs` and
 `serverOperations`. JSONL copies the same fields even when its input has already
 crossed JSON serialization. No summary parsing is required.

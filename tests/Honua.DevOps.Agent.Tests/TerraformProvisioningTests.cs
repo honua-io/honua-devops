@@ -109,7 +109,7 @@ public sealed partial class TerraformProvisioningTests
             "aws-ecs", "small", "plan", "{\"environment\":\"dev\"}", false, string.Empty);
 
         Assert.Equal("terraform-plan-ready", response.Status);
-        string digest = ProvisioningSubstrateFixtures.FixturePlanMetadataDigest;
+        string digest = runner.LastPlanMetadataDigest!;
         Assert.Contains(response.Findings, finding => finding.Contains($"plan_metadata_digest: {digest}", StringComparison.Ordinal));
         Assert.Contains(response.Findings, finding => finding.Contains("backend_config_digest 0ea699e4", StringComparison.Ordinal));
         Assert.Contains(response.Findings, finding => finding.Contains("Prior state lineage 0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9 serial 12", StringComparison.Ordinal));
@@ -244,7 +244,7 @@ public sealed partial class TerraformProvisioningTests
 
         // The approval digest the substrate enforces, and nothing that could
         // regenerate or re-parameterize the plan.
-        Assert.Equal(ProvisioningSubstrateFixtures.FixturePlanMetadataDigest, apply.Option("--approved-digest"));
+        Assert.Equal(plan.ProvisioningLineage!.PlanMetadataDigest, apply.Option("--approved-digest"));
         Assert.Equal("apply", apply.Option("--action"));
         Assert.NotNull(apply.Option("--receipt-out"));
         Assert.DoesNotContain(apply.Arguments, argument => argument.StartsWith("--var", StringComparison.Ordinal));
@@ -594,7 +594,7 @@ public sealed partial class TerraformProvisioningTests
             execution.GetProperty("executionIdentity").GetProperty("assumedRoleArn").GetString());
         Assert.Equal("sts-assumed-role", execution.GetProperty("executionIdentity").GetProperty("credentialKind").GetString());
         Assert.Equal(
-            ProvisioningSubstrateFixtures.FixturePlanMetadataDigest,
+            runner.LastPlanMetadataDigest,
             execution.GetProperty("planMetadataDigest").GetString());
 
         // The endpoint is the stack's, and the binding says so.
