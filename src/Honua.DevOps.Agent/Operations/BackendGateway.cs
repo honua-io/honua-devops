@@ -20,6 +20,7 @@ internal sealed partial class BackendGateway : IDisposable
 
     internal BackendGateway(BackendConfiguration configuration, HttpClient? httpClient = null)
     {
+        BackendConfiguration.ValidateHonuaTurnBinding(configuration.HonuaWorkspaceId, configuration.HonuaTurnId);
         this.configuration = configuration;
         _httpClient = httpClient ?? HttpClientFactory.Create(configuration.RequestTimeout);
         _ownsHttpClient = httpClient is null;
@@ -679,6 +680,10 @@ internal sealed partial class BackendGateway : IDisposable
             {
                 ApplyApiKey(request, apiKey, apiKeyTransport);
                 configureRequest?.Invoke(request);
+                if (apiKeyTransport == ApiKeyTransport.XApiKey)
+                {
+                    ApplyHonuaTurnBinding(request);
+                }
             },
             cancellationToken);
     }
@@ -697,8 +702,25 @@ internal sealed partial class BackendGateway : IDisposable
             method,
             endpoint,
             payload,
-            request => ApplyApiKey(request, apiKey, apiKeyTransport),
+            request =>
+            {
+                ApplyApiKey(request, apiKey, apiKeyTransport);
+                ApplyHonuaTurnBinding(request);
+            },
             cancellationToken);
+    }
+
+    private void ApplyHonuaTurnBinding(HttpRequestMessage request)
+    {
+        if (configuration.HonuaWorkspaceId is null || configuration.HonuaTurnId is null)
+        {
+            return;
+        }
+
+        request.Headers.Remove("X-Honua-Workspace");
+        request.Headers.Remove("X-Honua-Turn");
+        request.Headers.TryAddWithoutValidation("X-Honua-Workspace", configuration.HonuaWorkspaceId);
+        request.Headers.TryAddWithoutValidation("X-Honua-Turn", configuration.HonuaTurnId);
     }
 
     private static void ApplyApiKey(HttpRequestMessage request, string? apiKey, ApiKeyTransport apiKeyTransport)

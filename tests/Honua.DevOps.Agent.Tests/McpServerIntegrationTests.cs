@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Honua.DevOps.Agent.Operations;
 using ModelContextProtocol.Client;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
@@ -29,9 +30,12 @@ public sealed class McpServerFixture : IAsyncLifetime
     internal string? TerraformFixtureRoot { get; init; }
     internal string? TerraformFixtureExecutable { get; init; }
     internal bool TraceOwnedProtocol { get; init; }
+    internal string? BoundWorkspaceId { get; init; }
+    internal string? BoundTurnId { get; init; }
 
     public McpClient Client { get; private set; } = null!;
     public ConcurrentQueue<string> CapturedBackendRequests { get; } = new();
+    internal ConcurrentQueue<(string? WorkspaceId, string? TurnId)> CapturedTurnHeaders { get; } = new();
     internal ConcurrentQueue<string> CapturedOwnedServerErrors { get; } = new();
     internal ConcurrentQueue<string> CapturedOwnedProtocolTrace { get; } = new();
     public string AuditFilePath { get; private set; } = string.Empty;
@@ -61,12 +65,14 @@ public sealed class McpServerFixture : IAsyncLifetime
             Command = "dotnet",
             Arguments = [agentDllPath, "--mcp"],
             WorkingDirectory = _workingDirectory,
-            StandardErrorLines = TerraformFixtureRoot is null ? null : CapturedOwnedServerErrors.Enqueue,
+            StandardErrorLines = CapturedOwnedServerErrors.Enqueue,
             EnvironmentVariables = new Dictionary<string, string?>
             {
                 ["HONUA_DEVOPS_HONUA_API_BASE_URL"] = baseUrl,
                 ["HONUA_DEVOPS_OTEL_BASE_URL"] = baseUrl,
                 ["HONUA_DEVOPS_HONUA_API_KEY"] = null,
+                ["HONUA_DEVOPS_HONUA_WORKSPACE_ID"] = BoundWorkspaceId,
+                ["HONUA_DEVOPS_HONUA_TURN_ID"] = BoundTurnId,
                 ["HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID"] = null,
                 ["HONUA_DEVOPS_EXECUTION_MODE"] = "plan",
                 ["HONUA_DEVOPS_EXECUTION_TIER"] = "plan",
@@ -178,6 +184,9 @@ public sealed class McpServerFixture : IAsyncLifetime
 
             string path = context.Request.Url?.AbsolutePath ?? string.Empty;
             CapturedBackendRequests.Enqueue($"{context.Request.HttpMethod} {path}");
+            CapturedTurnHeaders.Enqueue((
+                context.Request.Headers["X-Honua-Workspace"],
+                context.Request.Headers["X-Honua-Turn"]));
 
             string payload;
             if (path == "/api/v1/admin/deploy/operations/server-lineage-150")
@@ -253,6 +262,12 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         string[] exposedNames = [.. tools.Select(tool => tool.Name).Order()];
         Assert.Equal(ExpectedToolNames.Order().ToArray(), exposedNames);
         Assert.All(tools, tool => Assert.False(string.IsNullOrWhiteSpace(tool.Description)));
+    }
+
+    [Fact]
+    public void UnboundChild_DoesNotAdvertiseTurnBinding()
+    {
+        Assert.False(fixture.Client.ServerCapabilities.Experimental?.ContainsKey("honua.io/devops-turn-binding") ?? false);
     }
 
     [Fact]
@@ -401,5 +416,48 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
         using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using StreamReader reader = new(stream, Encoding.UTF8);
         return reader.ReadToEnd();
+    }
+}
+
+public sealed class McpTurnBindingCapabilityTests
+{
+    [Fact]
+    public async Task BoundChild_AdvertisesVersionedCapabilityAndSendsMatchingHonuaHeaders()
+    {
+        McpServerFixture fixture = new() { BoundWorkspaceId = "workspace_1", BoundTurnId = "turn-2" };
+        try
+        {
+            try
+            {
+                await fixture.InitializeAsync();
+            }
+            catch (Exception exception)
+            {
+                string diagnostic = Redaction.Scrub(string.Join(" | ", fixture.CapturedOwnedServerErrors.TakeLast(4)));
+                throw new InvalidOperationException($"Bound MCP child initialization failed: {diagnostic}", exception);
+            }
+
+            JsonElement capabilities = JsonSerializer.SerializeToElement(fixture.Client.ServerCapabilities.Experimental);
+            JsonElement binding = capabilities.GetProperty("honua.io/devops-turn-binding");
+            Assert.Equal(1, binding.GetProperty("version").GetInt32());
+            Assert.Single(binding.EnumerateObject());
+
+            using CancellationTokenSource cts = new(TimeSpan.FromMinutes(2));
+            CallToolResult result = await fixture.Client.CallToolAsync(
+                "describe_environment",
+                arguments: new Dictionary<string, object?>(),
+                cancellationToken: cts.Token);
+            Assert.NotEqual(true, result.IsError);
+            Assert.NotEmpty(fixture.CapturedTurnHeaders);
+            Assert.All(fixture.CapturedTurnHeaders, headers =>
+            {
+                Assert.Equal("workspace_1", headers.WorkspaceId);
+                Assert.Equal("turn-2", headers.TurnId);
+            });
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
     }
 }

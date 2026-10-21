@@ -34,12 +34,16 @@ internal sealed record BackendConfiguration(
     IReadOnlyList<string>? SupportAutoBundleAllowedHosts = null,
     string? SupportAutoBundleApiKey = null,
     Uri? ConsoleBaseUri = null,
-    string? RootProvisioningOperationId = null)
+    string? RootProvisioningOperationId = null,
+    string? HonuaWorkspaceId = null,
+    string? HonuaTurnId = null)
 {
     private const string HonuaApiBaseUrlVariable = "HONUA_DEVOPS_HONUA_API_BASE_URL";
     private const string OTelBaseUrlVariable = "HONUA_DEVOPS_OTEL_BASE_URL";
 
     private const string HonuaApiKeyVariable = "HONUA_DEVOPS_HONUA_API_KEY";
+    private const string HonuaWorkspaceIdVariable = "HONUA_DEVOPS_HONUA_WORKSPACE_ID";
+    private const string HonuaTurnIdVariable = "HONUA_DEVOPS_HONUA_TURN_ID";
     private const string OTelApiKeyVariable = "HONUA_DEVOPS_OTEL_API_KEY";
 
     private const string HonuaReadinessPathVariable = "HONUA_DEVOPS_HONUA_READINESS_PATH";
@@ -98,6 +102,11 @@ internal sealed record BackendConfiguration(
 
         string? honuaApiKey = Normalize(Environment.GetEnvironmentVariable(HonuaApiKeyVariable));
         string? otelApiKey = Normalize(Environment.GetEnvironmentVariable(OTelApiKeyVariable));
+        // Deployment templates commonly emit empty placeholders for optional values.
+        // Do not trim nonempty IDs: whitespace is not part of the canonical identifier.
+        string? honuaWorkspaceId = EmptyToNull(Environment.GetEnvironmentVariable(HonuaWorkspaceIdVariable));
+        string? honuaTurnId = EmptyToNull(Environment.GetEnvironmentVariable(HonuaTurnIdVariable));
+        ValidateHonuaTurnBinding(honuaWorkspaceId, honuaTurnId);
 
         string honuaReadinessPath = ParseRelativePathWithLegacy(
             HonuaReadinessPathVariable,
@@ -232,8 +241,27 @@ internal sealed record BackendConfiguration(
             SupportAutoBundleAllowedHosts: supportAutoBundleAllowedHosts,
             SupportAutoBundleApiKey: supportAutoBundleApiKey,
             ConsoleBaseUri: consoleBaseUri,
-            RootProvisioningOperationId: Environment.GetEnvironmentVariable("HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID"));
+            RootProvisioningOperationId: Environment.GetEnvironmentVariable("HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID"),
+            HonuaWorkspaceId: honuaWorkspaceId,
+            HonuaTurnId: honuaTurnId);
     }
+
+    internal static void ValidateHonuaTurnBinding(string? workspaceId, string? turnId)
+    {
+        if ((workspaceId is null) != (turnId is null)
+            || (workspaceId is not null && !IsCanonicalBindingId(workspaceId))
+            || (turnId is not null && !IsCanonicalBindingId(turnId)))
+        {
+            throw new InvalidOperationException(
+                $"{HonuaWorkspaceIdVariable} and {HonuaTurnIdVariable} must be supplied together as 1-128 character identifiers containing only ASCII letters, digits, '_' or '-'.");
+        }
+    }
+
+    private static bool IsCanonicalBindingId(string value) =>
+        value.Length is >= 1 and <= 128 && value.All(character =>
+            character is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-');
+
+    private static string? EmptyToNull(string? value) => value?.Length == 0 ? null : value;
 
     private static bool ParseBoolean(string? value, bool fallback, string variableName)
     {
