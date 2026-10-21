@@ -244,7 +244,7 @@ public sealed partial class TerraformProvisioningTests
 
         // The approval digest the substrate enforces, and nothing that could
         // regenerate or re-parameterize the plan.
-        Assert.Equal(plan.ProvisioningLineage!.PlanMetadataDigest, apply.Option("--approved-digest"));
+        Assert.Equal(planResponse.ProvisioningLineage!.PlanMetadataDigest, apply.Option("--approved-digest"));
         Assert.Equal("apply", apply.Option("--action"));
         Assert.NotNull(apply.Option("--receipt-out"));
         Assert.DoesNotContain(apply.Arguments, argument => argument.StartsWith("--var", StringComparison.Ordinal));
