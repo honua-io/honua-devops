@@ -175,6 +175,89 @@ public sealed class ApprovalReceiptIssuerTests
     }
 
     [Fact]
+    public async Task IssuedReceiptPastItsTtl_IsRefusedBeforeApplyStarts()
+    {
+        // A genuine kms-mac receipt from the issuer, minted 16 minutes ago with the
+        // default 15-minute TTL: schema-valid, correctly signed, and expired.
+        (OperationResponse plan, string challenge, TerraformTestRoot root, FakeSubstrateRunner runner, BackendGateway gateway) =
+            await PlanAsync("dev");
+        using (root)
+        using (gateway)
+        {
+            IssuedApprovalReceipt issued = await ApprovalReceiptIssuer.IssueAsync(
+                new ApprovalIssueRequest(SerializeLikeMcp(plan), "apply", Issuer, ApprovalSigningModes.KmsMac),
+                new KmsMacApprovalSignatureProvider(RecordedKmsMacClient.Signer(), IssuerKeyArns()),
+                DateTimeOffset.UtcNow.AddMinutes(-(ApprovalReceiptIssuer.DefaultTtlMinutes + 1)));
+            Assert.Empty(ProvisioningContracts.ValidateProvisionApproval(issued.ReceiptJson));
+
+            OperationResponse response = await KmsExecutor(root, gateway, runner, RecordedKmsMacClient.Verifier())
+                .ProvisionInfrastructureAsync(
+                    "aws-ecs", "small", "apply", "{\"environment\":\"dev\"}", true, challenge, issued.ReceiptJson);
+
+            Assert.Equal("confirmation-required", response.Status);
+            Assert.Equal(0, runner.ApplyCalls);
+            Assert.DoesNotContain(runner.Calls, call => call.Operation == "terraform-exact-apply.sh");
+        }
+    }
+
+    [Fact]
+    public async Task IssuedReceiptForAnotherPlanMetadataDigest_IsRefusedBeforeApplyStarts()
+    {
+        // The approver signs a consistent plan response that names a different plan
+        // metadata digest than the saved plan the executor holds. The signature is
+        // genuine; the binding is not, so no apply may start.
+        (OperationResponse plan, string challenge, TerraformTestRoot root, FakeSubstrateRunner runner, BackendGateway gateway) =
+            await PlanAsync("dev");
+        using (root)
+        using (gateway)
+        {
+            string otherDigest = new('a', 64);
+            Assert.NotEqual(otherDigest, plan.ProvisioningLineage!.PlanMetadataDigest);
+            OperationResponse otherPlan = plan with
+            {
+                ProvisioningLineage = plan.ProvisioningLineage with { PlanMetadataDigest = otherDigest },
+                ApprovalRequest = plan.ApprovalRequest! with { PlanMetadataDigest = otherDigest },
+            };
+            IssuedApprovalReceipt issued = await ApprovalReceiptIssuer.IssueAsync(
+                new ApprovalIssueRequest(SerializeLikeMcp(otherPlan), "apply", Issuer, ApprovalSigningModes.KmsMac),
+                new KmsMacApprovalSignatureProvider(RecordedKmsMacClient.Signer(), IssuerKeyArns()));
+            Assert.Empty(ProvisioningContracts.ValidateProvisionApproval(issued.ReceiptJson));
+
+            OperationResponse response = await KmsExecutor(root, gateway, runner, RecordedKmsMacClient.Verifier())
+                .ProvisionInfrastructureAsync(
+                    "aws-ecs", "small", "apply", "{\"environment\":\"dev\"}", true, challenge, issued.ReceiptJson);
+
+            Assert.Equal("confirmation-required", response.Status);
+            Assert.Contains("plan metadata digest", response.Summary, StringComparison.Ordinal);
+            Assert.Equal(0, runner.ApplyCalls);
+            Assert.DoesNotContain(runner.Calls, call => call.Operation == "terraform-exact-apply.sh");
+        }
+    }
+
+    [Fact]
+    public async Task PlanResponseWhosePlanDigestProjectionsDisagree_IsNotIssued()
+    {
+        // approvalRequest and provisioningLineage are two projections of one plan. If
+        // they name different digests the document was edited, and the issuer signs nothing.
+        (OperationResponse plan, _, TerraformTestRoot root, _, BackendGateway gateway) = await PlanAsync("dev");
+        using (root)
+        using (gateway)
+        {
+            OperationResponse edited = plan with
+            {
+                ApprovalRequest = plan.ApprovalRequest! with { PlanMetadataDigest = new string('a', 64) },
+            };
+            RecordedKmsMacClient signer = RecordedKmsMacClient.Signer();
+            ApprovalIssueRefusedException refused = await Assert.ThrowsAsync<ApprovalIssueRefusedException>(
+                () => ApprovalReceiptIssuer.IssueAsync(
+                    new ApprovalIssueRequest(SerializeLikeMcp(edited), "apply", Issuer, ApprovalSigningModes.KmsMac),
+                    new KmsMacApprovalSignatureProvider(signer, IssuerKeyArns())));
+            Assert.Equal("plan-response-inconsistent", refused.Code);
+            Assert.Empty(signer.GenerateMacRequests);
+        }
+    }
+
+    [Fact]
     public async Task Issuer_RefusesLocalHmacDevOutsideDev()
     {
         (OperationResponse plan, _, TerraformTestRoot root, _, BackendGateway gateway) = await PlanAsync("staging");
