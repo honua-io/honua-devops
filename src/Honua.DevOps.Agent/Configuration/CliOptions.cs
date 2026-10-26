@@ -120,6 +120,10 @@ Options:
                               Only for plan responses that predate approvalRequest; may never contradict the plan.
   -h, --help                  Show this help and exit.
 
+Environment (model modes):
+  HONUA_DEVOPS_AI_DISCLOSURE_POLICY  Process-only exact provider/model/destination/use-case/classification approvals.
+                                    Required for external model modes; ignored in .env/.env.local. See README.
+
 Environment (--listen):
   HONUA_DEVOPS_WEBHOOK_SECRET       Required. Shared HMAC-SHA256 secret matching honua-support.
   HONUA_DEVOPS_WEBHOOK_PORT         Optional. TCP port to bind (default 8090).

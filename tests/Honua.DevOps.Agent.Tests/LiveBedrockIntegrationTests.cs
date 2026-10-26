@@ -21,13 +21,15 @@ public class LiveBedrockIntegrationTests
             return;
         }
 
-        ProviderConfiguration configuration = ProviderConfiguration.Load(ProviderKind.Bedrock);
+        ProviderRoute configuration = ProviderConfiguration.LoadRoute(ProviderKind.Bedrock);
         Assert.Equal("bedrock", configuration.Name);
 
         ChatClientAgent agent = AgentProviderFactory.Create(
             ProviderKind.Bedrock,
             systemPrompt: "you are a Honua operator live integration probe",
-            tools: null);
+            approval: new ProviderDisclosureSnapshot(Environment.GetEnvironmentVariable(ProviderDisclosureSnapshot.EnvironmentVariable)),
+            useCase: ProviderModelUseCase.Operator,
+            tools: null).Agent;
 
         using CancellationTokenSource cancellation = new(ResolveBackendTimeout());
 

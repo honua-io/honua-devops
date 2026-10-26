@@ -15,42 +15,47 @@ internal static class AgentProviderFactory
         AllowAutoRedirect = false
     });
 
-    internal static ChatClientAgent Create(
+    internal static ConfiguredProviderAgent Create(
         ProviderKind provider,
         string systemPrompt,
-        IList<AITool>? tools = null)
+        ProviderDisclosureSnapshot approval,
+        ProviderModelUseCase useCase,
+        IList<AITool>? tools = null,
+        OpenAIClientOptions? clientOptionsOverride = null,
+        ProviderConstructionHooks? constructionHooks = null)
     {
-        return Create(provider, systemPrompt, tools, clientOptionsOverride: null);
-    }
-
-    internal static ChatClientAgent Create(
-        ProviderKind provider,
-        string systemPrompt,
-        IList<AITool>? tools,
-        OpenAIClientOptions? clientOptionsOverride)
-    {
-        ProviderConfiguration configuration = ProviderConfiguration.Load(provider);
+        ArgumentNullException.ThrowIfNull(approval);
+        ProviderRoute route = ProviderConfiguration.LoadRoute(provider);
+        approval.RequireApproval(route, useCase);
+        if (clientOptionsOverride?.Endpoint is { } endpoint && endpoint != route.Endpoint)
+            throw new InvalidOperationException(ProviderDisclosureSnapshot.DenialMessage);
+        // No provider key or AWS credential-chain client is read/constructed before approval.
+        ProviderConfiguration configuration = constructionHooks is null ? ProviderConfiguration.LoadCredentials(route) : constructionHooks.LoadCredentials(route);
+        if (configuration.Name != route.Name || configuration.Model != route.Model
+            || configuration.Endpoint != route.Endpoint || configuration.Region != route.Region)
+            throw new InvalidOperationException(ProviderDisclosureSnapshot.DenialMessage);
 
         // Bedrock speaks the Converse API (not OpenAI-compatible chat completions), so it is
         // wrapped as an IChatClient adapter and flows through the IChatClient AsAIAgent
         // overload. The OpenAI-compatible providers keep their existing ChatClient path.
         if (provider == ProviderKind.Bedrock)
         {
-            IChatClient bedrockClient = BedrockChatClientAdapter.FromConfiguration(configuration);
-            return bedrockClient.AsAIAgent(
+            IChatClient bedrockClient = constructionHooks is null
+                ? BedrockChatClientAdapter.FromConfiguration(configuration) : constructionHooks.CreateBedrock(configuration);
+            return new(bedrockClient.AsAIAgent(
                 instructions: systemPrompt,
                 name: $"honua-devops-{configuration.Name}",
                 description: "Honua operations and solution engineering agent",
-                tools: tools);
+                tools: tools), route.Model);
         }
 
         ChatClient client = CreateChatClient(configuration, clientOptionsOverride);
 
-        return client.AsAIAgent(
+        return new(client.AsAIAgent(
             instructions: systemPrompt,
             name: $"honua-devops-{configuration.Name}",
             description: "Honua operations and solution engineering agent",
-            tools: tools);
+            tools: tools), route.Model);
     }
 
     private static ChatClient CreateChatClient(
@@ -78,3 +83,9 @@ internal static class AgentProviderFactory
         return options;
     }
 }
+
+internal sealed record ConfiguredProviderAgent(ChatClientAgent Agent, string Model);
+
+// Per-call synthetic dependencies keep denial-order tests offline, including AWS credential-chain construction.
+internal sealed record ProviderConstructionHooks(Func<ProviderRoute, ProviderConfiguration> LoadCredentials,
+    Func<ProviderConfiguration, IChatClient> CreateBedrock);

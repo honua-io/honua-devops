@@ -26,7 +26,7 @@ IAuditSink? auditSink = null;
 
 try
 {
-    _ = DotEnvLoader.LoadDefaultFiles();
+    ProviderDisclosureSnapshot modelApproval = ProviderDisclosureSnapshot.CaptureAndLoadDotEnv(Directory.GetCurrentDirectory());
     CliOptions options = CliOptions.Parse(args);
 
     if (options.Help)
@@ -93,6 +93,7 @@ try
         Environment.ExitCode = await BlindEvalMode.RunAsync(
             options.Provider,
             options.EvalBlind,
+            modelApproval,
             Console.Out,
             cancellationTokenSource.Token);
         return;
@@ -250,7 +251,8 @@ try
     string detectedEdition = await EditionDetector.DetectAsync(backendGateway, cancellationTokenSource.Token);
 
     IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition, auditSink);
-    ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt, tools);
+    ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt,
+        modelApproval, ProviderModelUseCase.Operator, tools).Agent;
     AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
 
     string sessionId = Guid.NewGuid().ToString("n");

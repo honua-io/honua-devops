@@ -12,6 +12,7 @@ internal static class BlindEvalMode
     internal static async Task<int> RunAsync(
         ProviderKind provider,
         BlindEvalCliOptions options,
+        ProviderDisclosureSnapshot approval,
         TextWriter log,
         CancellationToken cancellationToken)
     {
@@ -23,7 +24,7 @@ internal static class BlindEvalMode
         try
         {
             responder = options.FixturePath is null
-                ? AgentBlindEvalResponder.Create(provider)
+                ? AgentBlindEvalResponder.Create(provider, approval)
                 : FixtureBlindEvalResponder.FromFile(options.FixturePath);
         }
         catch (Exception exception)

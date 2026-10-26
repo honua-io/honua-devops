@@ -35,15 +35,16 @@ internal sealed class AgentBlindEvalResponder : IBlindEvalResponder
     /// credentials throw here, before any scenario runs, so the lane fails loudly
     /// instead of publishing an empty scorecard.
     /// </summary>
-    internal static AgentBlindEvalResponder Create(ProviderKind provider)
+    internal static AgentBlindEvalResponder Create(ProviderKind provider, ProviderDisclosureSnapshot approval)
     {
-        ProviderConfiguration configuration = ProviderConfiguration.Load(provider);
-        ChatClientAgent agent = AgentProviderFactory.Create(
+        ConfiguredProviderAgent configured = AgentProviderFactory.Create(
             provider,
             BlindEvalPrompt.SystemPrompt,
+            approval,
+            ProviderModelUseCase.BlindEval,
             tools: null);
 
-        return new AgentBlindEvalResponder(agent, provider, configuration.Model);
+        return new AgentBlindEvalResponder(configured.Agent, provider, configured.Model);
     }
 
     public async Task<BlindEvalResponse> RespondAsync(
