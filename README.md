@@ -58,6 +58,21 @@ Set `HONUA_DEVOPS_PROVIDER` to `codex`, `claude`, `local-llama`, or `bedrock` (d
 Reference defaults live in `.env.example`.
 `honua-devops` auto-loads `.env` and `.env.local` from the working directory, with process environment variables taking precedence and `.env.local` overriding `.env`.
 
+Provider requests do not follow HTTP redirects. OpenAI-compatible endpoints must use
+HTTPS except true loopback development URLs, and must not contain userinfo, query,
+or fragment components. This also applies to custom endpoint configuration.
+The SDK default OpenAI endpoint uses the same nonredirecting transport.
+
+Automatic SDK model retries are disabled, including Bedrock stale-connection retries.
+A failed invocation returns to its caller; any explicit retry is another invocation
+and may incur provider charges. Operators must set appropriate provider-side quotas
+and caller deadlines rather than relying on transparent retries.
+Bedrock ignores ambient SDK endpoint URL overrides and resolves its configured region;
+region selection alone does not guarantee data residency (including inference profiles).
+Streaming response resources are disposed on completion, cancellation, or consumer exit.
+These transport controls do not establish disclosure approval, aggregate accounting,
+model qualification, or framework conformance.
+
 ### Codex provider
 
 - `HONUA_DEVOPS_CODEX_MODEL` (required)
