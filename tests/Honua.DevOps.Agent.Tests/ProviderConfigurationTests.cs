@@ -4,6 +4,31 @@ namespace Honua.DevOps.Agent.Tests;
 
 public class ProviderConfigurationTests
 {
+    [Theory]
+    [InlineData("https://user:fake@example.test/v1")]
+    [InlineData("https://example.test/v1?key=fake")]
+    [InlineData("https://example.test/v1#fragment")]
+    [InlineData("http://localhost.evil.test/v1")]
+    [InlineData("http://127.0.0.1.evil.test/v1")]
+    public void Load_RejectsUnboundEndpointComponents(string endpoint)
+    {
+        using TestEnvironmentVariableScope environment = new();
+        SetProviderDefaults(environment);
+        environment.Set("HONUA_DEVOPS_CODEX_ENDPOINT", endpoint);
+        Assert.Throws<InvalidOperationException>(() => ProviderConfiguration.Load(ProviderKind.Codex));
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:11434/v1")]
+    [InlineData("http://[::1]:11434/v1")]
+    public void Load_PreservesNumericHttpLoopback(string endpoint)
+    {
+        using TestEnvironmentVariableScope environment = new();
+        SetProviderDefaults(environment);
+        environment.Set("HONUA_DEVOPS_CODEX_ENDPOINT", endpoint);
+        Assert.Equal(new Uri(endpoint), ProviderConfiguration.Load(ProviderKind.Codex).Endpoint);
+    }
+
     [Fact]
     public void Load_RejectsNonHttpsRemoteProviderEndpoint()
     {

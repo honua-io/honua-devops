@@ -90,6 +90,14 @@ internal sealed record ProviderConfiguration(
                 $"Environment variable `{variableName}` must use http or https.");
         }
 
+        if (!string.IsNullOrEmpty(endpoint.UserInfo) ||
+            !string.IsNullOrEmpty(endpoint.Query) ||
+            !string.IsNullOrEmpty(endpoint.Fragment))
+        {
+            throw new InvalidOperationException(
+                $"Environment variable `{variableName}` must not contain userinfo, query, or fragment.");
+        }
+
         if (!IsLocalUri(endpoint) && !endpoint.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(

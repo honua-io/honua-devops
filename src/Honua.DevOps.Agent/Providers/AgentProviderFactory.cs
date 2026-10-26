@@ -3,11 +3,18 @@ using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Chat;
 using System.ClientModel;
+using System.ClientModel.Primitives;
 
 namespace Honua.DevOps.Agent.Providers;
 
 internal static class AgentProviderFactory
 {
+    // Reuse the production connection pool; SDK clients do not own this transport.
+    private static readonly HttpClient ProviderHttpClient = new(new HttpClientHandler
+    {
+        AllowAutoRedirect = false
+    });
+
     internal static ChatClientAgent Create(
         ProviderKind provider,
         string systemPrompt,
@@ -52,25 +59,22 @@ internal static class AgentProviderFactory
     {
         ApiKeyCredential credential = new(configuration.ApiKey);
 
-        if (clientOptionsOverride is not null)
-        {
-            if (clientOptionsOverride.Endpoint is null && configuration.Endpoint is not null)
-            {
-                clientOptionsOverride.Endpoint = configuration.Endpoint;
-            }
-            return new ChatClient(configuration.Model, credential, clientOptionsOverride);
-        }
-
-        if (configuration.Endpoint is null)
-        {
-            return new ChatClient(configuration.Model, credential);
-        }
-
-        OpenAIClientOptions options = new()
-        {
-            Endpoint = configuration.Endpoint
-        };
-
+        OpenAIClientOptions options = CreateClientOptions(configuration, clientOptionsOverride);
         return new ChatClient(configuration.Model, credential, options);
+    }
+
+    internal static OpenAIClientOptions CreateClientOptions(
+        ProviderConfiguration configuration,
+        OpenAIClientOptions? clientOptionsOverride = null)
+    {
+        // The override is an internal synthetic-test seam. Production always supplies an
+        // explicit nonredirecting transport, including when the SDK selects its default URL.
+        OpenAIClientOptions options = clientOptionsOverride ?? new OpenAIClientOptions
+        {
+            Transport = new HttpClientPipelineTransport(ProviderHttpClient)
+        };
+        options.Endpoint ??= configuration.Endpoint;
+        options.RetryPolicy = new ClientRetryPolicy(maxRetries: 0);
+        return options;
     }
 }

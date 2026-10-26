@@ -50,7 +50,11 @@ internal sealed class BedrockChatClientAdapter : IChatClient
 
         AmazonBedrockRuntimeConfig config = new()
         {
-            RegionEndpoint = RegionEndpoint.GetBySystemName(region)
+            RegionEndpoint = RegionEndpoint.GetBySystemName(region),
+            IgnoreConfiguredEndpointUrls = true,
+            AllowAutoRedirect = false,
+            MaxErrorRetry = 0,
+            MaxStaleConnectionRetries = 0
         };
 
         if (!string.IsNullOrEmpty(configuration.ApiKey))
@@ -114,7 +118,7 @@ internal sealed class BedrockChatClientAdapter : IChatClient
         ArgumentNullException.ThrowIfNull(messages);
 
         ConverseStreamRequest request = BuildStreamRequest(messages, options);
-        ConverseStreamResponse response = await _runtime
+        using ConverseStreamResponse response = await _runtime
             .ConverseStreamAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
