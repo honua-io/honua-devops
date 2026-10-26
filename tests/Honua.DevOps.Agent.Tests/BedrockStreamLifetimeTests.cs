@@ -37,8 +37,12 @@ public class BedrockStreamLifetimeTests
                 Task<bool> pending = updates.MoveNextAsync().AsTask();
                 await body.ReadBlocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await cancellation.CancelAsync();
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                // The pinned AWS event-stream decoder wraps read cancellation. Assert the
+                // exact wrapper and cancellation cause, rather than accepting any failure.
+                BedrockRuntimeEventStreamException failure = await Assert.ThrowsAsync<BedrockRuntimeEventStreamException>(async () =>
                     await pending.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.IsAssignableFrom<OperationCanceledException>(failure.InnerException);
+                Assert.True(cancellation.IsCancellationRequested);
             }
         }
         Assert.True(body.WasDisposed);
