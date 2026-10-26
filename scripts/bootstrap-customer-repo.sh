@@ -51,7 +51,7 @@ Options:
   --gitops-tool <name>                Default: honua-gitops
   --terraform-repository <url>        Default: https://github.com/honua-io/honua-iac
   --terraform-ref <ref>               Default: main
-  --terraform-local-path <path>       Default: <customer-root>/../honua-iac
+  --terraform-local-path <path>       Explicit absolute trusted checkout (optional)
   --ci-workflow-name <value>          Default: Honua Operator Validation
   --preflight-workflow-name <value>   Default: Honua Operator Preflight
   --honua-devops-repository <org/repo> Default: honua-io/honua-devops
@@ -277,12 +277,13 @@ case "$CUSTOMER_ROOT" in
   *) CUSTOMER_ROOT="$REPO_ROOT/$CUSTOMER_ROOT" ;;
 esac
 
+if [[ -n "$TERRAFORM_LOCAL_PATH" && "$TERRAFORM_LOCAL_PATH" != /* ]]; then
+  echo "[ERROR] --terraform-local-path must be an explicit absolute trusted checkout" >&2
+  exit 1
+fi
+
 mkdir -p "$CUSTOMER_ROOT"
 CUSTOMER_ROOT="$(cd "$CUSTOMER_ROOT" && pwd)"
-
-if [[ -z "$TERRAFORM_LOCAL_PATH" ]]; then
-  TERRAFORM_LOCAL_PATH="$CUSTOMER_ROOT/../honua-iac"
-fi
 
 ENV_FILE="$CUSTOMER_ROOT/.env.local"
 DESIRED_STATE_ROOT="$CUSTOMER_ROOT/desired-state"
@@ -298,11 +299,11 @@ mkdir -p "$(dirname "$CHECKLIST_PATH")"
 bootstrap_args=(
   --provider "$PROVIDER"
   --output "$ENV_FILE"
-  --terraform-local-path "$TERRAFORM_LOCAL_PATH"
   --honua-api-base-url "$HONUA_API_BASE_URL"
   --otel-base-url "$OTEL_BASE_URL"
 )
 
+append_optional_arg bootstrap_args --terraform-local-path "$TERRAFORM_LOCAL_PATH"
 append_optional_arg bootstrap_args --honua-api-key "$HONUA_API_KEY"
 append_optional_arg bootstrap_args --otel-api-key "$OTEL_API_KEY"
 append_optional_arg bootstrap_args --codex-model "$CODEX_MODEL"
@@ -425,12 +426,15 @@ cat >> "$CHECKLIST_PATH" <<EOF
 3. Review the scaffolded desired-state files for the first service.
 4. Run desired-state validation after edits:
    \`$REPO_ROOT/scripts/validate-desired-state.sh --root "$DESIRED_STATE_ROOT"\`
-5. Run preflight from the customer root:
-   \`(cd "$CUSTOMER_ROOT" && dotnet run --project "$REPO_ROOT/src/Honua.DevOps.Agent" -- --preflight)\`
+5. Configure backend, audit, execution and absolute substrate settings in a trusted launcher
+   process before preflight. Cwd dotenv loads only exact model keys; it does not configure
+   execution authority. See docs/execution-configuration-migration.md in honua-devops.
+   Review generated configuration as data; never source it as shell code.
 6. Load GitHub repo vars/secrets for generated Actions workflows:
    \`(cd "$CUSTOMER_ROOT" && ./bootstrap/configure-honua-operator-ci.sh)\`
-7. Start the first rollout in plan mode:
-   \`(cd "$CUSTOMER_ROOT" && dotnet run --project "$REPO_ROOT/src/Honua.DevOps.Agent" -- --provider "$PROVIDER" --prompt "Use deploy_service_gitops to plan rollout of $SERVICE revision $REVISION to $ENVIRONMENTS with change summary 'customer bootstrap plan'.")\`
+7. After trusted launcher configuration and separate model disclosure approval, request the
+   first rollout plan for $SERVICE revision $REVISION to $ENVIRONMENTS. Keep plan/pr-first
+   defaults; generated files and this checklist do not authorize execution.
 EOF
 
 if [[ "$SKIP_CI" != "true" ]]; then

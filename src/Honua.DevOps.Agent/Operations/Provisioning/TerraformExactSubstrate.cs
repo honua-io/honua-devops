@@ -65,9 +65,9 @@ internal sealed record TerraformExactSubstrate(
         substrate = null;
         error = string.Empty;
 
-        if (string.IsNullOrWhiteSpace(configuredIacRoot))
+        if (string.IsNullOrWhiteSpace(configuredIacRoot) || !Path.IsPathFullyQualified(configuredIacRoot))
         {
-            error = "The honua-iac root is not configured.";
+            error = "An absolute operator-configured honua-iac root is required.";
             return false;
         }
 

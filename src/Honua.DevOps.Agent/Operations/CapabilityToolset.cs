@@ -188,12 +188,14 @@ internal static class CapabilityToolset
         return tools;
     }
 
-    private static AITool CreateTool(Delegate function, string name, string description)
+    internal static AITool CreateTool(Delegate function, string name, string description)
     {
         return AIFunctionFactory.Create(
             function,
             new AIFunctionFactoryOptions
             {
+                MarshalResult = static (result, declaredType, _) =>
+                    ValueTask.FromResult<object?>(new UnmarshaledToolResult(result, declaredType)),
                 Name = name,
                 Description = description
             });

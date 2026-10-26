@@ -121,8 +121,9 @@ claude mcp add honua-devops -- /abs/path/to/honua-devops/artifacts/mcp/Honua.Dev
 
 (On Windows the published binary is `Honua.DevOps.Agent.exe`.)
 
-Pass backend configuration with `--env`, or rely on the working directory's
-`.env` / `.env.local` (the server auto-loads both; process env vars win):
+Pass backend and execution configuration through the trusted MCP launcher `--env`.
+Working-directory `.env` / `.env.local` accept only exact model keys, not backend,
+audit, issuer, execution or tool settings. See [migration guidance](execution-configuration-migration.md):
 
 ```bash
 claude mcp add honua-devops \

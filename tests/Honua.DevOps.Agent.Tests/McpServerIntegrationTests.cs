@@ -30,6 +30,8 @@ public sealed class McpServerFixture : IAsyncLifetime
     internal string? TerraformFixtureRoot { get; init; }
     internal string? TerraformFixtureExecutable { get; init; }
     internal bool TraceOwnedProtocol { get; init; }
+    internal string? DeployTargetId { get; init; }
+    internal string? UntrustedDotEnv { get; init; }
     internal string? BoundWorkspaceId { get; init; }
     internal string? BoundTurnId { get; init; }
 
@@ -53,6 +55,7 @@ public sealed class McpServerFixture : IAsyncLifetime
 
         _workingDirectory = Directory.CreateTempSubdirectory("honua-devops-mcp-test").FullName;
         AuditFilePath = Path.Combine(_workingDirectory, "audit.jsonl");
+        if (UntrustedDotEnv is not null) File.WriteAllText(Path.Combine(_workingDirectory, ".env"), UntrustedDotEnv);
 
         string agentDllPath = Path.Combine(AppContext.BaseDirectory, "Honua.DevOps.Agent.dll");
         Assert.True(File.Exists(agentDllPath), $"Expected agent assembly at {agentDllPath}.");
@@ -80,16 +83,16 @@ public sealed class McpServerFixture : IAsyncLifetime
                 ["HONUA_DEVOPS_HONUA_WORKSPACE_ID"] = BoundWorkspaceId,
                 ["HONUA_DEVOPS_HONUA_TURN_ID"] = BoundTurnId,
                 ["HONUA_DEVOPS_ROOT_PROVISIONING_OPERATION_ID"] = null,
-                ["HONUA_DEVOPS_EXECUTION_MODE"] = "plan",
-                ["HONUA_DEVOPS_EXECUTION_TIER"] = "plan",
-                ["HONUA_DEVOPS_APPROVAL_MODE"] = "pr-first",
+                ["HONUA_DEVOPS_EXECUTION_MODE"] = UntrustedDotEnv is null ? "plan" : null,
+                ["HONUA_DEVOPS_EXECUTION_TIER"] = UntrustedDotEnv is null ? "plan" : null,
+                ["HONUA_DEVOPS_APPROVAL_MODE"] = UntrustedDotEnv is null ? "pr-first" : null,
                 ["HONUA_DEVOPS_AUDIT_HOOK_TARGET"] = $"file://{AuditFilePath}",
                 ["HONUA_DEVOPS_BACKEND_TIMEOUT_SECONDS"] = "10",
                 ["HONUA_DEVOPS_ALLOWED_ENVIRONMENTS"] = "dev,staging,prod",
                 ["HONUA_DEVOPS_TERRAFORM_TARGETS"] = TerraformFixtureRoot is null ? "lambda,eks" : "ecs",
-                ["HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"] = TerraformFixtureRoot ?? _workingDirectory,
+                ["HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"] = UntrustedDotEnv is null ? TerraformFixtureRoot ?? _workingDirectory : null,
                 ["HONUA_DEVOPS_TERRAFORM_BIN"] = TerraformFixtureExecutable,
-                ["HONUA_DEVOPS_DEPLOY_TARGET_ID"] = "",
+                ["HONUA_DEVOPS_DEPLOY_TARGET_ID"] = DeployTargetId ?? "",
                 ["HONUA_DEVOPS_SUPPORT_API_BASE_URL"] = ""
             }
         });
@@ -198,6 +201,10 @@ public sealed class McpServerFixture : IAsyncLifetime
             if (path == "/api/v1/admin/deploy/operations/server-lineage-150")
             {
                 payload = LineageReceipt;
+            }
+            else if (DeployTargetId is not null && path.EndsWith("/deploy/operations", StringComparison.Ordinal))
+            {
+                payload = """{"operationId":"mutation-216","status":"AwaitingApproval"}""";
             }
             else if (path.Contains("healthz/ready", StringComparison.Ordinal))
             {
@@ -465,5 +472,104 @@ public sealed class McpTurnBindingCapabilityTests
         {
             await fixture.DisposeAsync();
         }
+    }
+}
+
+public sealed class McpHostAuthorityAuditTests
+{
+    [Fact]
+    public async Task RealStdio_ProposalMutationIsAuditedExactlyOnceBeforeWireProjection()
+    {
+        McpServerFixture fixture = new() { DeployTargetId = "fixture-target" };
+        await fixture.InitializeAsync();
+        try
+        {
+            using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(2));
+            var result = await fixture.Client.CallToolAsync("create_gitops_proposal", new Dictionary<string, object?>
+            {
+                ["service"] = "roads-api", ["environmentsCsv"] = "dev", ["revision"] = "fixture-revision",
+                ["action"] = "sync", ["changeSummary"] = "synthetic proposal", ["owner"] = "fixture-operator"
+            }, cancellationToken: timeout.Token);
+            Assert.NotEqual(true, result.IsError);
+            Assert.Contains(fixture.CapturedBackendRequests, request => request == "POST /api/v1/admin/deploy/operations");
+            var records = File.ReadAllLines(fixture.AuditFilePath).Select(line => JsonDocument.Parse(line)).ToArray();
+            try
+            {
+                var audit = Assert.Single(records, record => record.RootElement.GetProperty("ToolName").GetString() == "create_gitops_proposal");
+                Assert.True(audit.RootElement.GetProperty("Mutated").GetBoolean());
+                Assert.NotEqual(JsonValueKind.Null, audit.RootElement.GetProperty("BackendSteps").ValueKind);
+                string wire = JsonSerializer.Serialize(result);
+                Assert.DoesNotContain("BackendSteps", wire, StringComparison.Ordinal);
+                Assert.DoesNotContain("Actuation", wire, StringComparison.Ordinal);
+            }
+            finally { foreach (var record in records) record.Dispose(); }
+        }
+        finally { await fixture.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task RealStdio_WorkspaceCannotRaiseExecutionApprovalOrSubstrateAuthority()
+    {
+        using TerraformTestRoot root = new();
+        string marker = Path.Combine(root.Path, "unexpected-plan-execution");
+        string fakeTerraform = Path.Combine(root.Path, "inert-terraform");
+        File.WriteAllText(fakeTerraform, "#!/bin/sh\nexit 0\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(fakeTerraform, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        File.WriteAllText(root.PlanScript, $"#!/bin/sh\nprintf attempted > \"{marker}\"\nexit 1\n");
+        McpServerFixture fixture = new()
+        {
+            // A trusted inert binary makes availability independent of the host PATH;
+            // execution/approval gates and substrate root remain unset in the process.
+            TerraformFixtureExecutable = fakeTerraform,
+            UntrustedDotEnv = $"HONUA_DEVOPS_EXECUTION_MODE=execute\nHONUA_DEVOPS_EXECUTION_TIER=promote-prod\nHONUA_DEVOPS_APPROVAL_MODE=direct-allowed\nHONUA_DEVOPS_TERRAFORM_LOCAL_PATH={root.Path}\nHONUA_DEVOPS_TERRAFORM_BIN={fakeTerraform}\n"
+        };
+        await fixture.InitializeAsync();
+        try
+        {
+            using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(2));
+            var result = await fixture.Client.CallToolAsync("describe_environment", cancellationToken: timeout.Token);
+            Assert.NotEqual(true, result.IsError);
+            string line = Assert.Single(File.ReadAllLines(fixture.AuditFilePath));
+            using var record = JsonDocument.Parse(line);
+            Assert.Equal("plan", record.RootElement.GetProperty("ExecutionMode").GetString());
+            Assert.Equal("plan", record.RootElement.GetProperty("ExecutionTier").GetString());
+            Assert.Equal("pr-first", record.RootElement.GetProperty("ApprovalMode").GetString());
+            Assert.False(record.RootElement.GetProperty("Mutated").GetBoolean());
+            Assert.DoesNotContain(fixture.CapturedBackendRequests, request => request.StartsWith("POST ", StringComparison.Ordinal));
+            // Plan reaches the real provisioning tool, but no cwd substrate is trusted.
+            var plan = await fixture.Client.CallToolAsync("provision_infrastructure", new Dictionary<string, object?>
+            {
+                ["stack"] = "aws-ecs", ["size"] = "small", ["action"] = "plan", ["variablesJson"] = "{}",
+                ["confirmed"] = false, ["confirmation"] = "", ["approvalReceiptJson"] = ""
+            }, cancellationToken: timeout.Token);
+            Assert.NotEqual(true, plan.IsError);
+            string wire = JsonSerializer.Serialize(plan);
+            Assert.Contains("iac-substrate-unavailable", wire, StringComparison.Ordinal);
+            Assert.False(File.Exists(marker), "A workspace-selected substrate script must never run.");
+            Assert.DoesNotContain(fixture.CapturedBackendRequests, request => request.StartsWith("POST ", StringComparison.Ordinal));
+        }
+        finally { await fixture.DisposeAsync(); }
+
+        // Same valid owned substrate/binary, now explicitly process-authorized.
+        // Reaching its inert marker proves the negative did not rely on a broken fixture.
+        McpServerFixture trusted = new()
+        {
+            TerraformFixtureRoot = root.Path,
+            TerraformFixtureExecutable = fakeTerraform
+        };
+        await trusted.InitializeAsync();
+        try
+        {
+            using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(2));
+            await trusted.Client.CallToolAsync("provision_infrastructure", new Dictionary<string, object?>
+            {
+                ["stack"] = "aws-ecs", ["size"] = "small", ["action"] = "plan", ["variablesJson"] = "{}",
+                ["confirmed"] = false, ["confirmation"] = "", ["approvalReceiptJson"] = ""
+            }, cancellationToken: timeout.Token);
+            Assert.True(File.Exists(marker), "Explicit process configuration must reach the same inert substrate.");
+            Assert.DoesNotContain(trusted.CapturedBackendRequests, request => request.StartsWith("POST ", StringComparison.Ordinal));
+        }
+        finally { await trusted.DisposeAsync(); }
     }
 }
