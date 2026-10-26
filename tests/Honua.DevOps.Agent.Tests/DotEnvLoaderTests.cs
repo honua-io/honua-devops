@@ -36,13 +36,16 @@ public sealed class DotEnvLoaderTests
 
         Assert.Equal(2, loadedFiles.Count);
         Assert.Equal("claude", Environment.GetEnvironmentVariable("HONUA_DEVOPS_PROVIDER"));
-        Assert.Equal("from-local", Environment.GetEnvironmentVariable("SHARED_VALUE"));
+        // Unknown workspace keys are parsed but never imported into the process.
+        foreach (string key in new[] { "SHARED_VALUE", "QUOTED_VALUE", "EXPORTED_HASH", "INLINE_COMMENT", "EXPORTED_FLAG", "MULTILINE_VALUE" })
+            Assert.Null(Environment.GetEnvironmentVariable(key));
         Assert.Equal("from-process", Environment.GetEnvironmentVariable("PROCESS_PRIORITY"));
-        Assert.Equal("value with spaces", Environment.GetEnvironmentVariable("QUOTED_VALUE"));
-        Assert.Equal("abc#123", Environment.GetEnvironmentVariable("EXPORTED_HASH"));
-        Assert.Equal("value", Environment.GetEnvironmentVariable("INLINE_COMMENT"));
-        Assert.Equal("true", Environment.GetEnvironmentVariable("EXPORTED_FLAG"));
-        Assert.Equal("line-1\nline-2", Environment.GetEnvironmentVariable("MULTILINE_VALUE"));
+        var parsed = DotEnvLoader.ParseFile(Path.Combine(workingDirectory.Path, ".env"))
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        Assert.Equal("value with spaces", parsed["QUOTED_VALUE"]);
+        Assert.Equal("abc#123", parsed["EXPORTED_HASH"]);
+        Assert.Equal("value", parsed["INLINE_COMMENT"]);
+        Assert.Equal("true", parsed["EXPORTED_FLAG"]);
     }
 
     [Fact]

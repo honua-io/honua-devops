@@ -56,7 +56,7 @@ multi-stage container whose final image does not require the .NET SDK.
 Set `HONUA_DEVOPS_PROVIDER` to `codex`, `claude`, `local-llama`, or `bedrock` (defaults to `codex`).
 `bedrock` also accepts the alias `aws-bedrock`.
 Reference defaults live in `.env.example`.
-`honua-devops` auto-loads `.env` and `.env.local` from the working directory, with process environment variables taking precedence and `.env.local` overriding `.env`.
+Cwd `.env` and `.env.local` load only exact model configuration keys; execution authority must come from the trusted launcher process. Process values take precedence and `.env.local` overrides allowed `.env` keys. See [execution configuration migration](docs/execution-configuration-migration.md).
 
 Model-provider disclosure approval is process-only. Before launching a model mode,
 set `HONUA_DEVOPS_AI_DISCLOSURE_POLICY` in the operator-controlled process environment.
@@ -92,7 +92,7 @@ private-network addresses and lookalike hostname suffixes need external approval
 Provider route and approval are fixed when the agent is constructed. Restart the process
 to apply policy changes. Operators remain responsible for classifying all prompts and tool
 results and approving their handling. Invalid policies produce a constant refusal without
-printing policy contents. This new setting does not resolve #216's broader dotenv execution-authority findings.
+printing policy contents. Execution-authority and typed audit source repairs are tracked separately in #216; installed acceptance remains unresolved.
 
 Provider requests do not follow HTTP redirects. OpenAI-compatible endpoints must use
 HTTPS except true loopback development URLs, and must not contain userinfo, query,
@@ -166,7 +166,7 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-iac`)
 - `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `trunk`)
 - `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
-- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-iac`)
+- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (explicit absolute trusted checkout in the launcher process; unset disables local substrate discovery)
 - `HONUA_DEVOPS_DEPLOY_TARGET_ID` (optional Honua deploy-control target; enables real `/api/v1/admin/deploy/*` preflight, plan, and operation calls)
 
 ## Backend Integration

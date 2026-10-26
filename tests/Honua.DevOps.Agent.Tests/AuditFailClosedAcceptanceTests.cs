@@ -145,11 +145,14 @@ public sealed class AuditFailClosedAcceptanceTests
                     action: "sync",
                     target: "prod-api"));
 
-            IOException auditFailure = await Assert.ThrowsAsync<IOException>(() => ToolCallAuditor.EmitAsync(
-                new AuditContext("session", "execute", "execute-lower-env", "direct-allowed", "mcp", failingSink, recoveryStore),
-                new ToolCallRecord("deploy_service_with_gitops", new Dictionary<string, object?>()),
-                response,
-                CancellationToken.None));
+            // Use the production function factory and shared host wrapper: the SDK's
+            // default JSON marshaling must not erase ignored in-process audit facts.
+            var function = (Microsoft.Extensions.AI.AIFunction)CapabilityToolset.CreateTool(
+                (Func<OperationResponse>)(() => response), "deploy_service_with_gitops", "fixture mutation");
+            AuditingAIFunction audited = new(function,
+                new AuditContext("session", "execute", "execute-lower-env", "direct-allowed", "mcp", failingSink, recoveryStore));
+            IOException auditFailure = await Assert.ThrowsAsync<IOException>(async () =>
+                await audited.InvokeAsync(new Microsoft.Extensions.AI.AIFunctionArguments(), CancellationToken.None));
             Assert.Contains(failurePoint, auditFailure.Message, StringComparison.Ordinal);
             Assert.True(failingSink.WriteAccepted);
             Assert.True(recoveryStore.TryRead(execution.IdempotencyKey!, out AuditRecoveryEvidence? evidence));

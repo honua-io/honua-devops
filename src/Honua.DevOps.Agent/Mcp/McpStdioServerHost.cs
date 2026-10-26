@@ -107,49 +107,4 @@ internal static class McpStdioServerHost
         return 0;
     }
 
-    /// <summary>
-    /// Wraps an existing capability-tool <see cref="AIFunction"/> so each MCP tool call emits
-    /// the same JSONL audit record the interactive host emits. Invocation is delegated
-    /// unchanged to the wrapped function.
-    /// </summary>
-    private sealed class AuditingAIFunction(AIFunction innerFunction, AuditContext auditContext)
-        : DelegatingAIFunction(innerFunction)
-    {
-        protected override async ValueTask<object?> InvokeCoreAsync(
-            AIFunctionArguments arguments,
-            CancellationToken cancellationToken)
-        {
-            object? result;
-            try
-            {
-                result = await base.InvokeCoreAsync(arguments, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                await ToolCallAuditor.EmitAsync(
-                    auditContext,
-                    new ToolCallRecord(Name, arguments),
-                    new OperationResponse(
-                        Status: "error",
-                        Summary: Redaction.Scrub(exception.Message),
-                        Findings: [],
-                        Actions: [],
-                        ValidationChecks: [],
-                        Risks: []),
-                    cancellationToken);
-                throw;
-            }
-
-            await ToolCallAuditor.EmitAsync(
-                auditContext,
-                new ToolCallRecord(Name, arguments),
-                result,
-                cancellationToken);
-            return result;
-        }
-    }
 }

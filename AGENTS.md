@@ -71,9 +71,9 @@ proposal executes only after a separate principal approves it via REST
 ## Setup
 
 - Requires the .NET 10 SDK (`10.0.x`).
-- Config is environment-driven. `honua-devops` auto-loads `.env` then `.env.local`
-  from the working directory; process env vars take precedence, `.env.local`
-  overrides `.env`. Reference defaults live in `.env.example`.
+- Config is environment-driven. `honua-devops` auto-loads only exact model keys from cwd `.env` then `.env.local`;
+  process env vars take precedence. Execution/backend/audit/tool settings must come
+  from a trusted launcher process. See docs/execution-configuration-migration.md.
 - Bootstrap a local `.env.local`:
   `./scripts/bootstrap-operator-env.sh --provider codex`
 - Provider selection: `HONUA_DEVOPS_PROVIDER` = `codex` | `claude` | `local-llama`

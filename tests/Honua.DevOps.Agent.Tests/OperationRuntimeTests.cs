@@ -136,10 +136,7 @@ public class OperationRuntimeTests
 
         Assert.Equal("https://github.com/honua-io/honua-iac", runtime.TerraformRepository);
         Assert.Equal("trunk", runtime.TerraformRef);
-        Assert.EndsWith(
-            Path.DirectorySeparatorChar + "honua-iac",
-            runtime.TerraformLocalPath,
-            StringComparison.Ordinal);
+        Assert.Equal(string.Empty, runtime.TerraformLocalPath);
     }
 
     [Fact]

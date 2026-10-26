@@ -250,11 +250,6 @@ try
 
     string detectedEdition = await EditionDetector.DetectAsync(backendGateway, cancellationTokenSource.Token);
 
-    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition, auditSink);
-    ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt,
-        modelApproval, ProviderModelUseCase.Operator, tools).Agent;
-    AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
-
     string sessionId = Guid.NewGuid().ToString("n");
     AuditContext auditContext = new(
         sessionId,
@@ -264,9 +259,17 @@ try
         options.Provider.ToConfigValue(),
         auditSink);
 
+    IList<AITool> tools = CapabilityToolset.Create(runtime, backendGateway, policy, supportGateway, detectedEdition, auditSink);
+    tools = tools.Select(tool => tool is AIFunction function
+        ? (AITool)new AuditingAIFunction(function, auditContext) : tool).ToList();
+    ChatClientAgent agent = AgentProviderFactory.Create(options.Provider, HonuaDevOpsPrompt.SystemPrompt,
+        modelApproval, ProviderModelUseCase.Operator, tools).Agent;
+    AgentSession session = await agent.CreateSessionAsync(cancellationTokenSource.Token);
+
+
     if (!string.IsNullOrWhiteSpace(options.Prompt))
     {
-        await StreamResponseAsync(agent, session, options.Prompt, auditContext, cancellationTokenSource.Token);
+        await StreamResponseAsync(agent, session, options.Prompt, cancellationTokenSource.Token);
         return;
     }
 
@@ -306,7 +309,7 @@ try
             continue;
         }
 
-        await StreamResponseAsync(agent, session, input, auditContext, cancellationTokenSource.Token);
+        await StreamResponseAsync(agent, session, input, cancellationTokenSource.Token);
     }
 }
 catch (OperationCanceledException)
@@ -334,12 +337,10 @@ static async Task StreamResponseAsync(
     AIAgent agent,
     AgentSession session,
     string prompt,
-    AuditContext auditContext,
     CancellationToken cancellationToken)
 {
     HashSet<string> announcedCalls = new(StringComparer.Ordinal);
     HashSet<string> announcedResults = new(StringComparer.Ordinal);
-    Dictionary<string, ToolCallRecord> pendingCalls = new(StringComparer.Ordinal);
 
     await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(prompt, session, cancellationToken: cancellationToken))
     {
@@ -350,7 +351,6 @@ static async Task StreamResponseAsync(
                 if (content is FunctionCallContent call)
                 {
                     string callId = call.CallId ?? Guid.NewGuid().ToString();
-                    pendingCalls[callId] = new ToolCallRecord(call.Name ?? "(unknown)", call.Arguments);
 
                     if (announcedCalls.Add(callId))
                     {
@@ -369,10 +369,7 @@ static async Task StreamResponseAsync(
                         Console.WriteLine($"[tool] → {status}");
                     }
 
-                    if (pendingCalls.Remove(callId, out ToolCallRecord? record))
-                    {
-                        await ToolCallAuditor.EmitAsync(auditContext, record, result.Result, cancellationToken);
-                    }
+
                 }
             }
         }
