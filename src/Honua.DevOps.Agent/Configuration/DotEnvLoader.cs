@@ -1,3 +1,5 @@
+using Honua.DevOps.Agent.Providers;
+
 namespace Honua.DevOps.Agent.Configuration;
 
 internal static class DotEnvLoader
@@ -42,7 +44,10 @@ internal static class DotEnvLoader
 
             foreach ((string key, string value) in ParseFile(path))
             {
-                if (preservedEnvironmentVariables.Contains(key))
+                // This new model authority setting is process-only on every platform.
+                // Existing execution-authority dotenv findings remain tracked separately.
+                if (key.Equals(ProviderDisclosureSnapshot.EnvironmentVariable, StringComparison.OrdinalIgnoreCase)
+                    || preservedEnvironmentVariables.Contains(key))
                 {
                     continue;
                 }

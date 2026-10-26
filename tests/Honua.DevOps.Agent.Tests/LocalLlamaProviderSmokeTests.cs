@@ -38,8 +38,10 @@ public class LocalLlamaProviderSmokeTests
         ChatClientAgent agent = AgentProviderFactory.Create(
             ProviderKind.LocalLlama,
             systemPrompt: "you are a Honua operator stub",
+            approval: ProviderDisclosureTestPolicy.Allow("local-llama", "meta/llama-3.3-70b-instruct", "https://nim.test/v1"),
+            useCase: ProviderModelUseCase.Operator,
             tools: null,
-            clientOptionsOverride: clientOptions);
+            clientOptionsOverride: clientOptions).Agent;
 
         AgentResponse response = await agent.RunAsync("describe the environment", session: null, options: null, cancellationToken: CancellationToken.None);
 

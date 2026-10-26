@@ -58,6 +58,42 @@ Set `HONUA_DEVOPS_PROVIDER` to `codex`, `claude`, `local-llama`, or `bedrock` (d
 Reference defaults live in `.env.example`.
 `honua-devops` auto-loads `.env` and `.env.local` from the working directory, with process environment variables taking precedence and `.env.local` overriding `.env`.
 
+Model-provider disclosure approval is process-only. Before launching a model mode,
+set `HONUA_DEVOPS_AI_DISCLOSURE_POLICY` in the operator-controlled process environment.
+The host captures it before loading working-directory files; `.env` and `.env.local`
+cannot grant this approval (the reserved name is ignored case-insensitively).
+Missing approval denies external model construction before provider credentials are read.
+Help, MCP tool hosting, preflight, tool-only planning/listing commands and fixture evaluations do
+not need this policy or model credentials. The plan execution mode does not exempt a model
+session from disclosure approval.
+
+Each external rule must match the exact provider, adapter kind (`openai` or `bedrock`),
+full effective destination, model, program use case and workload classification.
+`unclassified` is the default classification and still needs explicit external approval.
+Use `devops-operator` for interactive/`--prompt` sessions and a separate
+`devops-blind-eval` rule for credentialed evaluations. No wildcard or host-only approval
+is supported. Without a custom OpenAI-compatible endpoint, the actual destination is
+`https://api.openai.com/v1`, including for `local-llama`; the provider name grants no local exception.
+Bedrock destinations use `aws-bedrock:<configured-region>` and require the exact model
+or inference-profile identifier. A profile may route across regions; approval and region
+configuration do not establish residency.
+
+For an operator-reviewed external configuration, export a policy with the actual model
+and classification before running the CLI; replace the placeholders after review:
+
+```bash
+export HONUA_DEVOPS_AI_DISCLOSURE_POLICY='{"workloadDataClassification":"internal","approvals":[{"provider":"codex","kind":"openai","destination":"https://api.openai.com/v1","model":"YOUR_REVIEWED_MODEL","useCase":"devops-operator","dataClassification":"internal"}]}'
+export HONUA_DEVOPS_CODEX_MODEL=YOUR_REVIEWED_MODEL
+# Supply the API key through your operator credential environment, then launch the CLI.
+```
+
+Only literal localhost and numeric loopback destinations retain the development exception;
+private-network addresses and lookalike hostname suffixes need external approval.
+Provider route and approval are fixed when the agent is constructed. Restart the process
+to apply policy changes. Operators remain responsible for classifying all prompts and tool
+results and approving their handling. Invalid policies produce a constant refusal without
+printing policy contents. This new setting does not resolve #216's broader dotenv execution-authority findings.
+
 Provider requests do not follow HTTP redirects. OpenAI-compatible endpoints must use
 HTTPS except true loopback development URLs, and must not contain userinfo, query,
 or fragment components. This also applies to custom endpoint configuration.
@@ -254,6 +290,9 @@ Customer bootstrap command:
 
 The customer bootstrap command also emits a starter GitHub Actions workflow at `.github/workflows/honua-operator-validation.yml` so desired-state validation is wired into the customer repo immediately.
 It now also emits `.github/workflows/honua-operator-preflight.yml` for manual backend/terraform preflight checks and `bootstrap/configure-honua-operator-ci.sh` to load the expected repo vars/secrets with `gh`.
+
+Credentialed interactive and prompt examples require a matching process-only disclosure
+policy as described above; the tool-hosting and nonmodel commands do not.
 
 ```bash
 dotnet restore

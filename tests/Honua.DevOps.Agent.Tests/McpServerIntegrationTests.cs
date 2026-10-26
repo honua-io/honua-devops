@@ -68,6 +68,12 @@ public sealed class McpServerFixture : IAsyncLifetime
             StandardErrorLines = CapturedOwnedServerErrors.Enqueue,
             EnvironmentVariables = new Dictionary<string, string?>
             {
+                // MCP hosts tools without constructing a model provider or parsing disclosure policy.
+                ["HONUA_DEVOPS_AI_DISCLOSURE_POLICY"] = "malformed synthetic disclosure policy",
+                ["HONUA_DEVOPS_CODEX_API_KEY"] = null,
+                ["HONUA_DEVOPS_CLAUDE_API_KEY"] = null,
+                ["HONUA_DEVOPS_LOCAL_LLAMA_API_KEY"] = null,
+                ["HONUA_DEVOPS_BEDROCK_API_KEY"] = null,
                 ["HONUA_DEVOPS_HONUA_API_BASE_URL"] = baseUrl,
                 ["HONUA_DEVOPS_OTEL_BASE_URL"] = baseUrl,
                 ["HONUA_DEVOPS_HONUA_API_KEY"] = null,
@@ -254,7 +260,7 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
     ];
 
     [Fact]
-    public async Task ListTools_ExposesEveryOperatorToolOneToOne()
+    public async Task ListTools_WithMalformedModelPolicyAndNoProviderCredentials_ExposesEveryOperatorToolOneToOne()
     {
         using CancellationTokenSource cts = new(TimeSpan.FromMinutes(2));
         IList<McpClientTool> tools = await fixture.Client.ListToolsAsync(cancellationToken: cts.Token);

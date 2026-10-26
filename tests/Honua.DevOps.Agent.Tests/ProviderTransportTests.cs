@@ -14,11 +14,15 @@ public class ProviderTransportTests
     [Fact]
     public void DefaultEndpoint_UsesExplicitTransportAndRetryPolicy()
     {
+        using TestEnvironmentVariableScope environment = new();
+        environment.Set("HONUA_DEVOPS_CODEX_MODEL", "fake-model");
+        environment.Set("HONUA_DEVOPS_CODEX_ENDPOINT", null);
+        ProviderRoute route = ProviderConfiguration.LoadRoute(ProviderKind.Codex);
         OpenAIClientOptions options = AgentProviderFactory.CreateClientOptions(
-            new ProviderConfiguration("codex", "fake-model", "fake-key", null));
+            new ProviderConfiguration("codex", route.Model, "fake-key", route.Endpoint));
         Assert.IsType<HttpClientPipelineTransport>(options.Transport);
         Assert.IsType<ClientRetryPolicy>(options.RetryPolicy);
-        Assert.Null(options.Endpoint); // SDK resolves its normal default; transport is still explicit.
+        Assert.Equal(new Uri("https://api.openai.com/v1"), options.Endpoint);
     }
 
     [Fact]
@@ -64,7 +68,7 @@ public class ProviderTransportTests
         environment.Set("HONUA_DEVOPS_CODEX_MODEL", "fake-model");
         environment.Set("HONUA_DEVOPS_CODEX_API_KEY", "fake-key");
         environment.Set("HONUA_DEVOPS_CODEX_ENDPOINT", endpoint.ToString());
-        var agent = AgentProviderFactory.Create(ProviderKind.Codex, "synthetic transport test");
+        var agent = AgentProviderFactory.Create(ProviderKind.Codex, "synthetic transport test", new(null), ProviderModelUseCase.Operator).Agent;
         using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(10));
         Exception? failure = await Record.ExceptionAsync(async () =>
             await agent.RunAsync("synthetic prompt", cancellationToken: deadline.Token));

@@ -11,51 +11,29 @@ internal sealed record ProviderConfiguration(
 {
     internal const string DefaultBedrockRegion = "us-west-2";
 
-    internal static ProviderConfiguration Load(ProviderKind provider)
-    {
-        return provider == ProviderKind.Bedrock
-            ? LoadBedrock()
-            : LoadOpenAICompatible(provider);
-    }
+    internal static ProviderConfiguration Load(ProviderKind provider) => LoadCredentials(LoadRoute(provider));
 
-    private static ProviderConfiguration LoadOpenAICompatible(ProviderKind provider)
+    internal static ProviderRoute LoadRoute(ProviderKind provider)
     {
         string prefix = provider.ToPrefix();
         string model = GetRequiredEnvironmentVariable($"{prefix}_MODEL");
-        string apiKey = GetRequiredEnvironmentVariable($"{prefix}_API_KEY");
-
-        string? endpointValue = Environment.GetEnvironmentVariable($"{prefix}_ENDPOINT");
-        Uri? endpoint = ParseEndpoint(endpointValue, $"{prefix}_ENDPOINT");
-
-        return new ProviderConfiguration(
-            Name: provider.ToConfigValue(),
-            Model: model,
-            ApiKey: apiKey,
-            Endpoint: endpoint);
+        if (provider == ProviderKind.Bedrock)
+        {
+            string? region = Environment.GetEnvironmentVariable($"{prefix}_REGION");
+            return new(provider, model, null, string.IsNullOrWhiteSpace(region) ? DefaultBedrockRegion : region.Trim());
+        }
+        Uri endpoint = ParseEndpoint(Environment.GetEnvironmentVariable($"{prefix}_ENDPOINT"), $"{prefix}_ENDPOINT")
+            ?? new Uri("https://api.openai.com/v1");
+        return new(provider, model, endpoint, null);
     }
 
-    // Bedrock uses the AWS credential chain (IAM) by default, so an explicit API key is
-    // optional. The model id is configurable (e.g. an inference-profile id or a versioned
-    // `anthropic.*` model id) and never carries a hardcoded default model or secret.
-    private static ProviderConfiguration LoadBedrock()
+    internal static ProviderConfiguration LoadCredentials(ProviderRoute route)
     {
-        string prefix = ProviderKind.Bedrock.ToPrefix();
-        string model = GetRequiredEnvironmentVariable($"{prefix}_MODEL");
-
-        string? region = Environment.GetEnvironmentVariable($"{prefix}_REGION");
-        region = string.IsNullOrWhiteSpace(region) ? DefaultBedrockRegion : region.Trim();
-
-        // Optional Bedrock API key (long-lived bearer). When absent, the AWS credential
-        // chain (env vars, shared profile, IAM role, Lambda ambient creds) is used.
-        string? apiKey = Environment.GetEnvironmentVariable($"{prefix}_API_KEY");
-        apiKey = string.IsNullOrWhiteSpace(apiKey) ? string.Empty : apiKey.Trim();
-
-        return new ProviderConfiguration(
-            Name: ProviderKind.Bedrock.ToConfigValue(),
-            Model: model,
-            ApiKey: apiKey,
-            Endpoint: null,
-            Region: region);
+        string variable = $"{route.Provider.ToPrefix()}_API_KEY";
+        string key = route.Provider == ProviderKind.Bedrock
+            ? Environment.GetEnvironmentVariable(variable)?.Trim() ?? string.Empty
+            : GetRequiredEnvironmentVariable(variable);
+        return new(route.Name, route.Model, key, route.Endpoint, route.Region);
     }
 
     private static string GetRequiredEnvironmentVariable(string name)
