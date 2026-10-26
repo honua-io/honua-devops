@@ -99,7 +99,8 @@ public class BedrockStreamLifetimeTests
             if (waitAtEnd && Position >= Length)
             {
                 ReadBlocked.TrySetResult(true);
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+                throw new TimeoutException("Synthetic stream read was not cancelled.");
             }
             return await base.ReadAsync(buffer, cancellationToken);
         }
