@@ -99,7 +99,7 @@ internal sealed partial class HonuaOperationsToolkit
             if (session.Requirements.Length == 0)
                 return Question("What will Honua serve, and what are your scale, availability, compliance and budget requirements? Do not include credentials.");
             if (session.Stack.Length == 0)
-                return Question("Which install target do you want? aws-ecs/small is qualified for this entry; Lambda and EKS first installs remain unqualified.");
+                return Question("Which install target do you want? aws-ecs/small is supported by this entry; Lambda and EKS first installs remain unqualified.");
             using var inputs = JsonDocument.Parse(session.VariablesJson);
             foreach (string required in new[] { "environment", "region", "honua_image" })
                 if (!inputs.RootElement.TryGetProperty(required, out _))
