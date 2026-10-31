@@ -56,7 +56,7 @@ public sealed class InstallHonuaTests
         Assert.Contains(plan.Findings, f => f.Contains("aws_ecs_service.honua", StringComparison.Ordinal));
         Assert.Contains(plan.Findings, f => f.Contains("Cost drivers:", StringComparison.Ordinal));
         Assert.Contains(plan.Findings, f => f.Contains(plan.ApprovalRequest.PlanMetadataDigest, StringComparison.Ordinal));
-        Assert.Contains(plan.Installation.NextStep, "Present account");
+        Assert.Contains("Present account", plan.Installation.NextStep);
         Assert.Contains(requests, p => p.EndsWith("/manifest", StringComparison.Ordinal));
         Assert.Contains(requests, p => p.EndsWith("/metrics/performance", StringComparison.Ordinal));
         Assert.Contains(requests, p => p.EndsWith("/metrics/cache", StringComparison.Ordinal));
