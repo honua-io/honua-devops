@@ -222,7 +222,10 @@ public sealed class InstallHonuaTests
         FakeSubstrateRunner runner = new();
         OperationResponse first = await Toolkit(root, gateway, runner).InstallHonuaAsync(
             customerRequirements: "GIS portal", stack: "aws-ecs", variablesJson: Variables);
-        OperationResponse second = await Toolkit(root, gateway, runner).InstallHonuaAsync(
+        // Each fake runner retains its own last plan metadata when producing an
+        // execution receipt, just as each real saved plan has separate artifacts.
+        FakeSubstrateRunner secondRunner = new();
+        OperationResponse second = await Toolkit(root, gateway, secondRunner).InstallHonuaAsync(
             customerRequirements: "GIS portal", stack: "aws-ecs", variablesJson: Variables);
         Assert.NotEqual(first.ConfirmationChallenge, second.ConfirmationChallenge);
         Assert.NotEqual(first.ProvisioningLineage!.ProvisioningOperationId, second.ProvisioningLineage!.ProvisioningOperationId);
@@ -246,5 +249,6 @@ public sealed class InstallHonuaTests
         Assert.Equal("infrastructure-provisioned", applied.Status);
         Assert.Equal(first.ProvisioningLineage.ProvisioningOperationId, applied.ProvisioningLineage!.ProvisioningOperationId);
         Assert.Equal(1, runner.ApplyCalls);
+        Assert.Equal(0, secondRunner.ApplyCalls);
     }
 }
