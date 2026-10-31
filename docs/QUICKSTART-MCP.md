@@ -13,8 +13,8 @@ MCP-capable host) can call the same 28 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 **2026.1 scope: honua-devops is the provisioning executor.** It provisions
-Honua into your cloud (`provision_infrastructure`), writes and verifies the
-install handoff (`install_handoff`, `verify_install_handoff`), and offers
+Honua into your cloud through `install_honua`, the single entry tool for
+discovery, planning, approved provisioning, and verified install handoff, and offers
 read-only planners and explainers. Day-2 observe/diagnose/propose is **not**
 served here: once the handoff is verified, point your MCP client at the
 installed honua-server's own `/mcp` endpoint and use its `honua_ops_health`,
@@ -44,9 +44,11 @@ the container's final layer is `runtime-deps` (native dependencies only, no SDK
 and no shared framework) running as a non-root user. Nothing below needs
 `dotnet` on `PATH`.
 
-> The first release is published when the first `v*` tag is pushed. Until then,
-> use the source-development path below. Substitute the tag you are installing
-> for `<version>` (for example `v2026.1.0`).
+> Use honua-devops `v2026.1.2` for the AWS operator path. It includes
+> `install_honua`, Redis-off and TLS inputs, and the topology-bound deploy
+> identity. Pair it with an immutable honua-iac `v0.6.1` checkout: this is
+> the first release with exact deploy-identity actions and operator-contract v2.
+> The deploy-identity loader refuses wildcard actions.
 
 ### Binary
 
@@ -54,7 +56,7 @@ Download with the GitHub CLI (the repository and its releases are public;
 `gh auth login` is only needed to avoid anonymous API rate limits):
 
 ```bash
-VERSION=<version>
+VERSION=v2026.1.2
 ASSET=honua-devops-linux-x64.tar.gz   # or osx-arm64 / osx-x64 / win-x64 (.zip)
 
 gh release download "$VERSION" \
@@ -194,6 +196,14 @@ Runtime controls (defaults shown are the safe defaults):
 ## Worked example (Claude Code)
 
 ```text
+> install Honua for a small AWS GIS portal
+
+[honua-devops:install_honua]
+Claude asks the returned next question, then resumes the same installationId.
+The tool runs discovery, requirement analysis and topology recommendation,
+presents the exact ECS plan for review, waits for the separately signed approval,
+and advances through apply, secretless handoff and verification on later calls.
+
 > describe my environment
 
 [honua-devops:describe_environment]
@@ -209,14 +219,6 @@ recommends a topology (WAF/ingress/rate-limit posture), and produces a GitOps
 deployment plan across dev/staging/prod. In the default plan mode nothing is
 applied: the response is a plan with evidence, policy gates, and the approval
 path (pr-first) called out.
-
-> install Honua for a small AWS GIS portal
-
-[honua-devops:install_honua]
-Claude asks the returned next question, then resumes the same installationId.
-The tool runs discovery, requirement analysis and topology recommendation,
-presents the exact ECS plan for review, waits for the separately signed approval,
-and advances through apply, secretless handoff and verification on later calls.
 
 > what's unhealthy right now?
 
@@ -536,7 +538,7 @@ is not the public geospatial-mcp data-access surface — see
 
 ### Operator-contract v2 migration
 
-Provisioning requires the coordinated honua-iac checkout that emits
+Provisioning requires honua-iac `v0.6.1`, the coordinated checkout that emits
 `honua.operator-contract/v2` and ships `operator-contract.v2.schema.json`.
 All three authoritative Terraform contract outputs must declare v2; missing,
 legacy and mixed versions are refused. Custom-code GP extensions must declare
