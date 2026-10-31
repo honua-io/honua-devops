@@ -289,9 +289,6 @@ internal sealed partial class HonuaOperationsToolkit
         {
             OperationResponse? identityRefusal = ReadDeployIdentity(variables, out deployIdentity);
             if (identityRefusal is not null) return identityRefusal;
-            identityRefusal = await CheckDeployCallerAsync(deployIdentity!, provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance,
-                substrate!.IacRoot, cancellationToken);
-            if (identityRefusal is not null) return identityRefusal;
         }
 
         CleanupExpiredSavedPlans();
@@ -352,6 +349,11 @@ internal sealed partial class HonuaOperationsToolkit
             }
 
             IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
+            if (deployIdentity is not null)
+            {
+                OperationResponse? callerRefusal = await CheckDeployCallerAsync(deployIdentity, runner, substrate!.IacRoot, cancellationToken);
+                if (callerRefusal is not null) return callerRefusal;
+            }
             List<OperationBackendStep> steps = [];
 
             // The substrate owns init/backend resolution, the short-lived-identity
