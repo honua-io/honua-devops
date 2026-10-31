@@ -8,7 +8,7 @@ public sealed partial class TerraformProvisioningTests
     [Theory]
     [InlineData("{\"redis_enabled\":false,\"domain_name\":\"gis.example.com\",\"route53_zone_id\":\"Z123ABC\",\"subject_alternative_names\":[\"maps.example.com\"]}")]
     [InlineData("{\"redis_enabled\":false,\"region\":\"us-east-1\",\"domain_name\":\"gis.example.com\",\"alb_certificate_arn\":\"arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555\",\"domain_alias_record_enabled\":false,\"alb_enable_http_redirect\":true}")]
-    [InlineData("{\"redis_enabled\":false,\"console_image\":\"ghcr.io/honua-io/honua-console@sha256:6612319d53ed9d3fab1a62848b6402d4340f57c227296003614ac88fe48de4f3\"}")]
+    [InlineData("{\"redis_enabled\":false,\"domain_name\":\"gis.example.com\",\"route53_zone_id\":\"Z123ABC\",\"console_image\":\"ghcr.io/honua-io/honua-console@sha256:6612319d53ed9d3fab1a62848b6402d4340f57c227296003614ac88fe48de4f3\"}")]
     public async Task EcsTopology_MapsValidatedInputsToTheSavedPlan(string variables)
     {
         using TerraformTestRoot root = new();
