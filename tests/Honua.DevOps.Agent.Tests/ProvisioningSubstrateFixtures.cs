@@ -110,7 +110,8 @@ internal static class ProvisioningSubstrateFixtures
             CandidateReference: "honua-2026.1.1-test",
             ProvisionApprovalSigningMode: signingMode,
             ProvisionApprovalIssuerKeyArns: issuerKeyArns
-                ?? new Dictionary<string, string>(StringComparer.Ordinal) { [ApprovalIssuer] = ApprovalKeyArn });
+                ?? new Dictionary<string, string>(StringComparer.Ordinal) { [ApprovalIssuer] = ApprovalKeyArn })
+        { DeployIdentityContractPath = System.IO.Path.Combine(iacRoot, "deploy-identity-contract.json") };
     }
 
     internal static OperatorPolicyModel DirectAllowedPolicy()
@@ -255,6 +256,13 @@ internal sealed class TerraformTestRoot : IDisposable
         Path = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(),
             $"honua-devops-provision-tests-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(Path);
+        WriteDeployIdentityContract(Path);
+        string fixtureBin = System.IO.Path.Combine(Path, "fixture-bin");
+        Directory.CreateDirectory(fixtureBin);
+        string awsFixture = System.IO.Path.Combine(fixtureBin, "aws");
+        File.WriteAllText(awsFixture, "#!/bin/sh\n[ \"$1\" = sts ] && [ \"$2\" = get-caller-identity ] || exit 91\nprintf '%s\\n' '{\"Arn\":\"arn:aws:sts::123456789012:assumed-role/honua-deploy-dev/session\",\"Account\":\"123456789012\"}'\n");
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(awsFixture, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         AwsRoot = System.IO.Path.Combine(Path, "infrastructure", "terraform", "examples", rootName);
         Directory.CreateDirectory(AwsRoot);
         File.WriteAllText(System.IO.Path.Combine(AwsRoot, "main.tf"), "module \"honua\" {}\n");
@@ -307,6 +315,15 @@ internal sealed class TerraformTestRoot : IDisposable
                 ProvisioningSubstrateFixtures.ExecReceiptSchemaJson);
         }
     }
+
+    internal static void WriteDeployIdentityContract(string directory, bool redis = true, bool customDomain = false)
+        => File.WriteAllText(System.IO.Path.Combine(directory, "deploy-identity-contract.json"), JsonSerializer.Serialize(new
+        {
+            schema_version = "v1", kind = "honua.iac.deploy-identity",
+            role_arn = "arn:aws:iam::123456789012:role/honua-deploy-dev",
+            topology = new { compute = "ecs", redis, custom_domain = customDomain, waf = false, gp_batch = false },
+            actions_by_service = new Dictionary<string, string[]> { ["ecs"] = ["ecs:CreateService", "ecs:DescribeServices"] }
+        }));
 
     internal string Path { get; }
 
@@ -416,6 +433,8 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
 
     internal int ApplyCalls { get; private set; }
 
+    internal string CallerArn { get; set; } = "arn:aws:sts::123456789012:assumed-role/honua-deploy-dev/session";
+
     public bool CanRun(string fileName)
         => !string.Equals(fileName, "terraform", StringComparison.Ordinal) || TerraformAvailable;
 
@@ -431,6 +450,9 @@ internal sealed class FakeSubstrateRunner : IProvisioningProcessRunner
         cancellationToken.ThrowIfCancellationRequested();
         ProcessCall call = new(fileName, [.. arguments], workingDirectory, environment);
         Calls.Add(call);
+
+        if (fileName == "aws" && arguments.Take(2).SequenceEqual(new[] { "sts", "get-caller-identity" }))
+            return Success(JsonSerializer.Serialize(new { Arn = CallerArn, Account = "123456789012" }));
 
         if (fileName == "bash")
         {

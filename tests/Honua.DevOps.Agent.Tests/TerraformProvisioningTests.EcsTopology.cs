@@ -11,6 +11,7 @@ public sealed partial class TerraformProvisioningTests
     public async Task EcsTopology_MapsValidatedInputsToTheSavedPlan(string variables)
     {
         using TerraformTestRoot root = new();
+        TerraformTestRoot.WriteDeployIdentityContract(root.Path, redis: false, customDomain: true);
         FakeSubstrateRunner runner = new();
         using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
         HonuaOperationsToolkit toolkit = new(
@@ -22,7 +23,7 @@ public sealed partial class TerraformProvisioningTests
         using JsonDocument actual = JsonDocument.Parse(File.ReadAllText(plan.Option("--var-file")!));
         using JsonDocument expected = JsonDocument.Parse(variables);
         foreach (JsonProperty input in expected.RootElement.EnumerateObject())
-            Assert.Equal(input.Value.ToString(), actual.RootElement.GetProperty(input.Name).ToString());
+            Assert.True(JsonElement.DeepEquals(input.Value, actual.RootElement.GetProperty(input.Name)), input.Name);
         Assert.False(actual.RootElement.GetProperty("redis_enabled").GetBoolean());
         Assert.Equal(1, actual.RootElement.GetProperty("desired_count").GetInt32());
         Assert.False(actual.RootElement.GetProperty("canary_enabled").GetBoolean());
