@@ -36,6 +36,7 @@ internal sealed partial class HonuaOperationsToolkit
         "environment",
         "name_prefix",
         "honua_image",
+        "console_image",
         "task_cpu_architecture",
         "db_publicly_accessible",
         "enable_postgis",
@@ -1824,6 +1825,7 @@ internal sealed partial class HonuaOperationsToolkit
             "environment" => ValidateEnvironment(value),
             "name_prefix" => ValidateString(name, value, NamePrefixPattern),
             "honua_image" => ValidateImage(value),
+            "console_image" => ValidateConsoleImage(value),
             "task_cpu_architecture" => ValidateChoice(name, value, "X86_64", "ARM64"),
             "deployment_mode" => ValidateChoice(name, value, "SingleInstance"),
             "desired_count" or "max_capacity" => ValidateExactInteger(name, value, 1),
@@ -1851,6 +1853,14 @@ internal sealed partial class HonuaOperationsToolkit
             throw new InvalidOperationException("Variable `environment` must be `dev`, `staging`, or `it` for the small provisioning lane.");
         }
         return environment;
+    }
+
+    private static string ValidateConsoleImage(JsonElement value)
+    {
+        string image = ReadString("console_image", value);
+        if (image.Length > 512 || !Regex.IsMatch(image, @"^[^\s@]+@sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant))
+            throw new InvalidOperationException("Variable `console_image` must be pinned by sha256 digest.");
+        return image;
     }
 
     private static string ValidateImage(JsonElement value)
