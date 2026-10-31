@@ -96,7 +96,7 @@ public sealed partial class TerraformProvisioningTests
         using JsonDocument audit = JsonDocument.Parse(await File.ReadAllTextAsync(auditPath));
         Assert.Equal(apply.AuditEventId, audit.RootElement.GetProperty("auditEventId").GetString());
         Assert.Equal(lineage.ProvisioningOperationId, audit.RootElement.GetProperty("ProvisioningLineage").GetProperty("provisioningOperationId").GetString());
-        Assert.Equal(4, audit.RootElement.GetProperty("ProvisioningLineage").GetProperty("evidenceRefs").GetArrayLength());
+        Assert.Equal(5, audit.RootElement.GetProperty("ProvisioningLineage").GetProperty("evidenceRefs").GetArrayLength());
         File.Delete(auditPath);
         store.Validate(lineage.EvidenceRefs!); // JSONL was only a diagnostic replica.
     }

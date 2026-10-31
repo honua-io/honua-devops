@@ -73,13 +73,13 @@ internal static class CapabilityToolset
                 "inspect_metadata_release",
                 "Detect and diagnose the outcome of an additive metadata-release layer-evolution operation by package id (honua-server safe-rollback lifecycle). Read-only: reads the durable server operation and reports whether the post-publish Smoke health gate ran, whether the deploy was rolled back (prior-revision reactivation + reversible down-script — the metadata + DB-inclusive revert), the rollback class, the failing phase/error, and the smoke evidence. Use after submitting a layer change to confirm the closed loop fired, then propose a human-approved resolve. Never mutates server state."),
             CreateTool(
-                (string customerRequirements, string scaleProfile, string complianceNeeds, string budgetProfile, string preferredCloud)
-                    => toolkit.AnalyzeCustomerRequirementsAsync(customerRequirements, scaleProfile, complianceNeeds, budgetProfile, preferredCloud),
+                (string customerRequirements, string scaleProfile, string complianceNeeds, string budgetProfile, string preferredCloud, bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
+                    => toolkit.AnalyzeCustomerRequirementsAsync(customerRequirements, scaleProfile, complianceNeeds, budgetProfile, preferredCloud, enableRedis: enableRedis, customDomain: customDomain, enableGpBatch: enableGpBatch),
                 "analyze_customer_requirements",
                 "Analyze customer requirements and generate deployment recommendations."),
             CreateTool(
-                (string environment, bool enableWaf, bool useNginxProxy, bool enableEdgeRateLimiting, string trafficProfile, string riskTolerance)
-                    => toolkit.RecommendDeploymentTopologyAsync(environment, enableWaf, useNginxProxy, enableEdgeRateLimiting, trafficProfile, riskTolerance),
+                (string environment, bool enableWaf, bool useNginxProxy, bool enableEdgeRateLimiting, string trafficProfile, string riskTolerance, bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
+                    => toolkit.RecommendDeploymentTopologyAsync(environment, enableWaf, useNginxProxy, enableEdgeRateLimiting, trafficProfile, riskTolerance, enableRedis: enableRedis, customDomain: customDomain, enableGpBatch: enableGpBatch),
                 "recommend_deployment_topology",
                 "Recommend deployment topology options including WAF, ingress, and edge rate limiting."),
             CreateTool(

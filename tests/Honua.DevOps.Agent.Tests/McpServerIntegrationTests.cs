@@ -92,6 +92,9 @@ public sealed class McpServerFixture : IAsyncLifetime
                 ["HONUA_DEVOPS_TERRAFORM_TARGETS"] = TerraformFixtureRoot is null ? "lambda,eks" : "ecs",
                 ["HONUA_DEVOPS_TERRAFORM_LOCAL_PATH"] = UntrustedDotEnv is null ? TerraformFixtureRoot ?? _workingDirectory : null,
                 ["HONUA_DEVOPS_TERRAFORM_BIN"] = TerraformFixtureExecutable,
+                ["HONUA_DEVOPS_DEPLOY_IDENTITY_CONTRACT_PATH"] = TerraformFixtureRoot is null ? null : Path.Combine(TerraformFixtureRoot, "deploy-identity-contract.json"),
+                ["PATH"] = TerraformFixtureRoot is null ? Environment.GetEnvironmentVariable("PATH")
+                    : Path.Combine(TerraformFixtureRoot, "fixture-bin") + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"),
                 ["HONUA_DEVOPS_DEPLOY_TARGET_ID"] = DeployTargetId ?? "",
                 ["HONUA_DEVOPS_SUPPORT_API_BASE_URL"] = ""
             }

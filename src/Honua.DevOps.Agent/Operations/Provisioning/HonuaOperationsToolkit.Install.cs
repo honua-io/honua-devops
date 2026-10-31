@@ -106,11 +106,12 @@ internal sealed partial class HonuaOperationsToolkit
                     return Question($"What {required} should the install use? Supply it in variablesJson (non-secret values only); previous intake values are retained.");
 
             string environment = inputs.RootElement.GetProperty("environment").GetString()!;
+            ProvisioningTopology topology = ProvisioningTopology.Ecs(ParseAwsEcsSmallVariables(session.VariablesJson));
             List<OperationResponse> intake = [await DescribeEnvironmentAsync(cancellationToken)];
             // An empty target is expected before a first install. Discovery failures
             // are shown as evidence; they cannot grant provisioning authority.
-            intake.Add(await AnalyzeCustomerRequirementsAsync(session.Requirements, "small", "customer requirements", "customer requirements", "aws", cancellationToken));
-            intake.Add(await RecommendDeploymentTopologyAsync(environment, false, false, true, session.Requirements, "customer requirements", cancellationToken));
+            intake.Add(await AnalyzeCustomerRequirementsAsync(session.Requirements, "small", "customer requirements", "customer requirements", "aws", cancellationToken, enableRedis: topology.Redis, customDomain: topology.CustomDomain));
+            intake.Add(await RecommendDeploymentTopologyAsync(environment, false, false, true, session.Requirements, "customer requirements", cancellationToken, enableRedis: topology.Redis, customDomain: topology.CustomDomain));
             OperationResponse plan = await ProvisionInfrastructureAsync(session.Stack, "small", "plan", session.VariablesJson,
                 false, "", cancellationToken: cancellationToken, idempotencyKey: key);
             if (plan.Status != "terraform-plan-ready")
@@ -133,7 +134,7 @@ internal sealed partial class HonuaOperationsToolkit
                 $"Install region: {JsonDocumentRegion(session.VariablesJson)}.",
                 "Cost drivers: ECS Fargate task CPU/memory and replica count, RDS instance/storage/backups, ALB, NAT/network egress, optional Redis and logs. No price quote is implied; review the exact resource changes above.",
                 "Use short-lived SSO/OIDC/assumed-role credentials only. This workflow never creates IAM users or long-lived access keys."]
-        }, "approval", "Present account/execution identity, region, resources, cost drivers and planMetadataDigest to the user. Obtain the separate approver's signed receipt for this exact plan, then call install_honua with installationId, confirmed=true, the plan's confirmation challenge and approvalReceiptJson.");
+        }, "approval", "Present account/execution identity, topology, exact deploy identity action list, region, resources, cost drivers and planMetadataDigest to the user. Obtain the separate approver's signed receipt for this exact plan, then call install_honua with installationId, confirmed=true, the plan's confirmation challenge and approvalReceiptJson.");
 
         if (session.Stage == "approval")
         {

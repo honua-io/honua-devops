@@ -30,6 +30,7 @@ internal sealed record OperationRuntime(
 {
     /// <summary>Host-selected target runtime. ECS remains the legacy configuration default.</summary>
     internal string RuntimeKind { get; init; } = "aws-ecs";
+    internal string? DeployIdentityContractPath { get; init; }
     internal string? RuntimeBackend { get; init; }
     internal string? ServerTargetId { get; init; }
 
@@ -199,6 +200,7 @@ internal sealed record OperationRuntime(
             approvalIssuerKeyArns,
             protectedRecoveryEnabled)
         {
+            DeployIdentityContractPath = Environment.GetEnvironmentVariable(DeployIdentityContract.PathVariable)?.Trim(),
             RuntimeKind = runtimeProfile.RuntimeKind,
             RuntimeBackend = string.IsNullOrEmpty(runtimeBackend) ? null : runtimeBackend,
             ServerTargetId = serverTargetId

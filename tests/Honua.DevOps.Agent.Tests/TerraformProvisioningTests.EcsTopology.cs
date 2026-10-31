@@ -11,6 +11,7 @@ public sealed partial class TerraformProvisioningTests
     public async Task EcsTopology_MapsValidatedInputsToTheSavedPlan(string variables)
     {
         using TerraformTestRoot root = new();
+        TerraformTestRoot.WriteDeployIdentityContract(root.Path, redis: false, customDomain: true);
         FakeSubstrateRunner runner = new();
         using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
         HonuaOperationsToolkit toolkit = new(

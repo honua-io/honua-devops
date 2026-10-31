@@ -1190,7 +1190,8 @@ internal sealed partial class HonuaOperationsToolkit(
         string complianceNeeds,
         string budgetProfile,
         string preferredCloud,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
     {
         BackendCallResult backendResult = await gateway.RequestRequirementsAnalysisAsync(
             customerRequirements,
@@ -1225,7 +1226,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 "Missing non-functional requirements can produce under- or over-sized topology.",
                 "Cost-only optimization can undercut resiliency for critical workloads."
             ])
-            .Build();
+            .Build() with { Topology = new(ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).TerraformTarget,
+                enableRedis, customDomain, false, enableGpBatch) };
     }
 
     [Description("Recommend deployment topology via Honua API, including WAF, ingress, and edge rate limiting choices.")]
@@ -1236,7 +1238,8 @@ internal sealed partial class HonuaOperationsToolkit(
         bool enableEdgeRateLimiting,
         string trafficProfile,
         string riskTolerance,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
     {
         BackendCallResult backendResult = await gateway.RequestTopologyRecommendationAsync(
             environment,
@@ -1269,7 +1272,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 "No-WAF posture increases exposure to application-layer attacks.",
                 "Skipping validated template modules can introduce config drift."
             ])
-            .Build();
+            .Build() with { Topology = new(ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).TerraformTarget,
+                enableRedis, customDomain, enableWaf, enableGpBatch) };
     }
 
     [Description(

@@ -565,3 +565,41 @@ These inputs are validated before any process starts and included in the saved
 plan's variable binding. Changing the domain, certificate, or Redis selection
 requires a fresh plan and approval. The preset still requires one instance,
 private database access, no canary, and all existing approval and identity gates.
+
+### Topology-bound AWS deploy identity (rc.2)
+
+An administrator bootstraps `honua-iac/bootstrap/aws-exec-identity` with the
+requested `topology={compute,redis,custom_domain,waf,gp_batch}` and exports its
+`deploy_identity_contract` output value (for example, `terraform output -json
+deploy_identity_contract > /secure/deploy-identity-contract.json`). The launcher
+sets `HONUA_DEVOPS_DEPLOY_IDENTITY_CONTRACT_PATH` to that absolute path and
+supplies a short-lived assumed-role session for its `role_arn`. The operator
+never creates identities or keys, and refuses root, IAM users and other roles.
+Do not supply the contract or credentials as model tool arguments.
+
+Intake and recommendation return the typed `topology` tuple. Their optional
+`enableRedis`, `customDomain` and `enableGpBatch` inputs describe advisory intent;
+`enableWaf` remains the recommendation's WAF input. Provisioning derives the
+actual ECS tuple from validated variables, with WAF and GP Batch disabled in this
+preset, and requires an exact match with the administrator's contract. The
+launcher must also configure the root's workload permissions boundary from the
+bootstrap's `workload_permissions_boundary_arn`, using trusted out-of-band
+Terraform inputs. It does not give the operator permission to bootstrap IAM.
+
+The plan returns `topology` and `deployIdentity` (exact `role_arn`,
+`contract_sha256`, `actions_by_service`) alongside `approvalRequest` and its plan
+metadata digest. Show the complete action list to the administrator. The contract
+hash is sealed into generated Terraform input tags under
+`honua:deploy-identity-contract-sha256`, so the existing metadata digest and
+signed approval bind it along with the saved plan. No action-list summary is
+substituted for the administrator's exported contract.
+
+Before plan and apply/destroy, read-only STS identity must match the contract's
+role, partition and account. Plan metadata must name that role too. Apply refuses
+if the contract bytes change, the reviewed contract is missing, or the caller is
+broader; the exact-plan substrate then independently rechecks credentials,
+backend, state, inputs and the approved digest before consuming the saved plan.
+Refusals are typed: `deploy-identity-contract-required`,
+`deploy-identity-topology-mismatch`, `deploy-identity-contract-mismatch`, or
+`deploy-identity-role-required`. These checks and offline tests do not establish
+live role sufficiency or qualify a deployment.
