@@ -40,6 +40,12 @@ internal sealed partial class HonuaOperationsToolkit
         "db_publicly_accessible",
         "enable_postgis",
         "redis_enabled",
+        "domain_name",
+        "route53_zone_id",
+        "alb_certificate_arn",
+        "domain_alias_record_enabled",
+        "alb_enable_http_redirect",
+        "subject_alternative_names",
         "desired_count",
         "max_capacity",
         "deployment_mode",
@@ -1733,7 +1739,40 @@ internal sealed partial class HonuaOperationsToolkit
             }
         }
 
+        string domain = variables.GetValueOrDefault("domain_name") as string ?? "";
+        string zone = variables.GetValueOrDefault("route53_zone_id") as string ?? "";
+        string certificate = variables.GetValueOrDefault("alb_certificate_arn") as string ?? "";
+        if (domain.Length > 0 && zone.Length == 0 && certificate.Length == 0)
+            throw new InvalidOperationException("domain_name requires route53_zone_id for managed TLS or alb_certificate_arn for externally managed TLS and DNS.");
+        if (zone.Length > 0 && domain.Length == 0)
+            throw new InvalidOperationException("route53_zone_id requires domain_name.");
+        if (variables.TryGetValue("subject_alternative_names", out object? names) &&
+            ((string[])names!).Length > 0 && (domain.Length == 0 || zone.Length == 0))
+            throw new InvalidOperationException("subject_alternative_names requires domain_name and route53_zone_id for managed TLS.");
+        if (certificate.Length > 0 && variables.TryGetValue("region", out object? region) &&
+            certificate.Split(':')[3] != (string)region!)
+            throw new InvalidOperationException("alb_certificate_arn must be in the selected region.");
         return variables;
+    }
+
+    private static string ValidateDomain(string name, JsonElement value, bool wildcard = false)
+    {
+        string domain = ReadString(name, value);
+        string hostname = wildcard && domain.StartsWith("*.", StringComparison.Ordinal) ? domain[2..] : domain;
+        if (domain.Length > 253 || Uri.CheckHostName(hostname) != UriHostNameType.Dns ||
+            !hostname.Contains('.') || hostname.EndsWith('.') ||
+            hostname.Split('.').Any(label => label.Length is < 1 or > 63 ||
+                label.StartsWith('-') || label.EndsWith('-') ||
+                label.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-')))
+            throw new InvalidOperationException($"Variable `{name}` must be a DNS hostname without a scheme, port, path or wildcard.");
+        return domain.ToLowerInvariant();
+    }
+
+    private static string[] ValidateCertificateNames(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > 10)
+            throw new InvalidOperationException("subject_alternative_names must be an array of at most ten DNS names.");
+        return value.EnumerateArray().Select(name => ValidateDomain("subject_alternative_names", name, wildcard: true)).ToArray();
     }
 
     private static object ValidateVariable(string name, JsonElement value)
@@ -1747,7 +1786,12 @@ internal sealed partial class HonuaOperationsToolkit
             "task_cpu_architecture" => ValidateChoice(name, value, "X86_64", "ARM64"),
             "deployment_mode" => ValidateChoice(name, value, "SingleInstance"),
             "desired_count" or "max_capacity" => ValidateExactInteger(name, value, 1),
-            "redis_enabled" => ValidateExactBoolean(name, value, true),
+            "redis_enabled" or "domain_alias_record_enabled" or "alb_enable_http_redirect" => ValidateBoolean(name, value),
+            "domain_name" => ValidateDomain(name, value),
+            "route53_zone_id" => ValidateString(name, value, new Regex("^Z[A-Z0-9]{1,31}$", RegexOptions.CultureInvariant)),
+            "alb_certificate_arn" => ValidateString(name, value,
+                new Regex("^arn:aws(-us-gov|-cn)?:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.CultureInvariant)),
+            "subject_alternative_names" => ValidateCertificateNames(value),
             "db_publicly_accessible" or "canary_enabled" => ValidateExactBoolean(name, value, false),
             "enable_postgis" or "alb_deletion_protection" or "alb_access_logs_enabled" or "alb_access_logs_force_destroy" => ValidateBoolean(name, value),
             "tags" => ValidateTags(value),
