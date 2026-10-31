@@ -58,6 +58,10 @@ internal sealed record OperationResponse(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ProvisionApprovalRequest? ApprovalRequest { get; init; }
 
+    [JsonPropertyName("confirmationChallenge")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ConfirmationChallenge { get; init; }
+
     [JsonPropertyName("installation")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public InstallationProgress? Installation { get; init; }

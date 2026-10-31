@@ -138,6 +138,11 @@ internal sealed partial class HonuaOperationsToolkit
         if (session.Stage == "approval")
         {
             if (!confirmed && string.IsNullOrWhiteSpace(approvalReceiptJson)) return Review(session.Plan!);
+            // Correlate the continuation to THIS installation. The handler still
+            // owns all plan/receipt validation; a different valid plan is not ours.
+            if (session.Plan!.ConfirmationChallenge is null || confirmation != session.Plan.ConfirmationChallenge)
+                return Progress(ProvisioningRefusal("installation-plan-mismatch", "Confirmation must identify the exact plan retained and reviewed for this installation.", [], []),
+                    "approval", "Use this installation's retained confirmationChallenge and separately signed approval receipt. Do not substitute another installation's plan.");
             OperationResponse apply = await ProvisionInfrastructureAsync(session.Stack, "small", "apply", session.VariablesJson,
                 confirmed, confirmation, approvalReceiptJson, cancellationToken);
             if (apply.Status == "infrastructure-provisioned")

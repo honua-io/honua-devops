@@ -213,4 +213,38 @@ public sealed class InstallHonuaTests
         OperationResponse resumed = await Toolkit(root, gateway, runner).InstallHonuaAsync(plan.Installation.InstallationId);
         Assert.Equal(plan.Risks, resumed.Risks);
     }
+
+    [Fact]
+    public async Task AnotherInstallationsValidPlanAndReceiptCannotReplaceTheReviewedPlan()
+    {
+        using TerraformTestRoot root = new();
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        FakeSubstrateRunner runner = new();
+        OperationResponse first = await Toolkit(root, gateway, runner).InstallHonuaAsync(
+            customerRequirements: "GIS portal", stack: "aws-ecs", variablesJson: Variables);
+        OperationResponse second = await Toolkit(root, gateway, runner).InstallHonuaAsync(
+            customerRequirements: "GIS portal", stack: "aws-ecs", variablesJson: Variables);
+        Assert.NotEqual(first.ConfirmationChallenge, second.ConfirmationChallenge);
+        Assert.NotEqual(first.ProvisioningLineage!.ProvisioningOperationId, second.ProvisioningLineage!.ProvisioningOperationId);
+        Assert.Equal(ProvisioningSubstrateFixtures.ExtractChallenge(first, "confirmation="), first.ConfirmationChallenge);
+        string secondApproval = ProvisioningSubstrateFixtures.CreateApprovalReceipt(second, "apply");
+        OperationResponse substituted = await Toolkit(root, gateway, runner, true).InstallHonuaAsync(first.Installation!.InstallationId,
+            confirmed: true, confirmation: second.ConfirmationChallenge!, approvalReceiptJson: secondApproval);
+        Assert.Equal("installation-plan-mismatch", substituted.Status);
+        Assert.Equal("approval", substituted.Installation!.Stage);
+        Assert.Equal(0, runner.ApplyCalls);
+
+        // The original challenge plus another plan's signed receipt is refused by
+        // the existing approval gate, without duplicating receipt policy here.
+        OperationResponse wrongReceipt = await Toolkit(root, gateway, runner, true).InstallHonuaAsync(first.Installation.InstallationId,
+            confirmed: true, confirmation: first.ConfirmationChallenge!, approvalReceiptJson: secondApproval);
+        Assert.Equal("confirmation-required", wrongReceipt.Status);
+        Assert.Equal(0, runner.ApplyCalls);
+        OperationResponse applied = await Toolkit(root, gateway, runner, true).InstallHonuaAsync(first.Installation.InstallationId,
+            confirmed: true, confirmation: first.ConfirmationChallenge!,
+            approvalReceiptJson: ProvisioningSubstrateFixtures.CreateApprovalReceipt(first, "apply"));
+        Assert.Equal("infrastructure-provisioned", applied.Status);
+        Assert.Equal(first.ProvisioningLineage.ProvisioningOperationId, applied.ProvisioningLineage!.ProvisioningOperationId);
+        Assert.Equal(1, runner.ApplyCalls);
+    }
 }

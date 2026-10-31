@@ -286,8 +286,10 @@ confirmation or a receipt was supplied prematurely.
 
 Save this plan response and use the approval issuer described below; it accepts
 this response's unchanged `approvalRequest`. A separate approver signs the exact
-digest. Resume with `installationId`, `confirmed=true`, `confirmation` from the
-plan, and `approvalReceiptJson`. The existing provisioning handler validates the
+digest. Resume with `installationId`, `confirmed=true`, `confirmation` set to
+the retained plan response's `confirmationChallenge`, and `approvalReceiptJson`.
+A different installation's challenge is refused before apply, even when its
+variables match; receipt and digest validation remains in the existing handler. The existing provisioning handler validates the
 receipt and all execution gates; the coordinator cannot approve, sign or bypass
 them. It never creates IAM users or long-lived keys; use short-lived SSO/OIDC or
 assumed-role credentials supplied only to the operator process.
