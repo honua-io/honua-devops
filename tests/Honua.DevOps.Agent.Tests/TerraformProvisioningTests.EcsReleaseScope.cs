@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Honua.DevOps.Agent.Operations;
 
 namespace Honua.DevOps.Agent.Tests;
@@ -47,6 +48,13 @@ public sealed partial class TerraformProvisioningTests
         Assert.Equal(calls, runner.Calls.Count);
         Assert.Equal(JsonSerializer.Serialize(applied.ProvisioningLineage), JsonSerializer.Serialize(replay.ProvisioningLineage));
 
+        // The captured producer receipt describes apply. Supply an explicit
+        // destroy receipt; the product must never reinterpret an apply receipt.
+        JsonNode destroyReceipt = JsonNode.Parse(ProvisioningSubstrateFixtures.ExecReceiptJson)!;
+        destroyReceipt["action"] = "destroy";
+        destroyReceipt["output_contract"]!["digest"] = null;
+        runner.ExecReceiptJson = destroyReceipt.ToJsonString();
+        runner.PlanSummary = "Plan: 0 to add, 0 to change, 7 to destroy.";
         OperationResponse destroyPlan = await Create(ExecutionTier.BreakGlass).ProvisionInfrastructureAsync(
             "aws-ecs", "small", "destroy", variables, false, "");
         Assert.Equal("terraform-destroy-plan-ready", destroyPlan.Status);
