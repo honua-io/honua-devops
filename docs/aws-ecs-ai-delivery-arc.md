@@ -77,7 +77,7 @@ the same ECS lifetime, in this exact order:
    the checkpoint and real-model joins, requires the SDK alias to be
    byte-identical, and passes that alias to the deterministic SDK resume.
 
-The model must cover Admin setup/configuration/publication, Esri GP, native
+The model must cover Admin setup/configuration/publication, GeoServices REST geoprocessing, native
 analysis, and map/app/dashboard composition and publication. It operates on and
 verifies the IDs created by the deterministic pass; idempotent
 create/configure calls must reconcile to those same IDs, not create a second

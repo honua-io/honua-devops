@@ -10,7 +10,7 @@ BURN_RATE_5M_MAX="${SLO_BURN_RATE_5M_MAX:-14.4}"
 BURN_RATE_30M_MAX="${SLO_BURN_RATE_30M_MAX:-6.0}"
 BURN_RATE_6H_MAX="${SLO_BURN_RATE_6H_MAX:-3.0}"
 ENABLE_BURN_RATE_CHECKS="${SLO_ENABLE_BURN_RATE_CHECKS:-auto}"
-# GeoServices/ArcGIS REST 200+{error} budget (audit S1, #113). These errors are
+# GeoServices REST 200+{error} budget (audit S1, #113). These errors are
 # returned with an HTTP 2xx status and are invisible to the 5xx-derived error
 # rate / burn rate, so the gate would otherwise green-light a release that is
 # actively failing in-band.

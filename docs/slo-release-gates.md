@@ -12,8 +12,8 @@ Required metrics:
 - GeoServices in-band error rate (200+`{error}` envelopes) when available
 
 > The availability/error-rate/burn-rate signals are all derived from HTTP `5xx`.
-> A GeoServices/ArcGIS REST error is returned with an HTTP `200` and an `{error}`
-> body for Esri compatibility, so it is invisible to those signals. The gate
+> A GeoServices REST error is returned with an HTTP `200` and an `{error}`
+> body for compatible GeoServices REST clients, so it is invisible to those signals. The gate
 > would otherwise green-light a release that is actively failing in-band. The
 > GeoServices in-band error-rate check closes that gap (server metric
 > `honua_geoservices_error_total` / `honua_request_error_total{in_band="true"}`).

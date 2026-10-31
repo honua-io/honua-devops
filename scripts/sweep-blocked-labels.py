@@ -66,7 +66,6 @@ KNOWN_REPOS = [
     "honua-console",
     "honua-demo-infra",
     "honua-devops",
-    "honua-esri-compat",
     "honua-evidence",
     "honua-gis-llm",
     "honua-helm",

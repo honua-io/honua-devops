@@ -31,8 +31,8 @@
 #
 # NUMERATORS. The old `{status_code=~"5.."}` filter is gone: a transport-5xx-only numerator is
 # exactly the blindness honua-devops#113 was opened to fix, because GeoServices returns its errors
-# under HTTP 200 for Esri-client compatibility. But "every error envelope" is not the right
-# replacement for a *budgeted* signal either — that counts ordinary 4xx, and an Esri client probing
+# under HTTP 200 for GeoServices REST compatibility. But "every error envelope" is not the right
+# replacement for a *budgeted* signal either — that counts ordinary 4xx, and a client probing
 # capabilities and collecting 404s would permanently breach a 99.0% availability target through no
 # fault of the platform. The budgeted numerator is therefore transport 5xx PLUS every in-band
 # (HTTP < 400 body-envelope) error:

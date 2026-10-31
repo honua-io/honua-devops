@@ -1,13 +1,6 @@
 {
   "clients": [
     {
-      "name": "ArcGIS Pro",
-      "protocols": [
-        "FeatureServer",
-        "MapServer"
-      ]
-    },
-    {
       "name": "QGIS",
       "protocols": [
         "OGC WFS",
