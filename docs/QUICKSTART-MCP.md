@@ -549,3 +549,19 @@ the current producer, then create and verify a fresh handoff. The consumer never
 relabels old evidence or silently falls back to the v1 schema. This version
 change does not authorize an infrastructure apply; normal approval controls
 remain in force.
+
+### ECS-small domain and Redis inputs
+
+The `aws-ecs` / `small` preset accepts `redis_enabled=false`; the default stays
+true. It forwards `domain_name`, `route53_zone_id`, `alb_certificate_arn`,
+`domain_alias_record_enabled`, `alb_enable_http_redirect`, and
+`subject_alternative_names` to the honua-iac `examples/aws` root and `aws-ecs`
+module using those exact variable names. For managed TLS and DNS, supply a DNS
+hostname plus its Route53 hosted zone ID. For externally managed TLS and DNS,
+supply the hostname plus an existing ACM certificate ARN in the ALB region.
+Certificate private keys and other secrets must stay outside tool arguments.
+
+These inputs are validated before any process starts and included in the saved
+plan's variable binding. Changing the domain, certificate, or Redis selection
+requires a fresh plan and approval. The preset still requires one instance,
+private database access, no canary, and all existing approval and identity gates.
