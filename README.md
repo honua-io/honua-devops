@@ -19,14 +19,19 @@ Mission: raise the technical and delivery bar high enough to disrupt the GIS pro
 
 ## License and Availability
 
-`honua-devops` is private operator tooling and is **not** part of Honua's
-open-core runtime promise.
+`honua-devops` is source-available under the [Fair Core License, Version 1.0,
+ALv2 Future License](LICENSE) (FCL-1.0-ALv2), the same license as Honua Server
+and Collect. Each version converts to Apache-2.0 two years after its release.
 
+- You may use, modify and run it to deploy and operate your own Honua estate,
+  including from the published release binaries and container image.
+- Competing use is outside the grant: offering it, or a derivative, as a
+  service or product that competes with Honua's own operator and
+  implementation-partner offerings needs a separate agreement.
 - Public/open surfaces remain in `honua-server`, the official SDK repos, the
-  mobile repos, and the base MCP data-access surface.
-- This repository covers operator-grade AI DevOps/copilot workflows such as
-  rollout planning, delegated operations, and implementation-partner delivery.
-- Licensing for this repository is proprietary. See [LICENSE](LICENSE).
+  mobile repos, and the base MCP data-access surface; this repository covers
+  operator-grade AI DevOps workflows such as provisioning, install handoff,
+  rollout planning and delegated operations.
 
 ## Stack
 

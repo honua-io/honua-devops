@@ -1,6 +1,6 @@
 # Honua DevOps Feature Map
 
-`honua-devops` is private operator tooling for AI-assisted platform operations and customer deployment workflows.
+`honua-devops` is source-available (FCL-1.0-ALv2) operator tooling for AI-assisted platform operations and customer deployment workflows.
 
 ## Current Capabilities
 
@@ -36,4 +36,4 @@ in a doc but not in that file, the doc is wrong.
 
 ## Boundary
 
-This repository is proprietary operator tooling. Public runtime, SDK, deployment module, and MCP surfaces stay in the public Honua repositories.
+This repository is licensed under FCL-1.0-ALv2 (see `LICENSE`); customers may run it to operate their own Honua estates, and competing use needs a separate agreement. Public runtime, SDK, deployment module, and MCP surfaces stay in the public Honua repositories.
