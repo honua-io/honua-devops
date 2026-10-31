@@ -29,7 +29,8 @@ cp "$REPO_ROOT/compatibility/scoreboard/compatibility-matrix.json" "$POLICY_FIXT
 cp "$REPO_ROOT/compatibility/scoreboard/compatibility-matrix.md" "$POLICY_FIXTURE/compatibility/scoreboard/"
 cp "$REPO_ROOT/compatibility/scoreboard/index.html" "$POLICY_FIXTURE/compatibility/scoreboard/"
 cp "$REPO_ROOT/docs/client-compatibility-scoreboard.md" "$POLICY_FIXTURE/docs/"
-printf '%s\n' 'ArcGIS'' Pro UI test instructions must not be public.' >>"$POLICY_FIXTURE/docs/client-compatibility-scoreboard.md"
+policy_term="Arc""GIS Pro"
+printf '%s UI test instructions must not be public.\n' "$policy_term" >>"$POLICY_FIXTURE/docs/client-compatibility-scoreboard.md"
 if python3 "$REPO_ROOT/scripts/check-public-compatibility-content.py" --root "$POLICY_FIXTURE" >/dev/null 2>&1; then
   echo "[ERROR] Public-content policy accepted unreviewed desktop-client detail." >&2
   exit 1

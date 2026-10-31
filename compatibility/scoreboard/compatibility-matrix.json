@@ -13,22 +13,6 @@
           "source_pack": "compatibility/releases/2026.03.1/demo-service",
           "clients": [
             {
-              "name": "ArcGIS Pro",
-              "version": "3.3",
-              "status": "pass",
-              "notes": "Desktop connection smoke passed.",
-              "protocols": [
-                {
-                  "name": "FeatureServer",
-                  "status": "pass"
-                },
-                {
-                  "name": "MapServer",
-                  "status": "pass"
-                }
-              ]
-            },
-            {
               "name": "QGIS",
               "version": "3.36",
               "status": "pass",
@@ -152,25 +136,11 @@
         }
       ],
       "summary": {
-        "pass": 8,
+        "pass": 7,
         "pending": 0,
         "fail": 0
       },
       "matrix": [
-        {
-          "client": "ArcGIS Pro",
-          "status": "pass",
-          "protocols": [
-            {
-              "name": "FeatureServer",
-              "status": "pass"
-            },
-            {
-              "name": "MapServer",
-              "status": "pass"
-            }
-          ]
-        },
         {
           "client": "QGIS",
           "status": "pass",
@@ -305,22 +275,6 @@
           "source_pack": "compatibility/releases/2026.03.0/demo-service",
           "clients": [
             {
-              "name": "ArcGIS Pro",
-              "version": "3.3",
-              "status": "pass",
-              "notes": "Desktop connection smoke passed.",
-              "protocols": [
-                {
-                  "name": "FeatureServer",
-                  "status": "pass"
-                },
-                {
-                  "name": "MapServer",
-                  "status": "pass"
-                }
-              ]
-            },
-            {
               "name": "QGIS",
               "version": "3.36",
               "status": "pass",
@@ -444,25 +398,11 @@
         }
       ],
       "summary": {
-        "pass": 6,
+        "pass": 5,
         "pending": 2,
         "fail": 0
       },
       "matrix": [
-        {
-          "client": "ArcGIS Pro",
-          "status": "pass",
-          "protocols": [
-            {
-              "name": "FeatureServer",
-              "status": "pass"
-            },
-            {
-              "name": "MapServer",
-              "status": "pass"
-            }
-          ]
-        },
         {
           "client": "QGIS",
           "status": "pending",

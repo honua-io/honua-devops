@@ -9,7 +9,7 @@ The scoreboard consumes the existing `Honua.Server` client-pack shape:
 - `evidence/session.json`
 - generated GIS and BI starter artifacts from `scripts/prepare-client-compatibility-pack.sh`
 
-To cover the full eight-client matrix, each pack can also carry `compatibility-results.json` with protocol-level verdicts for the automated clients and web-library targets.
+To cover the seven-client matrix, each pack can also carry `compatibility-results.json` with protocol-level verdicts for the automated clients and web-library targets.
 
 ## Generator
 
@@ -34,7 +34,6 @@ Generated outputs:
 
 The catalog covers:
 
-- ArcGIS Pro
 - QGIS
 - Power BI
 - Excel

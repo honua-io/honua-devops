@@ -68,7 +68,7 @@ BASE_URL="${HONUA_PROBE_BASE_URL:-}"
 READINESS_PATH="${HONUA_PROBE_READINESS_PATH:-/healthz/ready}"
 LIVENESS_PATH="${HONUA_PROBE_LIVENESS_PATH:-/healthz/live}"
 VERSION_PATH="${HONUA_PROBE_VERSION_PATH:-/api/v1/admin/version}"
-# Optional GeoServices/ArcGIS REST endpoint to probe for in-band 200+{error}
+# Optional GeoServices REST endpoint to probe for in-band 200+{error}
 # envelopes (audit S1, #113). A 200 carrying an {error} member is a failure that
 # a status-only health check cannot see.
 GEOSERVICES_PROBE_PATH="${HONUA_PROBE_GEOSERVICES_PATH:-}"
@@ -147,7 +147,7 @@ emit() {
 surface_of() {
   local r="${1#honua-io/}"
   case "$r" in
-    honua-server|Honua.Server|honua-esri-compat) echo server ;;
+    honua-server|Honua.Server) echo server ;;
     honua-sdk-*|honua-mobile)                     echo sdk ;;
     honua-console|honua-server-admin)             echo admin ;;
     honua-helm)                                   echo helm ;;
@@ -297,7 +297,7 @@ http_get() {
     --max-time "$HTTP_TIMEOUT" "$url" 2>/dev/null || echo "000"
 }
 
-# True (0) when a response body carries a GeoServices/ArcGIS REST {error}
+# True (0) when a response body carries a GeoServices REST {error}
 # envelope. Such bodies are returned with an HTTP 200, so a status-only check
 # treats a failing operation as healthy (audit S1, #113).
 body_has_error_envelope() {
