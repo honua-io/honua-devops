@@ -37,6 +37,7 @@ open-core runtime promise.
 
 ## Built-In Capabilities
 
+- Guided install (`install_honua`): stateful intake, reviewed exact plan, separate signed approval, provisioning and verified handoff. Start with a customer request; resume using the returned installation ID and next question/step.
 - Provisioning executor (`provision_infrastructure`): plan, then apply a reviewed Terraform plan for a supported stack, with explicit confirmation and an approval receipt
 - Install handoff (`install_handoff`, `verify_install_handoff`): points an MCP client at the installed honua-server `/mcp` endpoint, where day-2 operations live
 - Day-2 observe/diagnose/propose is **not** part of the 2026.1 honua-devops surface: it is served by honua-server's own `/mcp` endpoint (`honua_ops_health`, `honua_ops_findings`, `honua_alert_events`, `honua_operate_events`, `honua_propose_*`), and a proposal executes only after a separate principal approves it via REST `POST /api/v1/admin/proposals/{id}/approve`.
@@ -45,7 +46,7 @@ open-core runtime promise.
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 - Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`) projecting stable, evidence-linked proposal/operation/brief and read-only release-explanation contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
-- MCP stdio server mode (`--mcp`) exposing the full 27-tool operator surface (28 with the experimental rollback flag) 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
+- MCP stdio server mode (`--mcp`) exposing the full 28-tool operator surface (29 with the experimental rollback flag) 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
 - Signed support bug-report intake (`--bugreport-listen`) with durable cross-restart `eventId` replay protection — see [docs/bug-report-idempotency.md](docs/bug-report-idempotency.md)
 
 The MCP host is also packaged as self-contained GitHub Release binaries and a
@@ -373,7 +374,7 @@ Register with Claude Code:
 claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
 ```
 
-All 27 operator tools (28 when `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`) are exposed 1:1 with the interactive agent — same
+All 28 operator tools (29 when `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`) are exposed 1:1 with the interactive agent — same
 handlers, same execution-mode/approval/edition gates, and one JSONL audit
 record per tool call (stdout-targeted audit evidence moves to stderr because
 stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)

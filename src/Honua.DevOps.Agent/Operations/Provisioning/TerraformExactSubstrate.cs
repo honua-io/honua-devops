@@ -176,7 +176,8 @@ internal sealed record ProvisioningStack(
     string Id,
     string TerraformRootName,
     IReadOnlySet<string> Sizes,
-    bool ProjectsOperatorContract);
+    bool ProjectsOperatorContract,
+    string? FirstInstallBlockReason = null);
 
 internal static class ProvisioningStackCatalog
 {
@@ -187,8 +188,10 @@ internal static class ProvisioningStackCatalog
             "aws",
             new HashSet<string>(StringComparer.Ordinal) { "small" },
             ProjectsOperatorContract: true),
-        new ProvisioningStack("aws-lambda", "aws-serverless", new HashSet<string>(StringComparer.Ordinal) { "small" }, ProjectsOperatorContract: true),
-        new ProvisioningStack("aws-eks", "aws-eks-native", new HashSet<string>(StringComparer.Ordinal) { "small" }, ProjectsOperatorContract: true)
+        new ProvisioningStack("aws-lambda", "aws-serverless", new HashSet<string>(StringComparer.Ordinal) { "small" }, ProjectsOperatorContract: true,
+            FirstInstallBlockReason: "Lambda requires skip_migrations=true. First-install database initialization and out-of-band migrations still need a qualified workflow (docs/unified-agent-workspace.md)."),
+        new ProvisioningStack("aws-eks", "aws-eks-native", new HashSet<string>(StringComparer.Ordinal) { "small" }, ProjectsOperatorContract: true,
+            FirstInstallBlockReason: "Native EKS live install qualification is still outstanding (docs/unified-agent-workspace.md).")
     ];
 
     internal static IReadOnlyList<string> Ids => [.. Stacks.Select(stack => stack.Id)];

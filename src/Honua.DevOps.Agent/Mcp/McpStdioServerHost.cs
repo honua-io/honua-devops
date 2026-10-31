@@ -86,7 +86,7 @@ internal static class McpStdioServerHost
                     $"(tier `{runtime.ExecutionTier.ToConfigValue()}`, approval `{policy.ApprovalMode.ToConfigValue()}`). " +
                     "The operator defaults to plan-only behavior: planning tools emit evidence bundles and never " +
                     "apply manifests, submit, or roll back deploy operations. honua-devops is the 2026.1 provisioning " +
-                    "executor (provision_infrastructure, install_handoff, verify_install_handoff); call describe_environment " +
+                    "executor (install_honua sequences intake, reviewed plan, approval and verified handoff; the lower-level provision_infrastructure, install_handoff, verify_install_handoff remain available); call describe_environment " +
                     "first when the request lacks an explicit service, environment, or edition. Day-2 observe/diagnose/propose " +
                     "is not served here: use the installed honua-server /mcp endpoint (honua_ops_* and honua_propose_* tools); " +
                     "a server proposal executes only after a separate principal approves it via " +

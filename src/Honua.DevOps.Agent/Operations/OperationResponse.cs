@@ -57,4 +57,18 @@ internal sealed record OperationResponse(
     [JsonPropertyName("approvalRequest")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ProvisionApprovalRequest? ApprovalRequest { get; init; }
+
+    [JsonPropertyName("confirmationChallenge")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ConfirmationChallenge { get; init; }
+
+    [JsonPropertyName("installation")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public InstallationProgress? Installation { get; init; }
 }
+
+internal sealed record InstallationProgress(
+    [property: JsonPropertyName("installationId")] string InstallationId,
+    [property: JsonPropertyName("stage")] string Stage,
+    [property: JsonPropertyName("nextQuestion")] string? NextQuestion,
+    [property: JsonPropertyName("nextStep")] string NextStep);

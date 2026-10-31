@@ -536,6 +536,7 @@ internal sealed partial class HonuaOperationsToolkit
                     ]))
             {
                 ProvisioningRecovery = recovery is null ? null : RecoveryProjection(recovery),
+                ConfirmationChallenge = challenge,
                 ApprovalRequest = new ProvisionApprovalRequest(
                     provisioningOperationId,
                     ComputeSha256(planFile),

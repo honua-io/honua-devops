@@ -237,6 +237,7 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
 {
     private static readonly string[] ExpectedToolNames =
     [
+        "install_honua",
         "describe_environment",
         "find_recent_operations",
         "plan_gitops_engine",
@@ -333,6 +334,27 @@ public sealed class McpServerIntegrationTests(McpServerFixture fixture) : IClass
 
         throw new InvalidOperationException(
             $"Could not locate repo root (docs/QUICKSTART-MCP.md) from {AppContext.BaseDirectory}.");
+    }
+
+    [Fact]
+    public async Task CallTool_InstallHonuaAcceptsEmptyIntakeAndEmitsOneAudit()
+    {
+        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(2));
+        CallToolResult result = await fixture.Client.CallToolAsync("install_honua",
+            arguments: new Dictionary<string, object?>(), cancellationToken: cts.Token);
+        Assert.NotEqual(true, result.IsError);
+        JsonElement payload = ExtractJsonPayload(result);
+        Assert.Equal("install-input-required", GetString(payload, "Status"));
+        JsonElement progress = payload.GetProperty("installation");
+        Assert.Equal("intake", progress.GetProperty("stage").GetString());
+        Assert.Equal(32, progress.GetProperty("installationId").GetString()!.Length);
+        Assert.False(string.IsNullOrWhiteSpace(progress.GetProperty("nextQuestion").GetString()));
+        string auditEventId = payload.GetProperty("auditEventId").GetString()!;
+        string auditLine = Assert.Single(ReadSharedFile(fixture.AuditFilePath).Split('\n', StringSplitOptions.RemoveEmptyEntries),
+            line => line.Contains(auditEventId, StringComparison.Ordinal));
+        using var audit = JsonDocument.Parse(auditLine);
+        Assert.Equal("install_honua", audit.RootElement.GetProperty("ToolName").GetString());
+        Assert.False(audit.RootElement.GetProperty("Mutated").GetBoolean());
     }
 
     [Fact]

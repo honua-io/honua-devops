@@ -24,6 +24,11 @@ internal static class CapabilityToolset
         List<AITool> tools =
         [
             CreateTool(
+                (string installationId = "", string customerRequirements = "", string stack = "", string variablesJson = "", string outputDirectory = "", bool confirmed = false, string confirmation = "", string approvalReceiptJson = "", CancellationToken cancellationToken = default)
+                    => toolkit.InstallHonuaAsync(installationId, customerRequirements, stack, variablesJson, outputDirectory, confirmed, confirmation, approvalReceiptJson, cancellationToken),
+                "install_honua",
+                "Start or resume a stateful first install. Returns installationId plus the next user question or step. Reuses discovery, requirements/topology recommendations, exact-plan provisioning, signed approval and verified handoff handlers. Currently qualified for aws-ecs/small only; refuses Lambda first-install DB initialization and unqualified targets. Always presents account, region, resources, cost drivers and plan digest before creation; never applies without existing confirmation and approved-digest gates. Supply only non-secret variablesJson; cloud identity stays short-lived in the host environment. Resume with installationId; after plan the inputs are immutable. Completion requires verified handoff and names the installed server /mcp for day-2 work."),
+            CreateTool(
                 () => toolkit.DescribeEnvironmentAsync(),
                 "describe_environment",
                 "Discover the connected Honua environment: readiness, edition, manifest scope, deploy targets, and allowed environments. Call first when the operator's request lacks an explicit service, environment, or edition."),
