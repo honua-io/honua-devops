@@ -2,7 +2,7 @@
 
 ## Overview
 
-`honua-devops` is private, proprietary operator tooling: an AI DevOps operator
+`honua-devops` is source-available (FCL-1.0-ALv2) operator tooling: an AI DevOps operator
 and solution architect for Honua. It is a .NET 10 console host that exposes
 operator-grade capabilities as agent function tools — governed provisioning
 and install handoff, Honua-native GitOps deployment planning, release
@@ -11,7 +11,7 @@ recommendations, and a Console-facing AI DevOps bridge.
 
 It is NOT part of Honua's open-core runtime promise. Public surfaces live in
 `honua-server`, the SDK/mobile repos, and the base MCP data-access surface.
-See `LICENSE` (proprietary).
+See `LICENSE` (FCL-1.0-ALv2; converts to Apache-2.0 two years after each release).
 
 The agent defaults to safe behavior: `plan` execution mode with `pr-first`
 approval. It plans and emits evidence bundles; it does not apply manifests,

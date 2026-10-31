@@ -4,7 +4,7 @@ This document defines the contract boundaries for `honua-devops` as tracked by `
 
 ## Purpose
 
-`honua-devops` is private operator tooling that consumes open standards and
+`honua-devops` is source-available (FCL-1.0-ALv2) operator tooling that consumes open standards and
 Honua implementation surfaces. It is not a standards body. The
 desired-state object model (`honua.io/v1alpha1`) is internal orchestration
 and does not replace or shadow upstream contracts.
@@ -34,7 +34,7 @@ than building a local equivalent.
 
 ## Private Orchestration Inventory
 
-The following are owned by `honua-devops` as private operator tooling,
+The following are owned by `honua-devops` as operator tooling,
 cross-referenced to the existing document that defines each:
 
 - Desired-state object model: `docs/desired-state-schemas.md`

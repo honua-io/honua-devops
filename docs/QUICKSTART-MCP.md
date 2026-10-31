@@ -1,6 +1,6 @@
 # Quickstart: honua-devops as an MCP server
 
-This page covers direct registration of the private operator process. The
+This page covers direct registration of the operator process. The
 [unified agent workspace](unified-agent-workspace.md) keeps one public
 `honua-agent-mcp` registration across bootstrap, optional provisioning and the
 installed server. In that setup, the host configures this private adapter and
@@ -50,8 +50,8 @@ and no shared framework) running as a non-root user. Nothing below needs
 
 ### Binary
 
-Download with the GitHub CLI (`gh auth login` first — the repository is
-private, so an unauthenticated download will not resolve):
+Download with the GitHub CLI (the repository and its releases are public;
+`gh auth login` is only needed to avoid anonymous API rate limits):
 
 ```bash
 VERSION=<version>
@@ -476,7 +476,7 @@ where an unhealthy outcome is recovered by rolling **forward** — never back:
   `honua_propose_deploy_operation` proposal approved by a separate principal),
   then re-verify health on the installed server's `/mcp`. Never a rollback.
 
-This server is part of the private operator surface (proprietary license). It
+This server is part of the operator surface (FCL-1.0-ALv2). It
 is not the public geospatial-mcp data-access surface — see
 `docs/contract-boundaries.md`.
 
