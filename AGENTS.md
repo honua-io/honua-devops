@@ -29,7 +29,7 @@ submit a deployment, or execute cloud recovery. The server remains the sole
 Day-2 executor and approval inbox. No automatic ops loop is reintroduced.
 The supported agent surface is:
 
-- `describe_environment`, `provision_infrastructure`, `install_handoff`,
+- `install_honua`, `describe_environment`, `provision_infrastructure`, `install_handoff`,
   `verify_install_handoff`, `find_recent_operations`;
 - read-only explainers/planners (`explain_release_package`,
   `explain_metadata_release_changeset`, `inspect_metadata_release`,

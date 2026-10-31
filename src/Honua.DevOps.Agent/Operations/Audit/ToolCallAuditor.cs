@@ -148,7 +148,15 @@ internal static class ToolCallAuditor
             }
         }
 
-        if (string.Equals(call.ToolName, "provision_infrastructure", StringComparison.Ordinal)
+        // The entry tool preserves the identity of the canonical handler it ran;
+        // the diagnostic record still names the caller-facing install_honua tool.
+        string canonicalTool = call.ToolName == "install_honua" ? status switch
+        {
+            "install-handoff-written" => "install_handoff",
+            "install-handoff-verified" => "verify_install_handoff",
+            _ => "provision_infrastructure"
+        } : call.ToolName;
+        if (string.Equals(canonicalTool, "provision_infrastructure", StringComparison.Ordinal)
             && status is "infrastructure-provisioned" or "infrastructure-destroyed"
             && !string.IsNullOrWhiteSpace(provisioningLineage?.ApplyAuditEventId))
         {
@@ -160,7 +168,7 @@ internal static class ToolCallAuditor
         string? idempotencyKey = operationResponse?.Actuation?.IdempotencyKey ?? reportedIdempotencyKey;
         if (idempotencyKey is null && provisioningLineage is not null)
         {
-            idempotencyKey = call.ToolName switch
+            idempotencyKey = canonicalTool switch
             {
                 "install_handoff" => $"honua-devops:install-handoff:{provisioningLineage.ProvisioningOperationId}",
                 "verify_install_handoff" => $"honua-devops:verify-install-handoff:{provisioningLineage.ProvisioningOperationId}",
@@ -174,11 +182,11 @@ internal static class ToolCallAuditor
         }
         string route = operationResponse?.Actuation?.Action
             ?? (provisioningLineage is not null
-                ? call.ToolName switch
+                ? canonicalTool switch
                 {
                     "install_handoff" => "install-handoff",
                     "verify_install_handoff" => "verify-install-handoff",
-                    _ => $"terraform-exact:{call.ToolName}"
+                    _ => $"terraform-exact:{canonicalTool}"
                 }
                 : call.ToolName);
 
