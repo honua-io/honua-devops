@@ -4,7 +4,7 @@ Generated: `2026-03-08T18:24:47Z`
 
 ## Release 2026.03.1
 
-Summary: pass=8, pending=0, fail=0
+Summary: pass=8, pending=0, warn=0, fail=0
 
 | Client | Overall | Protocol Status |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ Summary: pass=8, pending=0, fail=0
 
 ## Release 2026.03.0
 
-Summary: pass=6, pending=2, fail=0
+Summary: pass=6, pending=2, warn=0, fail=0
 
 | Client | Overall | Protocol Status |
 | --- | --- | --- |
@@ -37,3 +37,4 @@ Summary: pass=6, pending=2, fail=0
 | Leaflet | pass | WMS: pass, GeoJSON: pass |
 | Python (GeoPandas) | pass | OGC API Features: pass, GeoJSON: pass |
 
+Esri, ArcGIS, and the Esri product names used here are trademarks, registered trademarks, or service marks of Esri in the United States and other countries. They identify the products Honua is compatible with; Honua is not affiliated with, sponsored by, or endorsed by Esri.

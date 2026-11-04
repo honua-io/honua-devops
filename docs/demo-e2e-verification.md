@@ -215,7 +215,7 @@ green = `LiveHonuaServerInteractionTests` passed (hard gate). Evidence artifact
 to that lane only and produces a **false pass** — always pass all five lanes.
 ```bash
 gh workflow run client-interop-nightly.yml --repo honua-io/honua-server --ref trunk \
-  -f lanes='gdal,pyqgis,openlayers,cesium,arcgis-stub'
+  -f lanes='gdal,pyqgis,openlayers,cesium,geoservices-rest-stub'
 ```
 Read: the `baseline-diff` job conclusion; green = no regressions vs
 `tests/baselines/client-compat`. Evidence: `gap-report` + `evidence-client-compat-<lane>`.
