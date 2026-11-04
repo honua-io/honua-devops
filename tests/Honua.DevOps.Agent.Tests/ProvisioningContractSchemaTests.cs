@@ -97,8 +97,8 @@ public sealed class ProvisioningContractSchemaTests
     [Fact]
     public void ProvisionBinding_RejectsAnUnresolvableActuatorReceiptReference()
     {
-        // A reference the holder cannot dereference is worse than none, so the shape
-        // that used to be emitted — `terraform://stack/action/sha` — is now invalid.
+        // A reference the holder cannot dereference is worse than none, so
+        // `terraform://stack/action/sha` is invalid.
         JsonNode binding = JsonNode.Parse(ValidBindingJson)!;
         binding["lineage"]!["actuatorReceiptReference"] = "terraform://aws-ecs/apply/deadbeef";
 

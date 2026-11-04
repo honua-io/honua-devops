@@ -17,11 +17,10 @@ using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.Operato
 
 namespace Honua.DevOps.Agent.Operations;
 
-// Partial across per-domain files (audit #118): the primary constructor and the
+// Partial across per-domain files: the primary constructor and the
 // shared helpers live here; cohesive tool groups (e.g. support triage) live in
-// sibling HonuaOperationsToolkit.*.cs files so a domain change no longer touches
-// the whole surface. All parts compose into the single MCP surface via
-// CapabilityToolset.
+// sibling HonuaOperationsToolkit.*.cs files so a domain change stays in that file.
+// All parts compose into the single MCP surface via CapabilityToolset.
 internal sealed partial class HonuaOperationsToolkit(
     OperationRuntime runtime,
     BackendGateway gateway,
@@ -34,7 +33,7 @@ internal sealed partial class HonuaOperationsToolkit(
     IApprovalSignatureProvider? approvalSignatureProvider = null,
     AuditRecoveryStore? auditRecoveryStore = null)
 {
-    // Approval-receipt signature provider (honua-devops#175). Resolved once per toolkit
+    // Approval-receipt signature provider. Resolved once per toolkit
     // so the configured mode cannot change underneath a single session; the KMS client
     // it may wrap constructs its SDK client lazily, so nothing here touches AWS unless
     // kms-mac is actually configured and used.
@@ -43,7 +42,7 @@ internal sealed partial class HonuaOperationsToolkit(
 
     internal IApprovalSignatureProvider ApprovalSignatureProvider => _approvalSignatureProvider;
 
-    // One actuation spine per toolkit instance (issue #153). It is the single write
+    // One actuation spine per toolkit instance. It is the single write
     // authority for this session: every mutating backend call is issued under a grant it
     // minted, and its at-most-once ledger makes a retry or a concurrent delivery resume the
     // original operation instead of starting a second one.
