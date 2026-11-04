@@ -39,7 +39,8 @@ which publishes, for that tag:
   release version and its commit SHA. The release also carries a
   `container-image.txt` asset recording the image digest to pin.
 
-The archives contain one executable and no .NET runtime dependency of any kind;
+The archives contain the executable and `skills/honua-deploy-aws/SKILL.md` from
+the same source revision, with no .NET runtime dependency of any kind;
 the container's final layer is `runtime-deps` (native dependencies only, no SDK
 and no shared framework) running as a non-root user. Nothing below needs
 `dotnet` on `PATH`.
@@ -49,6 +50,14 @@ and no shared framework) running as a non-root user. Nothing below needs
 > identity. Pair it with an immutable honua-iac `v0.6.1` checkout: this is
 > the first release with exact deploy-identity actions and operator-contract v2.
 > The deploy-identity loader refuses wildcard actions.
+
+### Deployment skill
+
+Releases built with the deployment skill include it under
+`skills/honua-deploy-aws/` in each binary archive. Verify and extract the archive
+before copying that directory to your project's `.claude/skills/` (Claude Code)
+or `.agents/skills/` (Codex). Use the binary from the same archive. Older
+releases without the skill require the manual MCP setup below.
 
 ### Binary
 
@@ -70,6 +79,10 @@ mkdir -p ~/.local/share/honua-devops
 tar -xzf "$ASSET" -C ~/.local/share/honua-devops
 
 claude mcp add honua-devops -- ~/.local/share/honua-devops/Honua.DevOps.Agent --mcp
+
+# Codex alternative (stdio):
+codex mcp add honua-devops -- ~/.local/share/honua-devops/Honua.DevOps.Agent --mcp
+codex mcp list
 ```
 
 On Windows the archive is a `.zip` and the executable is
