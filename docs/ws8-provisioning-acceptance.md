@@ -121,7 +121,7 @@ DB initialization. Existing host-authorized preview planners/observers are not
 qualification or a promise of unattended first install. This lane adds no EKS or
 Lambda execution support and does not infer it from ECS evidence.
 
-Use honua-devops `v2026.1.2` and the coordinated immutable honua-iac `v0.6.1`
+Use honua-devops `v2026.1.3` and the coordinated immutable honua-iac `v0.6.1`
 release for this path. Pin the setup archive checksum or container digest.
 Honua-devops `v2026.1.1` predates the ECS topology and deploy-identity changes;
 honua-iac `v0.6.1` supplies exact actions and operator-contract v2.
