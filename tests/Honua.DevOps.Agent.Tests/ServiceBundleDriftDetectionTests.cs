@@ -7,7 +7,7 @@ using Honua.DevOps.Agent.Operations.ServiceBundleReconciliation;
 namespace Honua.DevOps.Agent.Tests;
 
 // Proves the ServiceBundleReconciliation drift detection is real (drift-detected / no-drift /
-// unreconcilable) and no longer the "check-required" / "export-required" stub.
+// unreconcilable).
 public class ServiceBundleDriftDetectionTests
 {
     [Fact]

@@ -24,7 +24,6 @@ namespace Honua.DevOps.Agent.Tests;
 /// </summary>
 public sealed class AzureGpAdapterContractTests
 {
-    // ---------------------------------------------------------------------------------------------
     // FIXTURE 1 — honua-iac azure-cert substrate PASSTHROUGH variables the Azure GP adapter may set.
     // Source (branch feat/azure-gp-substrate — VERIFIED against the pushed branch):
     //   honua-iac/infrastructure/terraform/examples/azure-cert/variables.tf  (+ main.tf passthrough)
@@ -37,7 +36,6 @@ public sealed class AzureGpAdapterContractTests
     // per-pool and the MVP is one pool — the tier selector is the deferred fast-follow once the iac
     // adds multiple pools). The worker image is a structured module input (gp_pool_image_reference)
     // and the ACR name is module-derived, so neither is an azure-cert passthrough -var.
-    // ---------------------------------------------------------------------------------------------
     private static readonly IReadOnlySet<string> HonuaIacDeclaredAzureGpVariables = new HashSet<string>(StringComparer.Ordinal)
     {
         "gp_pool_vm_size",
@@ -64,7 +62,6 @@ public sealed class AzureGpAdapterContractTests
         "gp_batch_max_vcpus",
     ];
 
-    // ---------------------------------------------------------------------------------------------
     // FIXTURE 2 — honua-server azure.batch.* / azure.storage.* override KEYS the backend reads.
     // Source: honua-server/src/Honua.Server/Features/ControlPlane/AzureBatchComputeBackend.cs
     //   (private const Param* fields; origin/trunk). The backend reads exactly:
@@ -76,7 +73,6 @@ public sealed class AzureGpAdapterContractTests
     // task_timeout_minutes + max_task_retry_count + optional container_image); the others are
     // substrate-OUTPUT-sourced (account_url, output_container_url) or invariant (command_line),
     // not runtime overrides. The allow-list is the full server-read set so any emitted key is valid.
-    // ---------------------------------------------------------------------------------------------
     private static readonly IReadOnlySet<string> HonuaServerAzureBatchKeys = new HashSet<string>(StringComparer.Ordinal)
     {
         "azure.batch.account_url",

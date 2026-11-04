@@ -149,8 +149,7 @@ public class BlindEvalLaneTests
     [Fact]
     public void Validator_FailsClosed_OnRefSiblings()
     {
-        // The object (subschema) form of `additionalProperties` used to be refused
-        // here. It is now implemented and enforced — see
+        // The object (subschema) form of `additionalProperties` is enforced — see
         // JsonSchemaValidatorApplicatorTests — because honua-devops validates the
         // honua-iac operator contract against honua-iac's own schema, which uses it.
         IReadOnlyList<string> refSiblings = JsonSchemaValidator.Validate(

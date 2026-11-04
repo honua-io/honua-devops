@@ -4,9 +4,6 @@ namespace Honua.DevOps.Agent.Tests;
 
 public class FaultInjectionTests
 {
-    // ---------------------------------------------------------------
-    // FaultInjectionContext validation
-    // ---------------------------------------------------------------
 
     [Fact]
     public void FaultInjectionContext_Validate_ThrowsOnMissingEnvironment()
@@ -85,9 +82,6 @@ public class FaultInjectionTests
         context.Validate(); // Should not throw
     }
 
-    // ---------------------------------------------------------------
-    // ScriptBasedFaultInjector script path mapping
-    // ---------------------------------------------------------------
 
     [Theory]
     [InlineData("FAULT-001", "inject", "FAULT-001-inject.sh")]
@@ -169,9 +163,6 @@ public class FaultInjectionTests
             new ScriptBasedFaultInjector(scenarioId, "aws", "/scripts"));
     }
 
-    // ---------------------------------------------------------------
-    // ScriptBasedFaultInjector dry-run mode
-    // ---------------------------------------------------------------
 
     [Fact]
     public async Task ScriptBasedFaultInjector_DryRun_InjectDoesNotExecute()
@@ -240,9 +231,6 @@ public class FaultInjectionTests
         Assert.Contains(result.Evidence, e => e.Contains("staging"));
     }
 
-    // ---------------------------------------------------------------
-    // ScriptBasedFaultInjector missing script
-    // ---------------------------------------------------------------
 
     [Fact]
     public async Task ScriptBasedFaultInjector_MissingScript_ReturnsFailure()
@@ -257,9 +245,6 @@ public class FaultInjectionTests
         Assert.Contains("not found", result.Detail);
     }
 
-    // ---------------------------------------------------------------
-    // FaultInjectionOrchestrator full cycle in dry-run
-    // ---------------------------------------------------------------
 
     [Fact]
     public async Task FaultInjectionOrchestrator_DryRun_RunsFullCycle()
@@ -319,9 +304,6 @@ public class FaultInjectionTests
         Assert.Throws<ArgumentNullException>(() => new FaultInjectionOrchestrator(null!));
     }
 
-    // ---------------------------------------------------------------
-    // FaultInjectionResult evidence capture
-    // ---------------------------------------------------------------
 
     [Fact]
     public void FaultInjectionResult_CapturesAllFields()
@@ -373,9 +355,6 @@ public class FaultInjectionTests
         Assert.Equal(a, b);
     }
 
-    // ---------------------------------------------------------------
-    // FaultInjectorStatus enum
-    // ---------------------------------------------------------------
 
     [Fact]
     public void FaultInjectorStatus_HasExpectedValues()
@@ -386,9 +365,6 @@ public class FaultInjectionTests
         Assert.Equal(3, (int)FaultInjectorStatus.Failed);
     }
 
-    // ---------------------------------------------------------------
-    // FaultInjectionAction enum
-    // ---------------------------------------------------------------
 
     [Fact]
     public void FaultInjectionAction_HasExpectedValues()
@@ -399,9 +375,6 @@ public class FaultInjectionTests
         Assert.Equal(3, (int)FaultInjectionAction.VerifyRestored);
     }
 
-    // ---------------------------------------------------------------
-    // FaultInjectionReport record
-    // ---------------------------------------------------------------
 
     [Fact]
     public void FaultInjectionReport_FullCycleSucceeded_TrueWhenBothSucceed()
@@ -483,9 +456,6 @@ public class FaultInjectionTests
         Assert.False(report.FullCycleSucceeded);
     }
 
-    // ---------------------------------------------------------------
-    // Helpers
-    // ---------------------------------------------------------------
 
     private static FaultInjectionContext CreateValidContext(
         bool dryRun = false,
