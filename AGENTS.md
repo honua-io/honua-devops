@@ -286,3 +286,22 @@ This machine runs many agents concurrently (**Codex + Claude**, often via agentf
 3. **Commit hygiene — no agent attribution.** Author every commit as the repo owner only (git identity: Mike McDougall <mike@honua.io>). Do **NOT** add any agent/tool attribution to commits: no `Co-Authored-By: Claude ...`, no `Co-Authored-By: Codex ...` (or other bot co-authors), and no "Generated with Claude Code" / "Generated with Codex" / "🤖" lines in the message or PR body. Write a plain, descriptive commit message and stop.
 
 4. **Agents outside this WSL environment (Windows Codex/Claude, other machines).** The build lock and worktree conventions above exist only inside WSL. If you are not running inside it: work from your own checkout and never edit the WSL working trees (e.g. via `\\wsl.localhost`) — git remotes are the only shared surface; claim an issue before starting (assign yourself or leave a claiming comment), because agents that cannot see each other's worktrees cannot avoid collisions any other way; and run at most one heavy build/test at a time, avoiding overlap with active WSL builds — no semaphore protects the host across environments.
+
+## Review guidelines
+
+Reviews (people, Codex, Claude) judge the lines a PR adds or changes by Robert C. Martin's *Clean Code*
+and cite smell codes ([rubric](https://github.com/honua-io/.github/blob/main/clean-code/RUBRIC.md)). The
+`Clean code` PR check enforces what a tool can decide; `quality-exception: <reason>` in the PR body is logged.
+
+BLOCKING:
+
+- G5 duplication: search first; reuse or consolidate, never copy a handler, parser or validator.
+- C1 history, ticket/PR refs or reviewer notes in code; C2-C4 obsolete, redundant or rambling comments;
+  C5 commented-out code. Comment only what the code cannot say.
+- XML doc comments (`///`) in application code; published SDKs keep at most a one-line `<summary>`
+  on public members.
+- N1 names that hide intent; F1 more than 3 parameters; F2 output arguments; F3 boolean flag arguments.
+- Over budget with no reason in the PR: functions ~40 lines or 2 nesting levels; classes, files ~400 lines.
+
+WARNING: the rubric's other smells (N2-N7, G6-G36, T1-T9), e.g. G25 magic numbers or G12
+single-implementation interfaces.
