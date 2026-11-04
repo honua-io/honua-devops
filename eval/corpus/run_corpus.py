@@ -119,9 +119,7 @@ def list_scenarios(manifest: dict[str, Any], args: argparse.Namespace) -> int:
     return 0
 
 
-# ---------------------------------------------------------------------------
 # Bounded measured sample (opt-in only). Default budgets keep total <= 30.
-# ---------------------------------------------------------------------------
 
 # Studio: ~2-3 per capability across the difficulty range (not held-out).
 STUDIO_SAMPLE = [

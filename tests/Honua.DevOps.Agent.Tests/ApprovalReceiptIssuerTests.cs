@@ -448,9 +448,6 @@ public sealed class ApprovalReceiptIssuerTests
         }
     }
 
-    // ----------------------------------------------------------------------
-    // CLI
-    // ----------------------------------------------------------------------
 
     [Fact]
     public void Cli_ParsesIssueProvisionApproval()
@@ -590,7 +587,6 @@ public sealed class ApprovalReceiptIssuerTests
         }
     }
 
-    // ----------------------------------------------------------------------
 
     /// <summary>
     /// The MCP host serializes tool results with camelCase web defaults; the plan file an

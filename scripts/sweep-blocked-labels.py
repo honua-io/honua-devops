@@ -151,9 +151,7 @@ class SweepError(RuntimeError):
     """The sweep cannot run at all (missing tool, no auth)."""
 
 
-# --------------------------------------------------------------------------------------
 # Citation parsing (pure — exercised by --self-test, no network)
-# --------------------------------------------------------------------------------------
 
 
 def build_alias_map(extra: list[str] | None = None, org: str = DEFAULT_ORG) -> dict[str, str]:
@@ -308,9 +306,6 @@ def _dedupe(citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return unique
 
 
-# --------------------------------------------------------------------------------------
-# gh access
-# --------------------------------------------------------------------------------------
 
 
 def _retry_sleep(attempt: int) -> None:
@@ -457,9 +452,6 @@ class BlockerResolver:
         }
 
 
-# --------------------------------------------------------------------------------------
-# Sweep
-# --------------------------------------------------------------------------------------
 
 
 def classify(citations: list[dict[str, Any]]) -> str:
@@ -555,9 +547,6 @@ def sweep_issue(
     return record
 
 
-# --------------------------------------------------------------------------------------
-# Reporting
-# --------------------------------------------------------------------------------------
 
 
 def _ref(citation: dict[str, Any]) -> str:
@@ -698,9 +687,6 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-# --------------------------------------------------------------------------------------
-# Self-test
-# --------------------------------------------------------------------------------------
 
 SELF_TEST_REPO = "honua-io/honua-studio"
 
@@ -879,9 +865,6 @@ def self_test() -> int:
     return 0
 
 
-# --------------------------------------------------------------------------------------
-# Entry point
-# --------------------------------------------------------------------------------------
 
 
 def build_report(repo_results: list[dict[str, Any]], label: str, ready_label: str) -> dict[str, Any]:

@@ -375,9 +375,6 @@ public partial class ConsoleOperationBridgeTests
             () => bridge.GetDevOpsOperationStatusAsync("has spaces"));
     }
 
-    // ----------------------------------------------------------------------------------
-    // Issue #78: OperationProposal contract alignment (lifecycle, plan, decision audit).
-    // ----------------------------------------------------------------------------------
 
     [Theory]
     [InlineData("Planned", false, "Planned")]
