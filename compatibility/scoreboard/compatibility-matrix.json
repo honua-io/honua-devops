@@ -15,9 +15,7 @@
           "clients": [
             {
               "name": "ArcGIS Pro",
-              "version": "3.3",
               "status": "pass",
-              "notes": "Desktop connection smoke passed.",
               "protocols": [
                 {
                   "name": "FeatureServer",
@@ -155,6 +153,7 @@
       "summary": {
         "pass": 8,
         "pending": 0,
+        "warn": 0,
         "fail": 0
       },
       "matrix": [
@@ -307,9 +306,7 @@
           "clients": [
             {
               "name": "ArcGIS Pro",
-              "version": "3.3",
               "status": "pass",
-              "notes": "Desktop connection smoke passed.",
               "protocols": [
                 {
                   "name": "FeatureServer",
@@ -447,6 +444,7 @@
       "summary": {
         "pass": 6,
         "pending": 2,
+        "warn": 0,
         "fail": 0
       },
       "matrix": [
