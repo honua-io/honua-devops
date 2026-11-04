@@ -45,7 +45,7 @@ the container's final layer is `runtime-deps` (native dependencies only, no SDK
 and no shared framework) running as a non-root user. Nothing below needs
 `dotnet` on `PATH`.
 
-> Use honua-devops `v2026.1.2` for the AWS operator path. It includes
+> Use honua-devops `v2026.1.3` for the AWS operator path. It includes
 > `install_honua`, Redis-off and TLS inputs, and the topology-bound deploy
 > identity. Pair it with an immutable honua-iac `v0.6.1` checkout: this is
 > the first release with exact deploy-identity actions and operator-contract v2.
@@ -65,7 +65,7 @@ Download with the GitHub CLI (the repository and its releases are public;
 `gh auth login` is only needed to avoid anonymous API rate limits):
 
 ```bash
-VERSION=v2026.1.2
+VERSION=v2026.1.3
 ASSET=honua-devops-linux-x64.tar.gz   # or osx-arm64 / osx-x64 / win-x64 (.zip)
 
 gh release download "$VERSION" \
