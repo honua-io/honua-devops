@@ -229,7 +229,7 @@ http_probe() {
 code_of() { printf '%s' "$1" | awk '{print $1}'; }
 ctype_of() { printf '%s' "$1" | cut -d' ' -f2- ; }
 
-# True (0) when a JSON body carries a GeoServices/ArcGIS REST {error} envelope.
+# True (0) when a JSON body carries a GeoServices REST {error} envelope.
 # These are returned under an HTTP 200, so checking the status alone treats a
 # failing operation as healthy (audit S1, #113).
 has_error_envelope() {
