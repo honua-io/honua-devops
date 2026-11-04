@@ -24,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="../../skills/honua-deploy-aws/SKILL.md" Link="skills/honua-deploy-aws/SKILL.md" CopyToOutputDirectory="PreserveNewest" />
     <None Update="fixtures/**/*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
