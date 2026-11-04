@@ -8,8 +8,8 @@ description: Install Honua on AWS ECS/Fargate through the honua-devops MCP opera
 Use honua-devops as the operator. This skill supplies agent guidance, not an
 executor or permission to create resources. Start with `install_honua`; never
 run Terraform directly, replace the operator's workflow, or bypass its gates.
-The first-install path supports AWS ECS/Fargate, small preset, in an explicitly
-allowed non-production environment. Do not substitute Lambda, EKS, Azure or Helm.
+The first-install path supports AWS ECS/Fargate, small preset, with environment
+`dev`, `staging` or `it`, also present in the host's environment allowlist. Do not substitute Lambda, EKS, Azure or Helm.
 
 ## Install and connect the matching operator
 
@@ -68,11 +68,14 @@ or signing material, and never create IAM users or long-lived access keys.
 
 Call `install_honua` and retain its installationId. Follow the returned question
 and next step, supplying only requested non-secret inputs. Confirm account and
-region, customer requirements, intended server image, and the local-state versus
-governed remote-state path before planning. Recommend governed state and
-short-lived OIDC identity for shared or long-lived installations; explain its
-bootstrap resources and obtain permission before those are created. Check
-Terraform 1.5 or later (1.10 or later for S3 state locking).
+region, customer requirements and intended server image before planning.
+Remote locked state, an administrator-exported deploy-identity contract and a
+short-lived assumed-role session matching that contract must already exist;
+the operator refuses local state and unqualified apply. Explain any missing
+prerequisites and stop for administrator setup. Do not create state buckets,
+OIDC roles or execution-identity roles, or run the direct Terraform bootstrap or
+apply commands in the linked guide. Check Terraform >= 1.5 and < 2.0
+(>= 1.10 for S3 state locking).
 
 The coordinator calls `describe_environment`, `analyze_customer_requirements`,
 `recommend_deployment_topology`, `provision_infrastructure`, `install_handoff`
@@ -91,15 +94,17 @@ procedure. For governed use require kms-mac with an independent signing
 principal; the operator principal should have VerifyMac only, never GenerateMac.
 Do not sign your own approval or request signing authority. Local-hmac-dev is
 non-evidentiary development only: its verifier can sign, so it does not establish
-independent approval. Human review and KMS permission separation are operator
+independent approval and is refused outside `dev`. Human review and KMS
+permission separation are operator
 setup/procedure requirements, not independently proven by the install tool.
 
 Resume using the same installationId, confirmed=true, its retained confirmation
 challenge and the signed receipt. The handlers verify receipt signature, trusted
 issuer, expiry and exact plan/action/environment bindings, and claim the saved
 plan once. They enforce execute mode, execute-lower-env (or break-glass) tier,
-direct-allowed approval mode and the environment allowlist for apply; production
-apply is refused. Host authorization must be deliberately configured by the
+direct-allowed approval mode, a working durable audit sink and the environment
+allowlist for apply, handoff and handoff verification. Production execution is
+refused, including at break-glass tier. Host authorization must be deliberately configured by the
 operator owner; never change it to work around a refusal. Respect edition
 refusals from tools, but do not claim first-install has an enforced edition
 check: this AWS provisioning path does not check edition.
@@ -119,7 +124,9 @@ a newly reviewed plan and fresh approval, not an automatic destructive retry.
 Report only verified evidence: target, account and region to the user privately,
 operator and IaC versions, server image, plan digest, apply receipt, endpoints,
 checks performed, evidence locations and the documented teardown procedure.
-Do not execute teardown without a separately reviewed destroy plan and approval.
+Teardown additionally requires break-glass tier, a new exact destroy plan and a
+new signed receipt bound to that plan; an apply receipt cannot authorize destroy.
+Do not execute teardown without the user's separate request and plan review.
 Connect the client to the verified installed server's `/mcp` endpoint using its
 documented scoped authentication. Day-2 observation and proposals belong there;
 honua-devops is the provisioning operator. Server proposals require separate
