@@ -1,0 +1,28 @@
+{
+  "roots": [
+    ".allstar/",
+    ".dockerignore",
+    ".env.example",
+    ".github/",
+    ".gitignore",
+    "AGENTS.md",
+    "Directory.Build.props",
+    "Dockerfile",
+    "Honua.DevOps.slnx",
+    "LICENSE",
+    "README.md",
+    "certification/",
+    "compatibility/",
+    "contracts/",
+    "desired-state/",
+    "diagnostics/",
+    "docs/",
+    "eval/",
+    "observability/",
+    "scripts/",
+    "skills/",
+    "src/",
+    "tests/"
+  ],
+  "gate_inputs": {}
+}
