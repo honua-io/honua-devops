@@ -27,13 +27,15 @@ public class ProviderDisclosureBootstrapTests
         environment.Set(ProviderDisclosureSnapshot.EnvironmentVariable, null);
         environment.Set(key, null);
         environment.Set("HONUA_DEVOPS_TEST_DOTENV_COMPAT", null);
+        environment.Set("HONUA_DEVOPS_CODEX_MODEL", null);
         using TempDirectory directory = new();
-        File.WriteAllText(Path.Combine(directory.Path, ".env"), $"{key}='{Policy}'\nHONUA_DEVOPS_TEST_DOTENV_COMPAT=still-loaded\n");
+        File.WriteAllText(Path.Combine(directory.Path, ".env"), $"{key}='{Policy}'\nHONUA_DEVOPS_TEST_DOTENV_COMPAT=ignored\nHONUA_DEVOPS_CODEX_MODEL=allowed-model\n");
         File.WriteAllText(Path.Combine(directory.Path, ".env.local"), $"{key}='{Policy}'\n");
         ProviderDisclosureSnapshot snapshot = ProviderDisclosureSnapshot.CaptureAndLoadDotEnv(directory.Path);
         Assert.False(snapshot.IsAllowed(Remote, ProviderModelUseCase.Operator));
         Assert.Null(Environment.GetEnvironmentVariable(key));
-        Assert.Equal("still-loaded", Environment.GetEnvironmentVariable("HONUA_DEVOPS_TEST_DOTENV_COMPAT"));
+        Assert.Null(Environment.GetEnvironmentVariable("HONUA_DEVOPS_TEST_DOTENV_COMPAT"));
+        Assert.Equal("allowed-model", Environment.GetEnvironmentVariable("HONUA_DEVOPS_CODEX_MODEL"));
     }
 
     [Fact]

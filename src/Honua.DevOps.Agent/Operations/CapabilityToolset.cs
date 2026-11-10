@@ -24,6 +24,11 @@ internal static class CapabilityToolset
         List<AITool> tools =
         [
             CreateTool(
+                (string installationId = "", string customerRequirements = "", string stack = "", string variablesJson = "", string outputDirectory = "", bool confirmed = false, string confirmation = "", string approvalReceiptJson = "", CancellationToken cancellationToken = default)
+                    => toolkit.InstallHonuaAsync(installationId, customerRequirements, stack, variablesJson, outputDirectory, confirmed, confirmation, approvalReceiptJson, cancellationToken),
+                "install_honua",
+                "Start or resume a stateful first install. Returns installationId plus the next user question or step. Reuses discovery, requirements/topology recommendations, exact-plan provisioning, signed approval and verified handoff handlers. Currently supports aws-ecs/small only; live release qualification requires separate evidence. Refuses Lambda first-install DB initialization and unqualified targets. Always presents account, region, resources, cost drivers and plan digest before creation; never applies without existing confirmation and approved-digest gates. Supply only non-secret variablesJson; cloud identity stays short-lived in the host environment. Resume with installationId; after plan the inputs are immutable. Completion requires verified handoff and names the installed server /mcp for day-2 work."),
+            CreateTool(
                 () => toolkit.DescribeEnvironmentAsync(),
                 "describe_environment",
                 "Discover the connected Honua environment: readiness, edition, manifest scope, deploy targets, and allowed environments. Call first when the operator's request lacks an explicit service, environment, or edition."),
@@ -68,13 +73,13 @@ internal static class CapabilityToolset
                 "inspect_metadata_release",
                 "Detect and diagnose the outcome of an additive metadata-release layer-evolution operation by package id (honua-server safe-rollback lifecycle). Read-only: reads the durable server operation and reports whether the post-publish Smoke health gate ran, whether the deploy was rolled back (prior-revision reactivation + reversible down-script — the metadata + DB-inclusive revert), the rollback class, the failing phase/error, and the smoke evidence. Use after submitting a layer change to confirm the closed loop fired, then propose a human-approved resolve. Never mutates server state."),
             CreateTool(
-                (string customerRequirements, string scaleProfile, string complianceNeeds, string budgetProfile, string preferredCloud)
-                    => toolkit.AnalyzeCustomerRequirementsAsync(customerRequirements, scaleProfile, complianceNeeds, budgetProfile, preferredCloud),
+                (string customerRequirements, string scaleProfile, string complianceNeeds, string budgetProfile, string preferredCloud, bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
+                    => toolkit.AnalyzeCustomerRequirementsAsync(customerRequirements, scaleProfile, complianceNeeds, budgetProfile, preferredCloud, enableRedis: enableRedis, customDomain: customDomain, enableGpBatch: enableGpBatch),
                 "analyze_customer_requirements",
                 "Analyze customer requirements and generate deployment recommendations."),
             CreateTool(
-                (string environment, bool enableWaf, bool useNginxProxy, bool enableEdgeRateLimiting, string trafficProfile, string riskTolerance)
-                    => toolkit.RecommendDeploymentTopologyAsync(environment, enableWaf, useNginxProxy, enableEdgeRateLimiting, trafficProfile, riskTolerance),
+                (string environment, bool enableWaf, bool useNginxProxy, bool enableEdgeRateLimiting, string trafficProfile, string riskTolerance, bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
+                    => toolkit.RecommendDeploymentTopologyAsync(environment, enableWaf, useNginxProxy, enableEdgeRateLimiting, trafficProfile, riskTolerance, enableRedis: enableRedis, customDomain: customDomain, enableGpBatch: enableGpBatch),
                 "recommend_deployment_topology",
                 "Recommend deployment topology options including WAF, ingress, and edge rate limiting."),
             CreateTool(
@@ -188,12 +193,14 @@ internal static class CapabilityToolset
         return tools;
     }
 
-    private static AITool CreateTool(Delegate function, string name, string description)
+    internal static AITool CreateTool(Delegate function, string name, string description)
     {
         return AIFunctionFactory.Create(
             function,
             new AIFunctionFactoryOptions
             {
+                MarshalResult = static (result, declaredType, _) =>
+                    ValueTask.FromResult<object?>(new UnmarshaledToolResult(result, declaredType)),
                 Name = name,
                 Description = description
             });

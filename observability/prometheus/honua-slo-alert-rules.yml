@@ -133,5 +133,5 @@ groups:
           email_route: sre-oncall@example.com
         annotations:
           summary: "GeoServices in-band error rate for {{ $labels.service }} in {{ $labels.environment }}"
-          description: "GeoServices/ArcGIS REST 200+{error} envelopes are above the 1% budget. These return HTTP 200 and are invisible to 5xx-based SLOs; promotion should stop."
+          description: "GeoServices REST 200+{error} envelopes are above the 1% budget. These return HTTP 200 and are invisible to 5xx-based SLOs; promotion should stop."
           runbook_url: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"

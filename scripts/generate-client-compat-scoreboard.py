@@ -25,6 +25,13 @@ STATUS_PRIORITY = {"fail": 4, "warn": 3, "pending": 2, "pass": 1}
 KNOWN_STATUSES = ("pass", "pending", "warn", "fail")
 
 
+TRADEMARK_NOTICE = (
+    "Esri, ArcGIS, and the Esri product names used here are trademarks, registered trademarks, or service "
+    "marks of Esri in the United States and other countries. They identify the products Honua is compatible "
+    "with; Honua is not affiliated with, sponsored by, or endorsed by Esri."
+)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate a static compatibility scoreboard from Honua client compatibility packs."
@@ -255,6 +262,7 @@ def build_scoreboard(release_services: dict[str, list[dict[str, Any]]], catalog:
 
     return {
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "trademarkNotice": TRADEMARK_NOTICE,
         "releases": list(reversed(releases_output)),
     }
 
@@ -266,7 +274,7 @@ def render_markdown(scoreboard: dict[str, Any]) -> str:
 
     if not scoreboard["releases"]:
         lines.append("No compatibility release packs have been published yet.")
-        lines.append("")
+        lines.extend(["", TRADEMARK_NOTICE, ""])
         return "\n".join(lines)
 
     for release in scoreboard["releases"]:
@@ -296,6 +304,7 @@ def render_markdown(scoreboard: dict[str, Any]) -> str:
                 )
             lines.append("")
 
+    lines.append(TRADEMARK_NOTICE)
     return "\n".join(lines) + "\n"
 
 
@@ -370,6 +379,7 @@ def render_html(scoreboard: dict[str, Any]) -> str:
   <h1>Honua Client Compatibility Scoreboard</h1>
   <p>Generated: <code>{escape(scoreboard['generated_at_utc'])}</code></p>
   {''.join(sections)}
+  <footer><p>{escape(TRADEMARK_NOTICE)}</p></footer>
 </body>
 </html>
 """

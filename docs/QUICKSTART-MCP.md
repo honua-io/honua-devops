@@ -1,6 +1,6 @@
 # Quickstart: honua-devops as an MCP server
 
-This page covers direct registration of the private operator process. The
+This page covers direct registration of the operator process. The
 [unified agent workspace](unified-agent-workspace.md) keeps one public
 `honua-agent-mcp` registration across bootstrap, optional provisioning and the
 installed server. In that setup, the host configures this private adapter and
@@ -9,12 +9,12 @@ workspace path for the end-to-end conversational GIS experience.
 
 `honua-devops --mcp` runs the operator's full tool surface as a **Model Context
 Protocol stdio server**, so MCP clients (Claude Code, Codex CLI, or any other
-MCP-capable host) can call the same 27 operator tools the interactive agent
+MCP-capable host) can call the same 28 operator tools the interactive agent
 uses — same handlers, same schemas, same gates, same audit trail.
 
 **2026.1 scope: honua-devops is the provisioning executor.** It provisions
-Honua into your cloud (`provision_infrastructure`), writes and verifies the
-install handoff (`install_handoff`, `verify_install_handoff`), and offers
+Honua into your cloud through `install_honua`, the single entry tool for
+discovery, planning, approved provisioning, and verified install handoff, and offers
 read-only planners and explainers. Day-2 observe/diagnose/propose is **not**
 served here: once the handoff is verified, point your MCP client at the
 installed honua-server's own `/mcp` endpoint and use its `honua_ops_health`,
@@ -39,22 +39,33 @@ which publishes, for that tag:
   release version and its commit SHA. The release also carries a
   `container-image.txt` asset recording the image digest to pin.
 
-The archives contain one executable and no .NET runtime dependency of any kind;
+The archives contain the executable and `skills/honua-deploy-aws/SKILL.md` from
+the same source revision, with no .NET runtime dependency of any kind;
 the container's final layer is `runtime-deps` (native dependencies only, no SDK
 and no shared framework) running as a non-root user. Nothing below needs
 `dotnet` on `PATH`.
 
-> The first release is published when the first `v*` tag is pushed. Until then,
-> use the source-development path below. Substitute the tag you are installing
-> for `<version>` (for example `v2026.1.0`).
+> Use honua-devops `v2026.1.3` for the AWS operator path. It includes
+> `install_honua`, Redis-off and TLS inputs, and the topology-bound deploy
+> identity. Pair it with an immutable honua-iac `v0.6.1` checkout: this is
+> the first release with exact deploy-identity actions and operator-contract v2.
+> The deploy-identity loader refuses wildcard actions.
+
+### Deployment skill
+
+Releases built with the deployment skill include it under
+`skills/honua-deploy-aws/` in each binary archive. Verify and extract the archive
+before copying that directory to your project's `.claude/skills/` (Claude Code)
+or `.agents/skills/` (Codex). Use the binary from the same archive. Older
+releases without the skill require the manual MCP setup below.
 
 ### Binary
 
-Download with the GitHub CLI (`gh auth login` first — the repository is
-private, so an unauthenticated download will not resolve):
+Download with the GitHub CLI (the repository and its releases are public;
+`gh auth login` is only needed to avoid anonymous API rate limits):
 
 ```bash
-VERSION=<version>
+VERSION=v2026.1.3
 ASSET=honua-devops-linux-x64.tar.gz   # or osx-arm64 / osx-x64 / win-x64 (.zip)
 
 gh release download "$VERSION" \
@@ -68,6 +79,10 @@ mkdir -p ~/.local/share/honua-devops
 tar -xzf "$ASSET" -C ~/.local/share/honua-devops
 
 claude mcp add honua-devops -- ~/.local/share/honua-devops/Honua.DevOps.Agent --mcp
+
+# Codex alternative (stdio):
+codex mcp add honua-devops -- ~/.local/share/honua-devops/Honua.DevOps.Agent --mcp
+codex mcp list
 ```
 
 On Windows the archive is a `.zip` and the executable is
@@ -76,9 +91,9 @@ On Windows the archive is a `.zip` and the executable is
 Verify the registration reached `tools/list`:
 
 ```bash
-claude mcp list                       # honua-devops should report 27 tools
+claude mcp list                       # honua-devops should report 28 tools
 ~/.local/share/honua-devops/Honua.DevOps.Agent --list-tools | head -1
-# honua-devops exposes 27 operator tools:
+# honua-devops exposes 28 operator tools:
 ```
 
 Upgrade by repeating the download/verify/extract over the same directory with a
@@ -121,8 +136,9 @@ claude mcp add honua-devops -- /abs/path/to/honua-devops/artifacts/mcp/Honua.Dev
 
 (On Windows the published binary is `Honua.DevOps.Agent.exe`.)
 
-Pass backend configuration with `--env`, or rely on the working directory's
-`.env` / `.env.local` (the server auto-loads both; process env vars win):
+Pass backend and execution configuration through the trusted MCP launcher `--env`.
+Working-directory `.env` / `.env.local` accept only exact model keys, not backend,
+audit, issuer, execution or tool settings. See [migration guidance](execution-configuration-migration.md):
 
 ```bash
 claude mcp add honua-devops \
@@ -133,12 +149,12 @@ claude mcp add honua-devops \
   -- /abs/path/to/honua-devops/artifacts/mcp/Honua.DevOps.Agent --mcp
 ```
 
-Verify with `claude mcp list` (the server should report 27 tools), or run the
+Verify with `claude mcp list` (the server should report 28 tools), or run the
 server directly and check the stderr banner:
 
 ```bash
 dotnet run --project src/Honua.DevOps.Agent -- --mcp
-# stderr: honua-devops MCP stdio server ready (tools=27, mode=plan, tier=plan, approval=pr-first, ...)
+# stderr: honua-devops MCP stdio server ready (tools=28, mode=plan, tier=plan, approval=pr-first, ...)
 ```
 
 ## Register with Codex CLI
@@ -193,6 +209,14 @@ Runtime controls (defaults shown are the safe defaults):
 ## Worked example (Claude Code)
 
 ```text
+> install Honua for a small AWS GIS portal
+
+[honua-devops:install_honua]
+Claude asks the returned next question, then resumes the same installationId.
+The tool runs discovery, requirement analysis and topology recommendation,
+presents the exact ECS plan for review, waits for the separately signed approval,
+and advances through apply, secretless handoff and verification on later calls.
+
 > describe my environment
 
 [honua-devops:describe_environment]
@@ -209,12 +233,6 @@ deployment plan across dev/staging/prod. In the default plan mode nothing is
 applied: the response is a plan with evidence, policy gates, and the approval
 path (pr-first) called out.
 
-> provision honua into aws ecs and hand it off
-
-[honua-devops:provision_infrastructure → install_handoff → verify_install_handoff]
-Claude plans the `aws-ecs` stack, waits for your reviewed approval receipt,
-applies the exact saved plan, then writes and verifies the install handoff.
-
 > what's unhealthy right now?
 
 Not an honua-devops question in 2026.1: use the installed honua-server `/mcp`
@@ -223,12 +241,12 @@ Not an honua-devops question in 2026.1: use the installed honua-server `/mcp`
 
 ## Exposed tools (1:1 with the interactive agent)
 
-All 27 operator tools registered by `CapabilityToolset` (the
+All 28 operator tools registered by `CapabilityToolset` (the
 `ListTools_ExposesEveryOperatorToolOneToOne` test asserts this list matches the
 live MCP surface 1:1; the experimental rollback tool is added only when
 `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`, see "Release posture" below):
 
-`describe_environment`, `find_recent_operations`, `plan_gitops_engine`,
+`install_honua`, `describe_environment`, `find_recent_operations`, `plan_gitops_engine`,
 `generate_metadata_release_changeset`,
 `explain_metadata_release_changeset`, `plan_metadata_release_gitops`,
 `deploy_service_gitops`, `inspect_metadata_release`,
@@ -249,6 +267,58 @@ Deleted, not flag-gated (owner ruling 2026-10-08): `honua_observe_diagnose_propo
 `plan_forward_fix`, `honua_diagnose`, `honua_explain_slow_queries`,
 `analyze_logs`, `analyze_metrics`, `tune_performance`, `troubleshoot_incident`.
 Their day-2 role belongs to honua-server `/mcp` (see the top of this page).
+
+## Start with install_honua
+
+Call `install_honua` with `customerRequirements` (no credentials). Every response
+includes `installation`: `installationId`, `stage`, `nextQuestion` (when input is
+missing), and `nextStep`. Resume with that ID. Intake collects the explicit
+`stack` and non-secret `variablesJson` with `environment`, `region`, and
+`honua_image`; incomplete inputs return the next question without running Terraform.
+Intake merges new variable answers with earlier answers for the same installation.
+`outputDirectory` is optional; by default handoff files live under the protected
+local provisioning directory for this installation.
+
+The first-install entry currently qualifies **aws-ecs/small only**. Lambda is
+refused because its `skip_migrations=true` contract leaves first-install database
+initialization dependent on a qualified workflow. Native EKS live install
+qualification is also outstanding. Neither recommendation strings nor a caller's
+claim of qualification bypass this refusal; see
+[qualification limits](unified-agent-workspace.md#ecs-lambda-and-native-eks-provisioning-and-authenticated-handoff).
+For local Docker use the published local Docker quickstart.
+
+The coordinator calls the existing handlers in order:
+`describe_environment` → `analyze_customer_requirements` →
+`recommend_deployment_topology` → `provision_infrastructure action=plan`.
+A first install may have no reachable Honua API yet; discovery/recommendation
+failures are retained as advisory warnings, not treated as installed health or
+custom topology approval. Only the existing small provisioning lane is planned.
+The returned plan shows the actual account/execution identity, region, resource
+changes (including replacements/deletions), cost drivers, and exact
+`planMetadataDigest`. Cost drivers are not a price quote. Present these to the
+customer **before** any apply. This call always stops for plan review, even if
+confirmation or a receipt was supplied prematurely.
+
+Save this plan response and use the approval issuer described below; it accepts
+this response's unchanged `approvalRequest`. A separate approver signs the exact
+digest. Resume with `installationId`, `confirmed=true`, `confirmation` set to
+the retained plan response's `confirmationChallenge`, and `approvalReceiptJson`.
+A different installation's challenge is refused before apply, even when its
+variables match; receipt and digest validation remains in the existing handler. The existing provisioning handler validates the
+receipt and all execution gates; the coordinator cannot approve, sign or bypass
+them. It never creates IAM users or long-lived keys; use short-lived SSO/OIDC or
+assumed-role credentials supplied only to the operator process.
+
+After apply, resume with just `installationId` to write the secretless handoff,
+then again to verify it. Only `install-handoff-verified` with stage `complete`
+means the handoff passed verification. The final next step names the installed
+server's `/mcp` for day-2 operations. A failed probe never yields completion.
+Progress persists across process restarts, calls for one installation serialize,
+and all post-plan inputs are immutable. To change inputs or replace a spent or
+expired plan, start a new installation and obtain fresh approval. Existing
+provisioning lineage, one-time claims, exact-plan gates and handoff validation
+remain authoritative on every resumed call. The lower-level tools remain
+available for inspecting and reconciling uncertain execution.
 
 ## Governed provisioning and verified handoff
 
@@ -464,7 +534,7 @@ where an unhealthy outcome is recovered by rolling **forward** — never back:
 - **Rollback is experimental and OFF by default.** The `rollback_gitops_operation`
   tool is *not advertised* (removed from the catalog), and the handler self-refuses
   with `experimental-disabled`. The code is retained but gated behind
-  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`. With it enabled the catalog exposes 28
+  `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`. With it enabled the catalog exposes 29
   tools.
 - **Cross-environment promotion is experimental and OFF by default.**
   `deploy_service_gitops` refuses a `promote` action or any multi-environment
@@ -475,13 +545,13 @@ where an unhealthy outcome is recovered by rolling **forward** — never back:
   `honua_propose_deploy_operation` proposal approved by a separate principal),
   then re-verify health on the installed server's `/mcp`. Never a rollback.
 
-This server is part of the private operator surface (proprietary license). It
+This server is part of the operator surface (FCL-1.0-ALv2). It
 is not the public geospatial-mcp data-access surface — see
 `docs/contract-boundaries.md`.
 
 ### Operator-contract v2 migration
 
-Provisioning requires the coordinated honua-iac checkout that emits
+Provisioning requires honua-iac `v0.6.1`, the coordinated checkout that emits
 `honua.operator-contract/v2` and ships `operator-contract.v2.schema.json`.
 All three authoritative Terraform contract outputs must declare v2; missing,
 legacy and mixed versions are refused. Custom-code GP extensions must declare
@@ -494,3 +564,57 @@ the current producer, then create and verify a fresh handoff. The consumer never
 relabels old evidence or silently falls back to the v1 schema. This version
 change does not authorize an infrastructure apply; normal approval controls
 remain in force.
+
+### ECS-small domain and Redis inputs
+
+The `aws-ecs` / `small` preset accepts `redis_enabled=false`; the default stays
+true. It forwards `domain_name`, `route53_zone_id`, `alb_certificate_arn`,
+`domain_alias_record_enabled`, `alb_enable_http_redirect`, and
+`subject_alternative_names` to the honua-iac `examples/aws` root and `aws-ecs`
+module using those exact variable names. For managed TLS and DNS, supply a DNS
+hostname plus its Route53 hosted zone ID. For externally managed TLS and DNS,
+supply the hostname plus an existing ACM certificate ARN in the ALB region.
+Certificate private keys and other secrets must stay outside tool arguments.
+
+These inputs are validated before any process starts and included in the saved
+plan's variable binding. Changing the domain, certificate, or Redis selection
+requires a fresh plan and approval. The preset still requires one instance,
+private database access, no canary, and all existing approval and identity gates.
+
+### Topology-bound AWS deploy identity (rc.2)
+
+An administrator bootstraps `honua-iac/bootstrap/aws-exec-identity` with the
+requested `topology={compute,redis,custom_domain,waf,gp_batch}` and exports its
+`deploy_identity_contract` output value (for example, `terraform output -json
+deploy_identity_contract > /secure/deploy-identity-contract.json`). The launcher
+sets `HONUA_DEVOPS_DEPLOY_IDENTITY_CONTRACT_PATH` to that absolute path and
+supplies a short-lived assumed-role session for its `role_arn`. The operator
+never creates identities or keys, and refuses root, IAM users and other roles.
+Do not supply the contract or credentials as model tool arguments.
+
+Intake and recommendation return the typed `topology` tuple. Their optional
+`enableRedis`, `customDomain` and `enableGpBatch` inputs describe advisory intent;
+`enableWaf` remains the recommendation's WAF input. Provisioning derives the
+actual ECS tuple from validated variables, with WAF and GP Batch disabled in this
+preset, and requires an exact match with the administrator's contract. The
+launcher must also configure the root's workload permissions boundary from the
+bootstrap's `workload_permissions_boundary_arn`, using trusted out-of-band
+Terraform inputs. It does not give the operator permission to bootstrap IAM.
+
+The plan returns `topology` and `deployIdentity` (exact `role_arn`,
+`contract_sha256`, `actions_by_service`) alongside `approvalRequest` and its plan
+metadata digest. Show the complete action list to the administrator. The contract
+hash is sealed into generated Terraform input tags under
+`honua:deploy-identity-contract-sha256`, so the existing metadata digest and
+signed approval bind it along with the saved plan. No action-list summary is
+substituted for the administrator's exported contract.
+
+Before plan and apply/destroy, read-only STS identity must match the contract's
+role, partition and account. Plan metadata must name that role too. Apply refuses
+if the contract bytes change, the reviewed contract is missing, or the caller is
+broader; the exact-plan substrate then independently rechecks credentials,
+backend, state, inputs and the approved digest before consuming the saved plan.
+Refusals are typed: `deploy-identity-contract-required`,
+`deploy-identity-topology-mismatch`, `deploy-identity-contract-mismatch`, or
+`deploy-identity-role-required`. These checks and offline tests do not establish
+live role sufficiency or qualify a deployment.

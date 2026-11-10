@@ -28,6 +28,13 @@ rollback, arbitrary process execution, or any unlisted tool through this bridge.
 
 ## ECS, Lambda and native EKS provisioning and authenticated handoff
 
+For the 2026.1 first-install journey, `install_honua` supports ECS-small and
+returns `install-target-unqualified` for Lambda and EKS before any process.
+The host-authorized Lambda/EKS adapters below remain preview implementations;
+they do not qualify those first installs. ECS implementation and offline tests
+also do not establish live release qualification. See the explicit
+[rc.2 evidence disposition](ws8-provisioning-acceptance.md#20261-rc2-ecs-small-disposition-2026-10-31).
+
 The provisioning adapters are `aws-ecs`, `aws-lambda` and `aws-eks`, size
 `small`, using `Provisioning/HonuaOperationsToolkit.Provisioning.cs` and the
 existing exact-plan Terraform substrate. The host selects the runtime through

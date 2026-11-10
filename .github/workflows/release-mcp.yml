@@ -113,6 +113,10 @@ jobs:
           $assetDir = Join-Path $PWD 'artifacts/release'
           New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
           $assetBase = "honua-devops-$rid"
+          Copy-Item -Recurse -Path (Join-Path $PWD 'skills') -Destination $publishDir
+          if (-not (Test-Path (Join-Path $publishDir 'skills/honua-deploy-aws/SKILL.md'))) {
+            throw 'Deployment skill missing from release staging.'
+          }
 
           if ('${{ matrix.extension }}' -eq 'zip') {
             $asset = Join-Path $assetDir "$assetBase.zip"

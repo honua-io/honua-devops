@@ -86,6 +86,21 @@ fi
 MOCK_PORT="$(cat "$PORT_FILE")"
 MOCK_BASE_URL="http://127.0.0.1:${MOCK_PORT}"
 
+# Default scaffolding remains usable without granting a cwd-derived substrate.
+bash "$REPO_ROOT/scripts/bootstrap-customer-repo.sh" \
+  --customer-root "$WORKDIR/default-customer" --service default-api --runtime-target aks --skip-validate
+if grep -F -- "$WORKDIR/default-customer/../honua-iac" "$WORKDIR/default-customer/.env.local"; then
+  echo "[ERROR] default bootstrap invented a substrate path" >&2
+  exit 1
+fi
+if bash "$REPO_ROOT/scripts/bootstrap-customer-repo.sh" \
+  --customer-root "$WORKDIR/rejected-customer" --service rejected-api --runtime-target aks \
+  --terraform-local-path ../untrusted; then
+  echo "[ERROR] relative substrate path accepted" >&2
+  exit 1
+fi
+test ! -e "$WORKDIR/rejected-customer"
+
 bash "$REPO_ROOT/scripts/bootstrap-customer-repo.sh" \
   --customer-root "$CUSTOMER_ROOT" \
   --service parcels-api \

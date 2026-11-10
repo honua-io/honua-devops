@@ -57,4 +57,31 @@ internal sealed record OperationResponse(
     [JsonPropertyName("approvalRequest")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ProvisionApprovalRequest? ApprovalRequest { get; init; }
+
+    [JsonPropertyName("confirmationChallenge")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ConfirmationChallenge { get; init; }
+
+    [JsonPropertyName("deployIdentity")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DeployIdentityReview? DeployIdentity { get; init; }
+
+    [JsonPropertyName("topology")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProvisioningTopology? Topology { get; init; }
+
+    [JsonPropertyName("installation")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public InstallationProgress? Installation { get; init; }
 }
+
+internal sealed record InstallationProgress(
+    [property: JsonPropertyName("installationId")] string InstallationId,
+    [property: JsonPropertyName("stage")] string Stage,
+    [property: JsonPropertyName("nextQuestion")] string? NextQuestion,
+    [property: JsonPropertyName("nextStep")] string NextStep);
+
+internal sealed record DeployIdentityReview(
+    [property: JsonPropertyName("role_arn")] string RoleArn,
+    [property: JsonPropertyName("contract_sha256")] string ContractSha256,
+    [property: JsonPropertyName("actions_by_service")] IReadOnlyDictionary<string, string[]> ActionsByService);

@@ -196,9 +196,6 @@ public sealed class ApprovalReceiptSigningTests
         Assert.Throws<InvalidOperationException>(OperationRuntime.Load);
     }
 
-    // ----------------------------------------------------------------------
-    // End to end through the provisioning tool.
-    // ----------------------------------------------------------------------
 
     [Fact]
     public async Task Apply_RefusesAnApprovalReceiptThatDeclaresNoSigningMode()
@@ -379,7 +376,6 @@ public sealed class ApprovalReceiptSigningTests
         Assert.NotEmpty(ProvisioningContracts.ValidateProvisionApproval(withoutMode));
     }
 
-    // ----------------------------------------------------------------------
 
     private static async Task<(OperationResponse Plan, string Challenge, TerraformTestRoot Root, FakeSubstrateRunner Runner, BackendGateway Gateway)> PlanAsync()
     {

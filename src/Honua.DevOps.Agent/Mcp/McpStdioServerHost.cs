@@ -86,7 +86,7 @@ internal static class McpStdioServerHost
                     $"(tier `{runtime.ExecutionTier.ToConfigValue()}`, approval `{policy.ApprovalMode.ToConfigValue()}`). " +
                     "The operator defaults to plan-only behavior: planning tools emit evidence bundles and never " +
                     "apply manifests, submit, or roll back deploy operations. honua-devops is the 2026.1 provisioning " +
-                    "executor (provision_infrastructure, install_handoff, verify_install_handoff); call describe_environment " +
+                    "executor (install_honua sequences intake, reviewed plan, approval and verified handoff; the lower-level provision_infrastructure, install_handoff, verify_install_handoff remain available); call describe_environment " +
                     "first when the request lacks an explicit service, environment, or edition. Day-2 observe/diagnose/propose " +
                     "is not served here: use the installed honua-server /mcp endpoint (honua_ops_* and honua_propose_* tools); " +
                     "a server proposal executes only after a separate principal approves it via " +
@@ -107,49 +107,4 @@ internal static class McpStdioServerHost
         return 0;
     }
 
-    /// <summary>
-    /// Wraps an existing capability-tool <see cref="AIFunction"/> so each MCP tool call emits
-    /// the same JSONL audit record the interactive host emits. Invocation is delegated
-    /// unchanged to the wrapped function.
-    /// </summary>
-    private sealed class AuditingAIFunction(AIFunction innerFunction, AuditContext auditContext)
-        : DelegatingAIFunction(innerFunction)
-    {
-        protected override async ValueTask<object?> InvokeCoreAsync(
-            AIFunctionArguments arguments,
-            CancellationToken cancellationToken)
-        {
-            object? result;
-            try
-            {
-                result = await base.InvokeCoreAsync(arguments, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                await ToolCallAuditor.EmitAsync(
-                    auditContext,
-                    new ToolCallRecord(Name, arguments),
-                    new OperationResponse(
-                        Status: "error",
-                        Summary: Redaction.Scrub(exception.Message),
-                        Findings: [],
-                        Actions: [],
-                        ValidationChecks: [],
-                        Risks: []),
-                    cancellationToken);
-                throw;
-            }
-
-            await ToolCallAuditor.EmitAsync(
-                auditContext,
-                new ToolCallRecord(Name, arguments),
-                result,
-                cancellationToken);
-            return result;
-        }
-    }
 }

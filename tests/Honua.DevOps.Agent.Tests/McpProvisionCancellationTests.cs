@@ -69,6 +69,8 @@ public sealed class McpProvisionCancellationTests(ITestOutputHelper output)
             .OfType<AIFunction>(), candidate => candidate.Name == "provision_infrastructure");
         // CanRun requires a present Terraform executable; the actual subprocess here
         // is the owned bash plan fixture. No Terraform binary or cloud action is invoked.
+        string? previousPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", Path.Combine(root.Path, "fixture-bin") + Path.PathSeparator + previousPath);
         string? previous = Environment.GetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable);
         Environment.SetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable, root.PlanScript);
         OwnedProcessIdentity[] owned = [];
@@ -89,6 +91,7 @@ public sealed class McpProvisionCancellationTests(ITestOutputHelper output)
         {
             await StopOwnedFixtureProcessesAsync(owned);
             Environment.SetEnvironmentVariable(SystemProvisioningProcessRunner.TerraformExecutableVariable, previous);
+            Environment.SetEnvironmentVariable("PATH", previousPath);
         }
     }
 

@@ -30,6 +30,7 @@ internal sealed record OperationRuntime(
 {
     /// <summary>Host-selected target runtime. ECS remains the legacy configuration default.</summary>
     internal string RuntimeKind { get; init; } = "aws-ecs";
+    internal string? DeployIdentityContractPath { get; init; }
     internal string? RuntimeBackend { get; init; }
     internal string? ServerTargetId { get; init; }
 
@@ -199,6 +200,7 @@ internal sealed record OperationRuntime(
             approvalIssuerKeyArns,
             protectedRecoveryEnabled)
         {
+            DeployIdentityContractPath = Environment.GetEnvironmentVariable(DeployIdentityContract.PathVariable)?.Trim(),
             RuntimeKind = runtimeProfile.RuntimeKind,
             RuntimeBackend = string.IsNullOrEmpty(runtimeBackend) ? null : runtimeBackend,
             ServerTargetId = serverTargetId
@@ -401,13 +403,11 @@ internal sealed record OperationRuntime(
 
     private static string ResolveTerraformLocalPath(string? configuredPath)
     {
-        if (!string.IsNullOrWhiteSpace(configuredPath))
-        {
-            return configuredPath.Trim();
-        }
-
-        string siblingPath = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "..", "honua-iac"));
-        return siblingPath;
+        if (string.IsNullOrWhiteSpace(configuredPath)) return string.Empty;
+        string path = configuredPath.Trim();
+        if (!Path.IsPathFullyQualified(path))
+            throw new InvalidOperationException("HONUA_DEVOPS_TERRAFORM_LOCAL_PATH requires an explicit absolute operator path.");
+        return Path.GetFullPath(path);
     }
 
     private static string[] ParseTerraformTargets(string? value, string terraformLocalPath)

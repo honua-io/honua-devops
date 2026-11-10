@@ -58,8 +58,7 @@ internal static class ProposalLifecycle
 // lowercased-PascalCase ("awaitingapproval") or hyphenated ("awaiting-approval") form; both
 // fold to the same member here. Recognizing the vocabulary in ONE place keeps the GitOps/
 // rollback executors, the ApprovalWaiter, and the Console bridge mappings from drifting apart
-// when honua-server adds or renames a status — previously each site parsed the strings with its
-// own hand-written switch/array and they could silently disagree.
+// when honua-server adds or renames a status. Separate hand-written switches can silently disagree.
 internal enum ServerOperationStatus
 {
     // The status string was absent or not a recognized server WorkflowOperationStatus member.

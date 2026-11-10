@@ -1,10 +1,20 @@
-using Honua.DevOps.Agent.Providers;
-
 namespace Honua.DevOps.Agent.Configuration;
 
 internal static class DotEnvLoader
 {
     private static readonly string[] DefaultFileNames = [".env", ".env.local"];
+
+    // Exact model inputs only. Never import execution authority or child-process settings.
+    // Environment names are case-sensitive on Unix and case-insensitive on Windows.
+    private static readonly HashSet<string> AllowedKeys = new(
+        new[]
+        {
+            "HONUA_DEVOPS_PROVIDER",
+            "HONUA_DEVOPS_CODEX_MODEL", "HONUA_DEVOPS_CODEX_API_KEY", "HONUA_DEVOPS_CODEX_ENDPOINT",
+            "HONUA_DEVOPS_CLAUDE_MODEL", "HONUA_DEVOPS_CLAUDE_API_KEY", "HONUA_DEVOPS_CLAUDE_ENDPOINT",
+            "HONUA_DEVOPS_LOCAL_LLAMA_MODEL", "HONUA_DEVOPS_LOCAL_LLAMA_API_KEY", "HONUA_DEVOPS_LOCAL_LLAMA_ENDPOINT",
+            "HONUA_DEVOPS_BEDROCK_MODEL", "HONUA_DEVOPS_BEDROCK_API_KEY", "HONUA_DEVOPS_BEDROCK_REGION"
+        }, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     internal static IReadOnlyList<string> LoadDefaultFiles()
     {
@@ -31,7 +41,7 @@ internal static class DotEnvLoader
             .Select(key => key.ToString())
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Cast<string>()
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
         List<string> loadedFiles = [];
         foreach (string fileName in DefaultFileNames)
@@ -44,10 +54,7 @@ internal static class DotEnvLoader
 
             foreach ((string key, string value) in ParseFile(path))
             {
-                // This new model authority setting is process-only on every platform.
-                // Existing execution-authority dotenv findings remain tracked separately.
-                if (key.Equals(ProviderDisclosureSnapshot.EnvironmentVariable, StringComparison.OrdinalIgnoreCase)
-                    || preservedEnvironmentVariables.Contains(key))
+                if (!AllowedKeys.Contains(key) || preservedEnvironmentVariables.Contains(key))
                 {
                     continue;
                 }

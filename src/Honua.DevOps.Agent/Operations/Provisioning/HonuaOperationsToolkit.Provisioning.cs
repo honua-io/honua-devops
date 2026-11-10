@@ -36,10 +36,17 @@ internal sealed partial class HonuaOperationsToolkit
         "environment",
         "name_prefix",
         "honua_image",
+        "console_image",
         "task_cpu_architecture",
         "db_publicly_accessible",
         "enable_postgis",
         "redis_enabled",
+        "domain_name",
+        "route53_zone_id",
+        "alb_certificate_arn",
+        "domain_alias_record_enabled",
+        "alb_enable_http_redirect",
+        "subject_alternative_names",
         "desired_count",
         "max_capacity",
         "deployment_mode",
@@ -278,6 +285,13 @@ internal sealed partial class HonuaOperationsToolkit
                 ["Terraform cannot plan this root without the required secret inputs."]);
         }
 
+        DeployIdentityContract? deployIdentity = null;
+        if (canonicalStack == "aws-ecs")
+        {
+            OperationResponse? identityRefusal = ReadDeployIdentity(variables, out deployIdentity);
+            if (identityRefusal is not null) return identityRefusal;
+        }
+
         CleanupExpiredSavedPlans();
         string planDirectory = CreatePlanDirectory(out string planToken, reservedPlanToken);
         string provisioningOperationId = $"urn:honua:provisioning:{planToken}";
@@ -287,9 +301,27 @@ internal sealed partial class HonuaOperationsToolkit
         bool keepPlanDirectory = false;
         try
         {
+            var planVariables = new Dictionary<string, object?>(variables, StringComparer.Ordinal);
+            if (deployIdentity is not null)
+            {
+                var tags = variables.TryGetValue("tags", out object? suppliedTags)
+                    ? new Dictionary<string, string>((Dictionary<string, string>)suppliedTags!, StringComparer.Ordinal)
+                    : new Dictionary<string, string>(StringComparer.Ordinal);
+                tags[DeployIdentityContract.DigestTag] = deployIdentity.Digest;
+                planVariables["tags"] = tags;
+                // Pin the whole supported topology, including disabled optional features,
+                // above ambient TF_VAR or terraform.tfvars defaults.
+                foreach (string name in new[] { "domain_name", "route53_zone_id", "alb_certificate_arn" })
+                    planVariables.TryAdd(name, "");
+                planVariables["redis_connection_string"] = "";
+                planVariables["waf_web_acl_arn"] = "";
+                string contractFile = Path.Combine(planDirectory, "deploy-identity-contract.json");
+                await File.WriteAllTextAsync(contractFile, deployIdentity.Json, cancellationToken);
+                ProtectSavedPlan(contractFile);
+            }
             await File.WriteAllTextAsync(
                 variableFile,
-                JsonSerializer.Serialize(variables, new JsonSerializerOptions { WriteIndented = true }),
+                JsonSerializer.Serialize(planVariables, new JsonSerializerOptions { WriteIndented = true }),
                 cancellationToken);
             ProtectSavedPlan(variableFile);
             IReadOnlyDictionary<string, string>? planEnvironment = SubstrateEnvironment(requireApproval: false);
@@ -318,6 +350,11 @@ internal sealed partial class HonuaOperationsToolkit
             }
 
             IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
+            if (deployIdentity is not null)
+            {
+                OperationResponse? callerRefusal = await CheckDeployCallerAsync(deployIdentity, runner, substrate!.IacRoot, cancellationToken);
+                if (callerRefusal is not null) return callerRefusal;
+            }
             List<OperationBackendStep> steps = [];
 
             // The substrate owns init/backend resolution, the short-lived-identity
@@ -405,6 +442,8 @@ internal sealed partial class HonuaOperationsToolkit
             // The wrapper's source identity is relative to the IaC checkout;
             // the host manifest keeps the resolved absolute execution path.
             string sourceTerraformRoot = Path.GetRelativePath(substrate.IacRoot, terraformRoot);
+            if (deployIdentity is not null && !deployIdentity.MatchesAssumedRole(metadata.AssumedRoleArn, metadata.AccountId))
+                return ProvisioningRefusal("deploy-identity-role-required", "The plan metadata was produced under a different deployment identity.", [], []);
             if (metadata.SavedPlanSha256 != ComputeSha256(planFile))
                 return ProvisioningRefusal("exact-plan-metadata-invalid", "The plan metadata names different saved-plan bytes.", [], []);
             if (metadata.ActorId != planActorId || metadata.TerraformRoot != sourceTerraformRoot ||
@@ -485,6 +524,11 @@ internal sealed partial class HonuaOperationsToolkit
                     "Generated variables were restricted to the selected runtime non-secret small-plan allowlist.",
                     // The value an approval must bind to. Without it in the response the
                     // caller cannot issue an approval the apply wrapper will accept.
+                    .. deployIdentity is null ? Array.Empty<string>() : new[] {
+                        $"Topology: {JsonSerializer.Serialize(deployIdentity.Topology)}.",
+                        $"Deploy identity role: {deployIdentity.RoleArn}; contract sha256: {deployIdentity.Digest} (bound in saved-plan input tags).",
+                        $"Exact deploy identity actions_by_service: {JsonSerializer.Serialize(deployIdentity.ActionsByService)}"
+                    },
                     $"Approval binds to plan_metadata_digest: {metadata.PlanMetadataDigest}.",
                     $"Saved plan sha256: {metadata.SavedPlanSha256}.",
                     $"Backend: {metadata.BackendKind} (remote={metadata.BackendIsRemote}) workspace `{metadata.Workspace}`, backend_config_digest {metadata.BackendConfigDigest}.",
@@ -532,10 +576,15 @@ internal sealed partial class HonuaOperationsToolkit
                     EvidenceRefs:
                     [
                         GetEvidenceStore().Put("plan", await File.ReadAllBytesAsync(planFile, cancellationToken)),
-                        GetEvidenceStore().Put("plan-metadata", await File.ReadAllBytesAsync(planMetadataFile, cancellationToken))
+                        GetEvidenceStore().Put("plan-metadata", await File.ReadAllBytesAsync(planMetadataFile, cancellationToken)),
+                        .. deployIdentity is null ? Array.Empty<ProvisioningEvidenceReference>() : new[] {
+                            GetEvidenceStore().Put("deploy-identity-contract", Encoding.UTF8.GetBytes(deployIdentity.Json)) }
                     ]))
             {
                 ProvisioningRecovery = recovery is null ? null : RecoveryProjection(recovery),
+                ConfirmationChallenge = challenge,
+                Topology = deployIdentity?.Topology,
+                DeployIdentity = deployIdentity is null ? null : new(deployIdentity.RoleArn, deployIdentity.Digest, deployIdentity.ActionsByService),
                 ApprovalRequest = new ProvisionApprovalRequest(
                     provisioningOperationId,
                     ComputeSha256(planFile),
@@ -1732,7 +1781,40 @@ internal sealed partial class HonuaOperationsToolkit
             }
         }
 
+        string domain = variables.GetValueOrDefault("domain_name") as string ?? "";
+        string zone = variables.GetValueOrDefault("route53_zone_id") as string ?? "";
+        string certificate = variables.GetValueOrDefault("alb_certificate_arn") as string ?? "";
+        if (domain.Length > 0 && zone.Length == 0 && certificate.Length == 0)
+            throw new InvalidOperationException("domain_name requires route53_zone_id for managed TLS or alb_certificate_arn for externally managed TLS and DNS.");
+        if (zone.Length > 0 && domain.Length == 0)
+            throw new InvalidOperationException("route53_zone_id requires domain_name.");
+        if (variables.TryGetValue("subject_alternative_names", out object? names) &&
+            ((string[])names!).Length > 0 && (domain.Length == 0 || zone.Length == 0))
+            throw new InvalidOperationException("subject_alternative_names requires domain_name and route53_zone_id for managed TLS.");
+        if (certificate.Length > 0 && variables.TryGetValue("region", out object? region) &&
+            certificate.Split(':')[3] != (string)region!)
+            throw new InvalidOperationException("alb_certificate_arn must be in the selected region.");
         return variables;
+    }
+
+    private static string ValidateDomain(string name, JsonElement value, bool wildcard = false)
+    {
+        string domain = ReadString(name, value);
+        string hostname = wildcard && domain.StartsWith("*.", StringComparison.Ordinal) ? domain[2..] : domain;
+        if (domain.Length > 253 || Uri.CheckHostName(hostname) != UriHostNameType.Dns ||
+            !hostname.Contains('.') || hostname.EndsWith('.') ||
+            hostname.Split('.').Any(label => label.Length is < 1 or > 63 ||
+                label.StartsWith('-') || label.EndsWith('-') ||
+                label.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-')))
+            throw new InvalidOperationException($"Variable `{name}` must be a DNS hostname without a scheme, port, path or wildcard.");
+        return domain.ToLowerInvariant();
+    }
+
+    private static string[] ValidateCertificateNames(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > 10)
+            throw new InvalidOperationException("subject_alternative_names must be an array of at most ten DNS names.");
+        return value.EnumerateArray().Select(name => ValidateDomain("subject_alternative_names", name, wildcard: true)).ToArray();
     }
 
     private static object ValidateVariable(string name, JsonElement value)
@@ -1743,10 +1825,16 @@ internal sealed partial class HonuaOperationsToolkit
             "environment" => ValidateEnvironment(value),
             "name_prefix" => ValidateString(name, value, NamePrefixPattern),
             "honua_image" => ValidateImage(value),
+            "console_image" => ValidateConsoleImage(value),
             "task_cpu_architecture" => ValidateChoice(name, value, "X86_64", "ARM64"),
             "deployment_mode" => ValidateChoice(name, value, "SingleInstance"),
             "desired_count" or "max_capacity" => ValidateExactInteger(name, value, 1),
-            "redis_enabled" => ValidateExactBoolean(name, value, true),
+            "redis_enabled" or "domain_alias_record_enabled" or "alb_enable_http_redirect" => ValidateBoolean(name, value),
+            "domain_name" => ValidateDomain(name, value),
+            "route53_zone_id" => ValidateString(name, value, new Regex("^Z[A-Z0-9]{1,31}$", RegexOptions.CultureInvariant)),
+            "alb_certificate_arn" => ValidateString(name, value,
+                new Regex("^arn:aws(-us-gov|-cn)?:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.CultureInvariant)),
+            "subject_alternative_names" => ValidateCertificateNames(value),
             "db_publicly_accessible" or "canary_enabled" => ValidateExactBoolean(name, value, false),
             "enable_postgis" or "alb_deletion_protection" or "alb_access_logs_enabled" or "alb_access_logs_force_destroy" => ValidateBoolean(name, value),
             "tags" => ValidateTags(value),
@@ -1765,6 +1853,14 @@ internal sealed partial class HonuaOperationsToolkit
             throw new InvalidOperationException("Variable `environment` must be `dev`, `staging`, or `it` for the small provisioning lane.");
         }
         return environment;
+    }
+
+    private static string ValidateConsoleImage(JsonElement value)
+    {
+        string image = ReadString("console_image", value);
+        if (image.Length > 512 || !Regex.IsMatch(image, @"^[^\s@]+@sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant))
+            throw new InvalidOperationException("Variable `console_image` must be pinned by sha256 digest.");
+        return image;
     }
 
     private static string ValidateImage(JsonElement value)
@@ -1914,6 +2010,26 @@ internal sealed partial class HonuaOperationsToolkit
         CancellationToken cancellationToken)
     {
         IProvisioningProcessRunner runner = provisioningProcessRunner ?? SystemProvisioningProcessRunner.Instance;
+        if (savedPlan.Manifest.Stack == "aws-ecs")
+        {
+            try
+            {
+                var contract = DeployIdentityContract.Load(runtime.DeployIdentityContractPath);
+                using JsonDocument reviewedVariables = JsonDocument.Parse(await File.ReadAllTextAsync(
+                    Path.Combine(savedPlan.Directory, "small.auto.tfvars.json"), cancellationToken));
+                if (reviewedVariables.RootElement.GetProperty("tags").GetProperty(DeployIdentityContract.DigestTag).GetString() != contract.Digest ||
+                    ComputeSha256(Path.Combine(savedPlan.Directory, "deploy-identity-contract.json")) != contract.Digest ||
+                    !contract.MatchesAssumedRole(savedPlan.Manifest.Metadata.AssumedRoleArn, savedPlan.Manifest.Metadata.AccountId))
+                    return ProvisioningRefusal("deploy-identity-contract-mismatch", "The deployment identity contract differs from the reviewed plan; obtain a new plan and approval.", [], []);
+                OperationResponse? callerRefusal = await CheckDeployCallerAsync(contract, runner, substrate.IacRoot, cancellationToken);
+                if (callerRefusal is not null) return callerRefusal;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or
+                JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException)
+            {
+                return ProvisioningRefusal("deploy-identity-contract-required", "The reviewed deployment identity contract is unavailable or invalid; no apply was started.", [], []);
+            }
+        }
         List<OperationBackendStep> steps = [];
         string receiptPath = Path.Combine(savedPlan.Directory, "exec-receipt.json");
         // Retain exact approved inputs before the substrate can consume/delete its plan.
@@ -1921,6 +2037,9 @@ internal sealed partial class HonuaOperationsToolkit
         ProvisioningEvidenceReference planReference = evidenceStore.Put("plan", await File.ReadAllBytesAsync(savedPlan.PlanFile, cancellationToken));
         ProvisioningEvidenceReference metadataReference = evidenceStore.Put("plan-metadata", await File.ReadAllBytesAsync(savedPlan.Manifest.PlanMetadataFile, cancellationToken));
         ProvisioningEvidenceReference approvalReference = evidenceStore.Put("approval", Encoding.UTF8.GetBytes(approvalReceiptJson));
+        ProvisioningEvidenceReference[] deployIdentityReferences = savedPlan.Manifest.Stack == "aws-ecs"
+            ? [evidenceStore.Put("deploy-identity-contract", await File.ReadAllBytesAsync(
+                Path.Combine(savedPlan.Directory, "deploy-identity-contract.json"), cancellationToken))] : [];
         try
         {
             // Terraform is a process-based external mutation and has no BackendGateway
@@ -1941,7 +2060,7 @@ internal sealed partial class HonuaOperationsToolkit
             }
 
             ProvisioningCleanupObligation cleanupOrigin = CreateCleanupObligation(substrate, savedPlan,
-                [planReference, metadataReference, approvalReference]);
+                [planReference, metadataReference, approvalReference, .. deployIdentityReferences]);
 
             // The apply wrapper re-derives every bound fact from the live context and
             // refuses before any mutation. It never regenerates a plan and never
@@ -2118,7 +2237,7 @@ internal sealed partial class HonuaOperationsToolkit
                 // provisioning state and echoed into the binding, so a holder can
                 // actually resolve and re-hash what this reference names.
                 ActuatorReceiptReference: $"urn:sha256:{receiptSha}",
-                EvidenceRefs: [planReference, metadataReference, approvalReference,
+                EvidenceRefs: [planReference, metadataReference, approvalReference, .. deployIdentityReferences,
                     evidenceStore.Put("apply", Encoding.UTF8.GetBytes(receiptDocument)),
                     .. (savedPlan.Manifest.Recovery is null ? Array.Empty<ProvisioningEvidenceReference>() : new[] { savedPlan.Manifest.Recovery })]);
 

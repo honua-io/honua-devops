@@ -17,11 +17,10 @@ using OperatorPolicyModel = Honua.DevOps.Agent.Operations.OperatorPolicy.Operato
 
 namespace Honua.DevOps.Agent.Operations;
 
-// Partial across per-domain files (audit #118): the primary constructor and the
+// Partial across per-domain files: the primary constructor and the
 // shared helpers live here; cohesive tool groups (e.g. support triage) live in
-// sibling HonuaOperationsToolkit.*.cs files so a domain change no longer touches
-// the whole surface. All parts compose into the single MCP surface via
-// CapabilityToolset.
+// sibling HonuaOperationsToolkit.*.cs files so a domain change stays in that file.
+// All parts compose into the single MCP surface via CapabilityToolset.
 internal sealed partial class HonuaOperationsToolkit(
     OperationRuntime runtime,
     BackendGateway gateway,
@@ -34,7 +33,7 @@ internal sealed partial class HonuaOperationsToolkit(
     IApprovalSignatureProvider? approvalSignatureProvider = null,
     AuditRecoveryStore? auditRecoveryStore = null)
 {
-    // Approval-receipt signature provider (honua-devops#175). Resolved once per toolkit
+    // Approval-receipt signature provider. Resolved once per toolkit
     // so the configured mode cannot change underneath a single session; the KMS client
     // it may wrap constructs its SDK client lazily, so nothing here touches AWS unless
     // kms-mac is actually configured and used.
@@ -43,7 +42,7 @@ internal sealed partial class HonuaOperationsToolkit(
 
     internal IApprovalSignatureProvider ApprovalSignatureProvider => _approvalSignatureProvider;
 
-    // One actuation spine per toolkit instance (issue #153). It is the single write
+    // One actuation spine per toolkit instance. It is the single write
     // authority for this session: every mutating backend call is issued under a grant it
     // minted, and its at-most-once ledger makes a retry or a concurrent delivery resume the
     // original operation instead of starting a second one.
@@ -1190,7 +1189,8 @@ internal sealed partial class HonuaOperationsToolkit(
         string complianceNeeds,
         string budgetProfile,
         string preferredCloud,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
     {
         BackendCallResult backendResult = await gateway.RequestRequirementsAnalysisAsync(
             customerRequirements,
@@ -1225,7 +1225,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 "Missing non-functional requirements can produce under- or over-sized topology.",
                 "Cost-only optimization can undercut resiliency for critical workloads."
             ])
-            .Build();
+            .Build() with { Topology = new(ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).TerraformTarget,
+                enableRedis, customDomain, false, enableGpBatch) };
     }
 
     [Description("Recommend deployment topology via Honua API, including WAF, ingress, and edge rate limiting choices.")]
@@ -1236,7 +1237,8 @@ internal sealed partial class HonuaOperationsToolkit(
         bool enableEdgeRateLimiting,
         string trafficProfile,
         string riskTolerance,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
     {
         BackendCallResult backendResult = await gateway.RequestTopologyRecommendationAsync(
             environment,
@@ -1269,7 +1271,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 "No-WAF posture increases exposure to application-layer attacks.",
                 "Skipping validated template modules can introduce config drift."
             ])
-            .Build();
+            .Build() with { Topology = new(ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).TerraformTarget,
+                enableRedis, customDomain, enableWaf, enableGpBatch) };
     }
 
     [Description(

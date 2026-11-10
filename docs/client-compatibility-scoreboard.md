@@ -32,16 +32,18 @@ Generated outputs:
 
 ## Current Matrix Coverage
 
-The catalog covers:
+The catalog covers these clients:
 
-- ArcGIS Pro
-- QGIS
-- Power BI
-- Excel
-- MapLibre GL JS
-- OpenLayers
-- Leaflet
-- Python (GeoPandas)
+| Client |
+| --- |
+| ArcGIS Pro |
+| QGIS |
+| Power BI |
+| Excel |
+| MapLibre GL JS |
+| OpenLayers |
+| Leaflet |
+| Python (GeoPandas) |
 
 Each client maps to the protocol subset that matters for that client rather than pretending all clients consume all surfaces.
 
@@ -64,3 +66,7 @@ Exit code `2` means the scoreboard found a release-blocking compatibility failur
 `.github/workflows/client-compatibility-scoreboard.yml` runs on pull requests and pushes to `trunk`. It generates the scoreboard only when `compatibility/releases` contains packs; otherwise it publishes the checked-in scoreboard, and it refuses to upload a matrix with no releases. It deploys the HTML scoreboard to GitHub Pages when `HONUA_DEPLOY_PAGES` is true.
 
 That gives the repo a public scoreboard page, JSON feed, RSS feed, and badge artifact without needing a separate publishing service for the initial baseline.
+
+Esri, ArcGIS, and the Esri product names used here are trademarks, registered trademarks, or service
+marks of Esri in the United States and other countries. They identify the products Honua is compatible
+with; Honua is not affiliated with, sponsored by, or endorsed by Esri.

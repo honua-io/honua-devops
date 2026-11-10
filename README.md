@@ -19,14 +19,19 @@ Mission: raise the technical and delivery bar high enough to disrupt the GIS pro
 
 ## License and Availability
 
-`honua-devops` is private operator tooling and is **not** part of Honua's
-open-core runtime promise.
+`honua-devops` is source-available under the [Fair Core License, Version 1.0,
+ALv2 Future License](LICENSE) (FCL-1.0-ALv2), the same license as Honua Server
+and Collect. Each version converts to Apache-2.0 two years after its release.
 
+- You may use, modify and run it to deploy and operate your own Honua estate,
+  including from the published release binaries and container image.
+- Competing use is outside the grant: offering it, or a derivative, as a
+  service or product that competes with Honua's own operator and
+  implementation-partner offerings needs a separate agreement.
 - Public/open surfaces remain in `honua-server`, the official SDK repos, the
-  mobile repos, and the base MCP data-access surface.
-- This repository covers operator-grade AI DevOps/copilot workflows such as
-  rollout planning, delegated operations, and implementation-partner delivery.
-- Licensing for this repository is proprietary. See [LICENSE](LICENSE).
+  mobile repos, and the base MCP data-access surface; this repository covers
+  operator-grade AI DevOps workflows such as provisioning, install handoff,
+  rollout planning and delegated operations.
 
 ## Stack
 
@@ -37,6 +42,7 @@ open-core runtime promise.
 
 ## Built-In Capabilities
 
+- Guided install (`install_honua`): stateful intake, reviewed exact plan, separate signed approval, provisioning and verified handoff. Start with a customer request; resume using the returned installation ID and next question/step.
 - Provisioning executor (`provision_infrastructure`): plan, then apply a reviewed Terraform plan for a supported stack, with explicit confirmation and an approval receipt
 - Install handoff (`install_handoff`, `verify_install_handoff`): points an MCP client at the installed honua-server `/mcp` endpoint, where day-2 operations live
 - Day-2 observe/diagnose/propose is **not** part of the 2026.1 honua-devops surface: it is served by honua-server's own `/mcp` endpoint (`honua_ops_health`, `honua_ops_findings`, `honua_alert_events`, `honua_operate_events`, `honua_propose_*`), and a proposal executes only after a separate principal approves it via REST `POST /api/v1/admin/proposals/{id}/approve`.
@@ -45,7 +51,7 @@ open-core runtime promise.
 - Customer requirements analysis with deployment recommendations (mapped to validated Terraform templates for `azure-functions`, `lambda`, `eks`, `aks`, `ecs`, `aca`)
 - Topology recommendations (WAF/no WAF, nginx/no proxy, edge rate limiting)
 - Console-facing AI DevOps bridge (`create_gitops_proposal`, `get_gitops_proposal`, `get_devops_operation_status`, `build_ai_devops_brief`, `explain_release_package`) projecting stable, evidence-linked proposal/operation/brief and read-only release-explanation contracts over honua-server deploy-control — see [docs/console-ai-devops-bridge.md](docs/console-ai-devops-bridge.md)
-- MCP stdio server mode (`--mcp`) exposing the full 27-tool operator surface (28 with the experimental rollback flag) 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
+- MCP stdio server mode (`--mcp`) exposing the full 28-tool operator surface (29 with the experimental rollback flag) 1:1 to MCP clients (Claude Code, Codex CLI) with the same execution-mode/approval/edition gates and per-call audit records — see [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)
 - Signed support bug-report intake (`--bugreport-listen`) with durable cross-restart `eventId` replay protection — see [docs/bug-report-idempotency.md](docs/bug-report-idempotency.md)
 
 The MCP host is also packaged as self-contained GitHub Release binaries and a
@@ -56,7 +62,7 @@ multi-stage container whose final image does not require the .NET SDK.
 Set `HONUA_DEVOPS_PROVIDER` to `codex`, `claude`, `local-llama`, or `bedrock` (defaults to `codex`).
 `bedrock` also accepts the alias `aws-bedrock`.
 Reference defaults live in `.env.example`.
-`honua-devops` auto-loads `.env` and `.env.local` from the working directory, with process environment variables taking precedence and `.env.local` overriding `.env`.
+Cwd `.env` and `.env.local` load only exact model configuration keys; execution authority must come from the trusted launcher process. Process values take precedence and `.env.local` overrides allowed `.env` keys. See [execution configuration migration](docs/execution-configuration-migration.md).
 
 Model-provider disclosure approval is process-only. Before launching a model mode,
 set `HONUA_DEVOPS_AI_DISCLOSURE_POLICY` in the operator-controlled process environment.
@@ -92,7 +98,7 @@ private-network addresses and lookalike hostname suffixes need external approval
 Provider route and approval are fixed when the agent is constructed. Restart the process
 to apply policy changes. Operators remain responsible for classifying all prompts and tool
 results and approving their handling. Invalid policies produce a constant refusal without
-printing policy contents. This new setting does not resolve #216's broader dotenv execution-authority findings.
+printing policy contents. Execution-authority and typed audit source repairs are tracked separately in #216; installed acceptance remains unresolved.
 
 Provider requests do not follow HTTP redirects. OpenAI-compatible endpoints must use
 HTTPS except true loopback development URLs, and must not contain userinfo, query,
@@ -166,7 +172,7 @@ until the plugin release owner publishes those artifacts.
 - `HONUA_DEVOPS_TERRAFORM_REPO` (validated template repo, default `https://github.com/honua-io/honua-iac`)
 - `HONUA_DEVOPS_TERRAFORM_REF` (template repo ref, default `trunk`)
 - `HONUA_DEVOPS_TERRAFORM_TARGETS` (default `azure-functions,lambda,eks,aks,ecs,aca`)
-- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (optional local repo path for target auto-discovery; default sibling `../honua-iac`)
+- `HONUA_DEVOPS_TERRAFORM_LOCAL_PATH` (explicit absolute trusted checkout in the launcher process; unset disables local substrate discovery)
 - `HONUA_DEVOPS_DEPLOY_TARGET_ID` (optional Honua deploy-control target; enables real `/api/v1/admin/deploy/*` preflight, plan, and operation calls)
 
 ## Backend Integration
@@ -373,7 +379,7 @@ Register with Claude Code:
 claude mcp add honua-devops -- dotnet run --project /abs/path/to/honua-devops/src/Honua.DevOps.Agent -- --mcp
 ```
 
-All 27 operator tools (28 when `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`) are exposed 1:1 with the interactive agent — same
+All 28 operator tools (29 when `HONUA_DEVOPS_EXPERIMENTAL_ROLLBACK=true`) are exposed 1:1 with the interactive agent — same
 handlers, same execution-mode/approval/edition gates, and one JSONL audit
 record per tool call (stdout-targeted audit evidence moves to stderr because
 stdout carries the MCP protocol). See [docs/QUICKSTART-MCP.md](docs/QUICKSTART-MCP.md)

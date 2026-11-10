@@ -63,9 +63,6 @@ internal sealed class ActuationSpine
 
     internal AuditRecoveryStore RecoveryStore => _recoveryStore;
 
-    // ---------------------------------------------------------------------------------
-    // Grants
-    // ---------------------------------------------------------------------------------
 
     // Stage 1. Authorizes the identity-establishing write — creating the durable
     // deploy-control operation with submitImmediately=false. It seals the target, the
@@ -208,9 +205,6 @@ internal sealed class ActuationSpine
         }
     }
 
-    // ---------------------------------------------------------------------------------
-    // Stage 1: seal the request and decide whether the lifecycle may be entered at all
-    // ---------------------------------------------------------------------------------
 
     // Seals the request identity and records the policy decision. The grant it returns is
     // authority for the LIFECYCLE-ENTRY write only — creating the durable operation/proposal
@@ -306,10 +300,6 @@ internal sealed class ActuationSpine
         return authorization.IsGranted;
     }
 
-    // ---------------------------------------------------------------------------------
-    // Bounded deployment recovery (issue #191)
-    // ---------------------------------------------------------------------------------
-    //
     // A DeploymentRecoveryGrant is a THIRD grant kind, distinct from OperationGrant/
     // MutationGrant above. It is minted once, at the moment a deployment is approved, and
     // seals the EXACT scope of compensation that approval authorized: the actor, tenant and
@@ -598,9 +588,6 @@ internal sealed class ActuationSpine
         }
     }
 
-    // ---------------------------------------------------------------------------------
-    // Stage 2: bind a resolved operation + verified approval to one mutating route
-    // ---------------------------------------------------------------------------------
 
     // Converts the sealed operation grant into write authority for exactly one route.
     // Returns false — with a machine-readable reason — whenever the approval evidence does

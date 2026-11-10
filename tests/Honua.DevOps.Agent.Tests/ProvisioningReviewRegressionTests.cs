@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Honua.DevOps.Agent.Operations;
+using Honua.DevOps.Agent.Operations.Audit;
 using Microsoft.Extensions.AI;
 
 namespace Honua.DevOps.Agent.Tests;
@@ -73,12 +74,19 @@ public sealed partial class TerraformProvisioningTests
             t => t.Name == "provision_infrastructure"));
         Assert.DoesNotContain(tool.JsonSchema.GetProperty("required").EnumerateArray(), p => p.GetString() == "idempotencyKey");
         Assert.Equal("", tool.JsonSchema.GetProperty("properties").GetProperty("idempotencyKey").GetProperty("default").GetString());
-        object? result = await tool.InvokeAsync(new AIFunctionArguments
+        string auditPath = Path.Combine(root.Path, "legacy-tool-audit.jsonl");
+        await using IAuditSink sink = AuditSinkFactory.Create(new Uri(auditPath).AbsoluteUri);
+        AIFunction hostedTool = new AuditingAIFunction(tool,
+            new AuditContext("legacy-session", "plan", "plan", "pr-first", "mcp", sink));
+        object? result = await hostedTool.InvokeAsync(new AIFunctionArguments
         {
             ["stack"] = "unsupported", ["size"] = "small", ["action"] = "plan", ["variablesJson"] = "{}",
             ["confirmed"] = false, ["confirmation"] = "", ["approvalReceiptJson"] = ""
         });
         Assert.Equal("unsupported-stack", JsonSerializer.SerializeToElement(result).GetProperty("status").GetString());
+        using JsonDocument audit = JsonDocument.Parse(Assert.Single(File.ReadAllLines(auditPath)));
+        Assert.False(audit.RootElement.GetProperty("Mutated").GetBoolean());
+        Assert.Equal("unsupported-stack", audit.RootElement.GetProperty("Status").GetString());
     }
 
     [Theory]

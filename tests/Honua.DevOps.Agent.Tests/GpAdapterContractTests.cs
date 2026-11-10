@@ -23,14 +23,12 @@ namespace Honua.DevOps.Agent.Tests;
 /// </summary>
 public sealed class GpAdapterContractTests
 {
-    // ---------------------------------------------------------------------------------------------
     // FIXTURE 1 — honua-iac substrate INPUT VARIABLES the GP adapter may set.
     // Source (origin/trunk):
     //   honua-iac/infrastructure/terraform/modules/aws-serverless/variables.tf
     //   honua-iac/infrastructure/terraform/examples/aws-cert/variables.tf  (+ main.tf passthrough)
     // The tier POOL is HARDCODED in honua-iac (for_each over local.gp_batch_tiers in batch.tf) and
     // is intentionally NOT a variable, so there is deliberately no tiers var in this set.
-    // ---------------------------------------------------------------------------------------------
     private static readonly IReadOnlySet<string> HonuaIacDeclaredGpVariables = new HashSet<string>(StringComparer.Ordinal)
     {
         "enable_gp_batch",
@@ -55,13 +53,11 @@ public sealed class GpAdapterContractTests
         "gp_workload_id",
     ];
 
-    // ---------------------------------------------------------------------------------------------
     // FIXTURE 2 — honua-server batch.* override KEYS the AWS Batch backend reads.
     // Source: honua-server/src/Honua.Aws/Features/ControlPlane/AwsBatchComputeBackend.cs
     //   (static class AwsBatchParameterKeys; tier-selection on feat/gp-batch-tier-selection).
     // batch.ephemeral_gib DRIVES server-side job-definition tier selection (the one sizing
     // dimension AWS Batch SubmitJob cannot override), so the adapter MUST emit it.
-    // ---------------------------------------------------------------------------------------------
     private static readonly IReadOnlySet<string> HonuaServerBatchOverrideKeys = new HashSet<string>(StringComparer.Ordinal)
     {
         "batch.vcpus",

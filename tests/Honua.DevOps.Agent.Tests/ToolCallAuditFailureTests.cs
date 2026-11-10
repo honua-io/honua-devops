@@ -43,6 +43,28 @@ public sealed class ToolCallAuditFailureTests
         Assert.True(record.Mutated);
     }
 
+    [Theory]
+    [InlineData("infrastructure-provisioned", "terraform:operation:apply", "terraform-exact:provision_infrastructure")]
+    [InlineData("install-handoff-written", "install-handoff:operation", "install-handoff")]
+    [InlineData("install-handoff-verified", "verify-install-handoff:operation", "verify-install-handoff")]
+    public async Task InstallEntryAuditFailureRetainsTheCanonicalStepForReconciliation(string status, string suffix, string route)
+    {
+        using TerraformTestRoot root = new();
+        AuditRecoveryStore recovery = new(Path.Combine(root.Path, "audit-recovery"));
+        ProvisioningLineage lineage = new("operation", ApplyAuditEventId: "apply-audit");
+        OperationResponse response = new(status, "canonical handler result", [], [], [], [],
+            ProvisioningLineage: lineage,
+            BackendSteps: [new("canonical-write", "fixture", true, "acknowledged", "", true)]);
+        await Assert.ThrowsAsync<IOException>(() => ToolCallAuditor.EmitAsync(
+            new("session", "execute", "execute-lower-env", "direct-allowed", "mcp", new FailingAuditSink(new IOException("disk full")), recovery),
+            new("install_honua", null), response, CancellationToken.None));
+        Assert.True(recovery.TryRead("honua-devops:" + suffix, out var evidence));
+        Assert.Equal(route, evidence!.Route);
+        Assert.Equal("install_honua", evidence.ToolName);
+        Assert.Equal("operation", evidence.ProvisioningOperationId);
+        if (status == "infrastructure-provisioned") Assert.Equal("apply-audit", evidence.AuditEventId);
+    }
+
     private sealed class CapturingAuditSink : IAuditSink
     {
         internal List<AuditRecord> Records { get; } = [];

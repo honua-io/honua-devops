@@ -115,7 +115,7 @@ public sealed partial class TerraformProvisioningTests
             Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(bytes)), server.Receipt.Sha256);
             Assert.Equal(bytes, RetainedEvidence().Read(server.Receipt));
             RetainedEvidence().ValidateAppliedLineage(server.ProvisioningLineage!);
-            Assert.Equal(8, server.ProvisioningLineage!.EvidenceRefs!.Count);
+            Assert.Equal(9, server.ProvisioningLineage!.EvidenceRefs!.Count);
         }
         Assert.NotEqual(created.AuditEventId, replay.AuditEventId);
         string[] keys = handler.CapturedRequests.Where(r => r.Method == "POST" && r.Uri.EndsWith("/deploy/operations", StringComparison.Ordinal))
