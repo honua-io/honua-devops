@@ -405,7 +405,7 @@ Things this plan doesn't have an answer for yet, in order of urgency.
 
 6. **What about `honua-server-ai-work`?** Another shadow repo flagged in the file listing. Worth verifying what's there before assuming the AI work is consolidated.
 
-7. **Are there any external contributors we should be coordinating with?** Open-source projects benefit from community; closed migration products don't. The plan splits these correctly but needs explicit governance docs.
+7. **How should external feedback be coordinated?** Issues, interoperability reports and design feedback are welcome; outside code contributions are not accepted. See the [organization contribution policy](https://github.com/honua-io/.github/blob/main/CONTRIBUTING.md).
 
 8. **GTC submission timing.** If we want a 2027 GTC speaking slot, the submission deadline is typically Q4 2026. The open-weights work needs to be measurable by then (eval published, downloads counted, customer story). Phase 4 timing supports this.
 
@@ -518,7 +518,7 @@ Reference: copy-paste-ready epic titles + sub-issues for the five new epics in Â
 
 **Repo:** new `honua-io/honua-gis-llm`
 **License:** Apache-2.0 for tooling; model weights under selected base model's license (Qwen Apache-2.0 if Qwen 2.5 Coder is chosen)
-**Owner:** founder (model + corpus) + community contributors (after v0)
+**Owner:** founder (model + corpus). External feedback follows the [organization contribution policy](https://github.com/honua-io/.github/blob/main/CONTRIBUTING.md).
 
 **Sub-issues:**
 1. Eval harness: `gis-workflow-eval` â€” 50 prompts with expected outputs covering query, geoprocessing, styling, raster ops; published as GitHub repo for reproducibility
