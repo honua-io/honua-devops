@@ -1,21 +1,25 @@
 using System.Text;
 using System.Text.Json;
+using Honua.DevOps.Agent.Operations.BugReport;
 
 namespace Honua.DevOps.Agent.Operations;
 
-/// <summary>
-/// Processes a single inbound escalation webhook request. The HTTP transport
-/// (HttpListener) is kept separate so this can be unit-tested by passing in
-/// the raw body and headers — no socket needed.
-/// </summary>
 internal sealed class EscalationWebhookHandler
 {
+    private static readonly TimeSpan DefaultIdempotencyRetention = TimeSpan.FromHours(1);
+
     private readonly byte[] _secret;
     private readonly Func<EscalationWebhookPayload, CancellationToken, Task>? _onAccepted;
+    private readonly TimeSpan? _replayWindow;
+    private readonly IEventIdempotencyStore _idempotencyStore;
+    private readonly Func<DateTimeOffset> _now;
 
     internal EscalationWebhookHandler(
         string secret,
-        Func<EscalationWebhookPayload, CancellationToken, Task>? onAccepted = null)
+        Func<EscalationWebhookPayload, CancellationToken, Task>? onAccepted = null,
+        TimeSpan? replayWindow = null,
+        IEventIdempotencyStore? idempotencyStore = null,
+        Func<DateTimeOffset>? now = null)
     {
         if (string.IsNullOrEmpty(secret))
         {
@@ -24,6 +28,10 @@ internal sealed class EscalationWebhookHandler
 
         _secret = Encoding.UTF8.GetBytes(secret);
         _onAccepted = onAccepted;
+        _replayWindow = replayWindow is { } window && window > TimeSpan.Zero ? window : null;
+        _now = now ?? (() => DateTimeOffset.UtcNow);
+        TimeSpan retention = _replayWindow ?? DefaultIdempotencyRetention;
+        _idempotencyStore = idempotencyStore ?? new InMemoryEventIdempotencyStore(retention, _now);
     }
 
     internal async Task<WebhookHandlerResult> HandleAsync(
@@ -70,9 +78,46 @@ internal sealed class EscalationWebhookHandler
                 Payload: null);
         }
 
+        if (_replayWindow is { } replayWindow)
+        {
+            if (payload.EscalatedAt is not { } escalatedAt)
+            {
+                return new WebhookHandlerResult(
+                    StatusCode: 400,
+                    Reason: "missing-escalated-at",
+                    Payload: payload);
+            }
+
+            TimeSpan age = _now() - escalatedAt;
+            if (age > replayWindow || age < -replayWindow)
+            {
+                return new WebhookHandlerResult(
+                    StatusCode: 400,
+                    Reason: "stale-timestamp",
+                    Payload: payload);
+            }
+        }
+
+        string? normalizedEventId = string.IsNullOrWhiteSpace(payload.EventId)
+            ? null
+            : payload.EventId.Trim();
+
+        if (normalizedEventId is not null && _idempotencyStore.IsProcessed(normalizedEventId))
+        {
+            return new WebhookHandlerResult(
+                StatusCode: 409,
+                Reason: "duplicate-event",
+                Payload: payload);
+        }
+
         if (_onAccepted is not null)
         {
             await _onAccepted(payload, cancellationToken);
+        }
+
+        if (normalizedEventId is not null)
+        {
+            _idempotencyStore.TryMarkProcessed(normalizedEventId);
         }
 
         return new WebhookHandlerResult(

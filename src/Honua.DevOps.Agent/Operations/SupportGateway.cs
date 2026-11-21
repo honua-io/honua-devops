@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Text.Json;
+using Honua.DevOps.Agent.Operations.Audit;
 using Honua.DevOps.Agent.Operations.ConsoleBridge;
 using Honua.DevOps.Agent.Operations.GuidedFix;
 using Honua.DevOps.Agent.Operations.Troubleshooting;
@@ -18,6 +20,8 @@ internal sealed class SupportGateway : IDisposable
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
     private readonly HttpJsonTransport _transport;
+    private readonly object _auditChainLock = new();
+    private string _lastProposalChainHash = CvePatchProposalBuilder.GenesisChainHash;
 
     internal SupportGateway(BackendConfiguration configuration, HttpClient? httpClient = null)
     {
@@ -413,6 +417,238 @@ internal sealed class SupportGateway : IDisposable
             relativePath,
             payload,
             cancellationToken);
+    }
+
+    internal async Task<CustomerFixProposalResult> ProposeCustomerFixAsync(
+        CvePatchProposal proposal,
+        IAuditSink auditSink,
+        string? chainKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(proposal);
+        ArgumentNullException.ThrowIfNull(auditSink);
+
+        if (configuration.SupportApiBaseUri is null)
+        {
+            BackendCallResult disabled = new(
+                IsSuccess: false,
+                Endpoint: "none",
+                Detail: "support-api-disabled",
+                PayloadPreview: "SupportApiBaseUri is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.");
+            (string eventId, string entryHash) = await WriteProposalAuditAsync(
+                auditSink, proposal, disabled, proposalId: null, chainKey, cancellationToken);
+            return new CustomerFixProposalResult(false, disabled, null, eventId, entryHash, proposal.ProposalDigest);
+        }
+
+        string relativePath = BuildTicketPath(proposal.TicketId, "propose-ops-action");
+        object payload = BuildCustomerFixWirePayload(proposal);
+        using BackendJsonResult jsonResult = await SendJsonAsync(
+            HttpMethod.Post,
+            relativePath,
+            payload,
+            cancellationToken);
+
+        string? proposalId = ExtractProposalId(jsonResult.Payload);
+        (string auditEventId, string auditEntryHash) = await WriteProposalAuditAsync(
+            auditSink, proposal, jsonResult.CallResult, proposalId, chainKey, cancellationToken);
+
+        return new CustomerFixProposalResult(
+            IsSuccess: jsonResult.CallResult.IsSuccess,
+            BackendResult: jsonResult.CallResult,
+            ProposalId: proposalId,
+            AuditEventId: auditEventId,
+            AuditEntryHash: auditEntryHash,
+            ProposalDigest: proposal.ProposalDigest);
+    }
+
+    internal async Task<CustomerFixProposalResult> ProposeCustomerFixDirectAsync(
+        Uri customerServerBaseUri,
+        string breakGlassOpsProposeToken,
+        CvePatchProposal proposal,
+        IAuditSink auditSink,
+        string? chainKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(customerServerBaseUri);
+        ArgumentNullException.ThrowIfNull(proposal);
+        ArgumentNullException.ThrowIfNull(auditSink);
+
+        if (string.IsNullOrWhiteSpace(breakGlassOpsProposeToken))
+        {
+            throw new ArgumentException("Break-glass ops:propose token is required.", nameof(breakGlassOpsProposeToken));
+        }
+
+        if (!customerServerBaseUri.IsLoopback &&
+            !customerServerBaseUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "Direct break-glass proposal submission requires https for non-local customer endpoints.",
+                nameof(customerServerBaseUri));
+        }
+
+        Uri endpoint = BackendGateway.BuildEndpoint(customerServerBaseUri, "api/v1/admin/proposals");
+        object payload = BuildCustomerFixWirePayload(proposal);
+        string token = breakGlassOpsProposeToken.Trim();
+        using BackendJsonResult jsonResult = await _transport.SendJsonAsync(
+            HttpMethod.Post,
+            endpoint,
+            payload,
+            request => request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token),
+            cancellationToken);
+
+        string? proposalId = ExtractProposalId(jsonResult.Payload);
+        (string auditEventId, string auditEntryHash) = await WriteProposalAuditAsync(
+            auditSink, proposal, jsonResult.CallResult, proposalId, chainKey, cancellationToken);
+
+        return new CustomerFixProposalResult(
+            IsSuccess: jsonResult.CallResult.IsSuccess,
+            BackendResult: jsonResult.CallResult,
+            ProposalId: proposalId,
+            AuditEventId: auditEventId,
+            AuditEntryHash: auditEntryHash,
+            ProposalDigest: proposal.ProposalDigest);
+    }
+
+    private static object BuildCustomerFixWirePayload(CvePatchProposal proposal) => new
+    {
+        proposalKind = proposal.ProposalKind,
+        ticketId = proposal.TicketId,
+        actionId = CvePatchProposalBuilder.ActionIdValue,
+        cveId = proposal.CveId,
+        releaseVersion = proposal.ReleaseVersion,
+        desiredRevision = proposal.DesiredRevision,
+        workerImageDigest = proposal.WorkerImageDigest,
+        releaseLockDigest = proposal.SigstoreReleaseLockRef,
+        cloudFormationServerImageUri = proposal.CloudFormationServerImageUri,
+        cloudFormationParameters = proposal.CloudFormationParameters,
+        changeSetInstructions = proposal.ChangeSetInstructions,
+        rationale = proposal.Rationale,
+        proposedBy = proposal.ProposedBy,
+        proposalDigest = proposal.ProposalDigest,
+        authority = "ops:propose"
+    };
+
+    private async Task<(string AuditEventId, string EntryHash)> WriteProposalAuditAsync(
+        IAuditSink auditSink,
+        CvePatchProposal proposal,
+        BackendCallResult callResult,
+        string? proposalId,
+        string? chainKey,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset timestamp = DateTimeOffset.UtcNow;
+        string auditEventId = Guid.NewGuid().ToString("n");
+        string previousHash;
+        string entryHash;
+
+        lock (_auditChainLock)
+        {
+            previousHash = _lastProposalChainHash;
+            entryHash = CvePatchProposalBuilder.ComputeChainHash(
+                auditEventId,
+                timestamp,
+                proposal.TicketId,
+                proposal.CveId,
+                proposal.DesiredRevision,
+                proposal.ProposalDigest,
+                proposalId,
+                callResult.Endpoint,
+                previousHash,
+                chainKey);
+            _lastProposalChainHash = entryHash;
+        }
+
+        Dictionary<string, string> arguments = new(StringComparer.Ordinal)
+        {
+            ["ticketId"] = Redaction.Scrub(proposal.TicketId),
+            ["cveId"] = Redaction.Scrub(proposal.CveId),
+            ["releaseVersion"] = Redaction.Scrub(proposal.ReleaseVersion),
+            ["desiredRevision"] = Redaction.Scrub(proposal.DesiredRevision),
+            ["sigstoreReleaseLockRef"] = Redaction.Scrub(proposal.SigstoreReleaseLockRef),
+            ["cloudFormationServerImageUri"] = Redaction.Scrub(proposal.CloudFormationServerImageUri),
+            ["proposalDigest"] = proposal.ProposalDigest,
+            ["proposalId"] = proposalId ?? string.Empty,
+            ["endpoint"] = Redaction.Scrub(callResult.Endpoint),
+            ["previousChainHash"] = previousHash,
+            ["entryChainHash"] = entryHash
+        };
+
+        AuditRecord record = new(
+            Timestamp: timestamp,
+            SessionId: "support-cve-proposal-loop",
+            AuditEventId: auditEventId,
+            ToolName: CvePatchProposalBuilder.AuditToolName,
+            Arguments: arguments,
+            Status: callResult.IsSuccess ? "proposed" : $"failed:{callResult.Detail}",
+            Summary: Redaction.Scrub(
+                $"Submitted {proposal.CveId} ({proposal.ReleaseVersion}) patch proposal for ticket {proposal.TicketId}."),
+            Mutated: false,
+            ExecutionMode: "propose",
+            ExecutionTier: "propose",
+            ApprovalMode: "hitl-inbox",
+            Provider: "honua-devops",
+            BackendSteps:
+            [
+                new OperationBackendStep(
+                    Name: "propose-customer-fix",
+                    Endpoint: callResult.Endpoint,
+                    Success: callResult.IsSuccess,
+                    Detail: callResult.Detail,
+                    PayloadPreview: callResult.PayloadPreview,
+                    MutatesState: false)
+            ],
+            Evidence: null);
+
+        await auditSink.WriteAsync(record, cancellationToken);
+        return (auditEventId, entryHash);
+    }
+
+    private static string? ExtractProposalId(JsonDocument? payload)
+    {
+        if (payload is null || payload.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        JsonElement root = payload.RootElement;
+
+        if (TryReadProposalId(root, out string? direct))
+        {
+            return direct;
+        }
+
+        if (root.TryGetProperty("proposal", out JsonElement nested) &&
+            nested.ValueKind == JsonValueKind.Object &&
+            TryReadProposalId(nested, out string? nestedId))
+        {
+            return nestedId;
+        }
+
+        if (root.TryGetProperty("data", out JsonElement data) &&
+            data.ValueKind == JsonValueKind.Object &&
+            TryReadProposalId(data, out string? dataId))
+        {
+            return dataId;
+        }
+
+        return null;
+    }
+
+    private static bool TryReadProposalId(JsonElement obj, out string? proposalId)
+    {
+        foreach (string key in new[] { "proposalId", "id" })
+        {
+            if (obj.TryGetProperty(key, out JsonElement value) &&
+                value.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(value.GetString()))
+            {
+                proposalId = value.GetString()!.Trim();
+                return true;
+            }
+        }
+
+        proposalId = null;
+        return false;
     }
 
     private string BuildTicketPath(string ticketId, string? childPath = null)
