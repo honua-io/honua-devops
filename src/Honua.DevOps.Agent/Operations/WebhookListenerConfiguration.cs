@@ -11,12 +11,14 @@ internal sealed record WebhookListenerConfiguration(
     string Secret,
     int Port,
     string Path,
-    bool AutoTriage)
+    bool AutoTriage,
+    int? ReplayWindowSeconds = null)
 {
     private const string SecretVariable = "HONUA_DEVOPS_WEBHOOK_SECRET";
     private const string PortVariable = "HONUA_DEVOPS_WEBHOOK_PORT";
     private const string PathVariable = "HONUA_DEVOPS_WEBHOOK_PATH";
     private const string AutoTriageVariable = "HONUA_DEVOPS_WEBHOOK_AUTO_TRIAGE";
+    private const string ReplayWindowSecondsVariable = "HONUA_DEVOPS_WEBHOOK_REPLAY_WINDOW_SECONDS";
 
     internal const int DefaultPort = 8090;
     internal const string DefaultPath = "/escalations";
@@ -73,10 +75,24 @@ internal sealed record WebhookListenerConfiguration(
             }
         }
 
+        int? replayWindowSeconds = null;
+        string? rawReplayWindow = Environment.GetEnvironmentVariable(ReplayWindowSecondsVariable);
+        if (!string.IsNullOrWhiteSpace(rawReplayWindow))
+        {
+            if (!int.TryParse(rawReplayWindow.Trim(), out int parsedWindow) || parsedWindow < 1)
+            {
+                throw new InvalidOperationException(
+                    $"Environment variable `{ReplayWindowSecondsVariable}` must be a positive integer.");
+            }
+
+            replayWindowSeconds = parsedWindow;
+        }
+
         return new WebhookListenerConfiguration(
             Secret: rawSecret.Trim(),
             Port: port,
             Path: path,
-            AutoTriage: autoTriage);
+            AutoTriage: autoTriage,
+            ReplayWindowSeconds: replayWindowSeconds);
     }
 }

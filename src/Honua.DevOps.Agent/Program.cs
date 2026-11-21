@@ -143,9 +143,13 @@ try
         WebhookListenerConfiguration listenerConfiguration = WebhookListenerConfiguration.Load();
         HonuaOperationsToolkit listenerToolkit = new(runtime, backendGateway, policy, supportGateway);
         EscalationConsoleReporter reporter = new(listenerConfiguration.AutoTriage ? listenerToolkit : null);
+        TimeSpan? replayWindow = listenerConfiguration.ReplayWindowSeconds is { } seconds
+            ? TimeSpan.FromSeconds(seconds)
+            : null;
         EscalationWebhookHandler webhookHandler = new(
             listenerConfiguration.Secret,
-            (payload, token) => reporter.ReportAsync(payload, token));
+            (payload, token) => reporter.ReportAsync(payload, token),
+            replayWindow: replayWindow);
         await using EscalationWebhookListener listener = new(listenerConfiguration, webhookHandler);
         await listener.RunAsync(cancellationTokenSource.Token);
         return;
