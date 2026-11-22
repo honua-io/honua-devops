@@ -610,12 +610,12 @@ internal sealed partial class HonuaOperationsToolkit(
                 [
                     $"Honua API endpoint: {result.CallResult.Endpoint}",
                     $"Backend result: {result.CallResult.Detail}",
-                    "The metadata-release lifecycle requires Redis-backed durable op storage; a 404/503 here may mean the operation was never submitted or durable storage is unavailable."
+                    "The metadata-release lifecycle keeps its durable operation record in PostgreSQL; a 404/503 here may mean the operation was never submitted or the server cannot reach its database."
                 ],
                 Actions:
                 [
                     "Confirm the layer change was submitted via POST /api/v1/admin/metadata/releases/operations.",
-                    "Confirm the server has Redis-backed durable workflow-operation storage configured."
+                    "Confirm the server's PostgreSQL connection (ConnectionStrings__DefaultConnection) is configured and reachable."
                 ],
                 ValidationChecks: ["metadata-release-operation-readable"],
                 Risks: ["Without the durable operation record the safe-rollback loop cannot be observed or diagnosed."],
