@@ -610,12 +610,12 @@ internal sealed partial class HonuaOperationsToolkit(
                 [
                     $"Honua API endpoint: {result.CallResult.Endpoint}",
                     $"Backend result: {result.CallResult.Detail}",
-                    "The metadata-release lifecycle requires the server's durable workflow-operation storage (PostgreSQL); a 404/503 here may mean the operation was never submitted or durable storage is unavailable."
+                    "The metadata-release lifecycle keeps its durable operation record in PostgreSQL; a 404/503 here may mean the operation was never submitted or the server cannot reach its database."
                 ],
                 Actions:
                 [
                     "Confirm the layer change was submitted via POST /api/v1/admin/metadata/releases/operations.",
-                    "Confirm the server database that stores durable workflow operations is reachable."
+                    "Confirm the server's PostgreSQL connection (ConnectionStrings__DefaultConnection) is configured and reachable."
                 ],
                 ValidationChecks: ["metadata-release-operation-readable"],
                 Risks: ["Without the durable operation record the safe-rollback loop cannot be observed or diagnosed."],
@@ -1190,7 +1190,7 @@ internal sealed partial class HonuaOperationsToolkit(
         string budgetProfile,
         string preferredCloud,
         CancellationToken cancellationToken = default,
-        bool? enableRedis = null, bool customDomain = false, bool enableGpBatch = false)
+        bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
     {
         BackendCallResult backendResult = await gateway.RequestRequirementsAnalysisAsync(
             customerRequirements,
@@ -1225,14 +1225,9 @@ internal sealed partial class HonuaOperationsToolkit(
                 "Missing non-functional requirements can produce under- or over-sized topology.",
                 "Cost-only optimization can undercut resiliency for critical workloads."
             ])
-            .Build() with { Topology = new(AdvisoryTerraformTarget,
-                enableRedis ?? AdvisoryRedisDefault, customDomain, false, enableGpBatch) };
+            .Build() with { Topology = new(ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).TerraformTarget,
+                enableRedis, customDomain, false, enableGpBatch) };
     }
-
-    private string AdvisoryTerraformTarget => ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).TerraformTarget;
-
-    // ECS keeps shared state in PostgreSQL only; the Lambda root still provisions Redis by default.
-    private bool AdvisoryRedisDefault => AdvisoryTerraformTarget == "lambda";
 
     [Description("Recommend deployment topology via Honua API, including WAF, ingress, and edge rate limiting choices.")]
     public async Task<OperationResponse> RecommendDeploymentTopologyAsync(
@@ -1243,7 +1238,7 @@ internal sealed partial class HonuaOperationsToolkit(
         string trafficProfile,
         string riskTolerance,
         CancellationToken cancellationToken = default,
-        bool? enableRedis = null, bool customDomain = false, bool enableGpBatch = false)
+        bool enableRedis = true, bool customDomain = false, bool enableGpBatch = false)
     {
         BackendCallResult backendResult = await gateway.RequestTopologyRecommendationAsync(
             environment,
@@ -1276,8 +1271,8 @@ internal sealed partial class HonuaOperationsToolkit(
                 "No-WAF posture increases exposure to application-layer attacks.",
                 "Skipping validated template modules can introduce config drift."
             ])
-            .Build() with { Topology = new(AdvisoryTerraformTarget,
-                enableRedis ?? AdvisoryRedisDefault, customDomain, enableWaf, enableGpBatch) };
+            .Build() with { Topology = new(ProvisioningRuntimeProfile.Resolve(runtime.RuntimeKind).TerraformTarget,
+                enableRedis, customDomain, enableWaf, enableGpBatch) };
     }
 
     [Description(
