@@ -316,12 +316,12 @@ internal sealed class TerraformTestRoot : IDisposable
         }
     }
 
-    internal static void WriteDeployIdentityContract(string directory, bool redis = true, bool customDomain = false)
+    internal static void WriteDeployIdentityContract(string directory, bool customDomain = false)
         => File.WriteAllText(System.IO.Path.Combine(directory, "deploy-identity-contract.json"), JsonSerializer.Serialize(new
         {
             schema_version = "v1", kind = "honua.iac.deploy-identity",
             role_arn = "arn:aws:iam::123456789012:role/honua-deploy-dev",
-            topology = new { compute = "ecs", redis, custom_domain = customDomain, waf = false, gp_batch = false },
+            topology = new { compute = "ecs", redis = false, custom_domain = customDomain, waf = false, gp_batch = false },
             actions_by_service = new Dictionary<string, string[]> { ["ecs"] = ["ecs:CreateService", "ecs:DescribeServices"] }
         }));
 

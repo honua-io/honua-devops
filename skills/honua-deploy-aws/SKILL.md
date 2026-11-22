@@ -84,7 +84,7 @@ topology recommendation into authority to provision a custom topology.
 
 At the approval stage, present the returned account/execution identity, region,
 topology, exact deploy-identity actions, resource changes, cost drivers (RDS,
-Fargate, load balancer, NAT, storage and optional Redis/logs), saved-plan hash
+Fargate, load balancer, NAT, storage and optional logs), saved-plan hash
 and plan metadata digest. Save the unchanged plan response privately for the
 approver. Ask the user to review this exact plan. Do not regenerate a plan after
 approval or treat a chat confirmation as a signed receipt.

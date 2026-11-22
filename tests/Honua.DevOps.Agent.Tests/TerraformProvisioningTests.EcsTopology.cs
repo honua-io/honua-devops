@@ -6,13 +6,13 @@ namespace Honua.DevOps.Agent.Tests;
 public sealed partial class TerraformProvisioningTests
 {
     [Theory]
-    [InlineData("{\"redis_enabled\":false,\"domain_name\":\"gis.example.com\",\"route53_zone_id\":\"Z123ABC\",\"subject_alternative_names\":[\"maps.example.com\"]}")]
-    [InlineData("{\"redis_enabled\":false,\"region\":\"us-east-1\",\"domain_name\":\"gis.example.com\",\"alb_certificate_arn\":\"arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555\",\"domain_alias_record_enabled\":false,\"alb_enable_http_redirect\":true}")]
-    [InlineData("{\"redis_enabled\":false,\"domain_name\":\"gis.example.com\",\"route53_zone_id\":\"Z123ABC\",\"console_image\":\"ghcr.io/honua-io/honua-console@sha256:14f6fd9bb72183807294dda59758dc196210dadd8939a21608e71bb3a96898e4\"}")]
+    [InlineData("{\"domain_name\":\"gis.example.com\",\"route53_zone_id\":\"Z123ABC\",\"subject_alternative_names\":[\"maps.example.com\"]}")]
+    [InlineData("{\"region\":\"us-east-1\",\"domain_name\":\"gis.example.com\",\"alb_certificate_arn\":\"arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555\",\"domain_alias_record_enabled\":false,\"alb_enable_http_redirect\":true}")]
+    [InlineData("{\"domain_name\":\"gis.example.com\",\"route53_zone_id\":\"Z123ABC\",\"console_image\":\"ghcr.io/honua-io/honua-console@sha256:14f6fd9bb72183807294dda59758dc196210dadd8939a21608e71bb3a96898e4\"}")]
     public async Task EcsTopology_MapsValidatedInputsToTheSavedPlan(string variables)
     {
         using TerraformTestRoot root = new();
-        TerraformTestRoot.WriteDeployIdentityContract(root.Path, redis: false, customDomain: true);
+        TerraformTestRoot.WriteDeployIdentityContract(root.Path, customDomain: true);
         FakeSubstrateRunner runner = new();
         using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
         HonuaOperationsToolkit toolkit = new(
@@ -25,7 +25,7 @@ public sealed partial class TerraformProvisioningTests
         using JsonDocument expected = JsonDocument.Parse(variables);
         foreach (JsonProperty input in expected.RootElement.EnumerateObject())
             Assert.True(JsonElement.DeepEquals(input.Value, actual.RootElement.GetProperty(input.Name)), input.Name);
-        Assert.False(actual.RootElement.GetProperty("redis_enabled").GetBoolean());
+        Assert.False(actual.RootElement.TryGetProperty("redis_enabled", out _));
         Assert.Equal(1, actual.RootElement.GetProperty("desired_count").GetInt32());
         Assert.False(actual.RootElement.GetProperty("canary_enabled").GetBoolean());
         Assert.DoesNotContain(runner.Calls, call => call.Operation == "terraform-exact-apply.sh");
@@ -33,7 +33,9 @@ public sealed partial class TerraformProvisioningTests
     }
 
     [Theory]
-    [InlineData("{\"redis_enabled\":\"false\"}")]
+    [InlineData("{\"redis_enabled\":false}")]
+    [InlineData("{\"redis_enabled\":true}")]
+    [InlineData("{\"alb_enable_http_redirect\":\"false\"}")]
     [InlineData("{\"domain_name\":\"https://gis.example.com\",\"route53_zone_id\":\"Z123ABC\"}")]
     [InlineData("{\"domain_name\":\"*.example.com\",\"route53_zone_id\":\"Z123ABC\"}")]
     [InlineData("{\"domain_name\":\"gis.example.com\"}")]
