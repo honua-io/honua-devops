@@ -12,8 +12,8 @@ public sealed partial class TerraformProvisioningTests
     public async Task EcsReleaseScope_ExactPlanApprovalAndIdentityEvidenceSurviveRestartThroughApprovedDestroy()
     {
         using TerraformTestRoot root = new();
-        TerraformTestRoot.WriteDeployIdentityContract(root.Path, redis: false, customDomain: true);
-        const string variables = """{"redis_enabled":false,"domain_name":"gis.example.com","route53_zone_id":"Z123ABC"}""";
+        TerraformTestRoot.WriteDeployIdentityContract(root.Path, customDomain: true);
+        const string variables = """{"domain_name":"gis.example.com","route53_zone_id":"Z123ABC"}""";
         FakeSubstrateRunner runner = new();
         using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
         HonuaOperationsToolkit Create(ExecutionTier tier) => new(

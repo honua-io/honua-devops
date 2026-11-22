@@ -40,7 +40,6 @@ internal sealed partial class HonuaOperationsToolkit
         "task_cpu_architecture",
         "db_publicly_accessible",
         "enable_postgis",
-        "redis_enabled",
         "domain_name",
         "route53_zone_id",
         "alb_certificate_arn",
@@ -313,7 +312,6 @@ internal sealed partial class HonuaOperationsToolkit
                 // above ambient TF_VAR or terraform.tfvars defaults.
                 foreach (string name in new[] { "domain_name", "route53_zone_id", "alb_certificate_arn" })
                     planVariables.TryAdd(name, "");
-                planVariables["redis_connection_string"] = "";
                 planVariables["waf_web_acl_arn"] = "";
                 string contractFile = Path.Combine(planDirectory, "deploy-identity-contract.json");
                 await File.WriteAllTextAsync(contractFile, deployIdentity.Json, cancellationToken);
@@ -1724,7 +1722,6 @@ internal sealed partial class HonuaOperationsToolkit
             ["deployment_mode"] = "SingleInstance",
             ["desired_count"] = 1,
             ["max_capacity"] = 1,
-            ["redis_enabled"] = true,
             ["canary_enabled"] = false,
             ["alb_deletion_protection"] = false,
             ["alb_access_logs_enabled"] = false,
@@ -1829,7 +1826,7 @@ internal sealed partial class HonuaOperationsToolkit
             "task_cpu_architecture" => ValidateChoice(name, value, "X86_64", "ARM64"),
             "deployment_mode" => ValidateChoice(name, value, "SingleInstance"),
             "desired_count" or "max_capacity" => ValidateExactInteger(name, value, 1),
-            "redis_enabled" or "domain_alias_record_enabled" or "alb_enable_http_redirect" => ValidateBoolean(name, value),
+            "domain_alias_record_enabled" or "alb_enable_http_redirect" => ValidateBoolean(name, value),
             "domain_name" => ValidateDomain(name, value),
             "route53_zone_id" => ValidateString(name, value, new Regex("^Z[A-Z0-9]{1,31}$", RegexOptions.CultureInvariant)),
             "alb_certificate_arn" => ValidateString(name, value,

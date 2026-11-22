@@ -13,8 +13,9 @@ internal sealed record ProvisioningTopology(
     [property: JsonPropertyName("waf")] bool Waf,
     [property: JsonPropertyName("gp_batch")] bool GpBatch)
 {
+    // The aws-ecs root keeps shared state in PostgreSQL only, so ECS never requests Redis.
     internal static ProvisioningTopology Ecs(IReadOnlyDictionary<string, object?> variables) => new("ecs",
-        variables.GetValueOrDefault("redis_enabled") is true,
+        false,
         new[] { "domain_name", "alb_certificate_arn", "route53_zone_id" }.Any(key =>
             variables.GetValueOrDefault(key) is string { Length: > 0 }), false, false);
 }
@@ -80,8 +81,10 @@ internal sealed partial class HonuaOperationsToolkit
         try
         {
             contract = DeployIdentityContract.Load(runtime.DeployIdentityContractPath);
-            if (contract.Topology != ProvisioningTopology.Ecs(variables))
-                return ProvisioningRefusal("deploy-identity-topology-mismatch", "The administrator's deployment role contract does not match the requested topology.", [], []);
+            ProvisioningTopology requested = ProvisioningTopology.Ecs(variables);
+            if (contract.Topology != requested)
+                return ProvisioningRefusal("deploy-identity-topology-mismatch", "The administrator's deployment role contract does not match the requested topology.",
+                    [$"Ask the administrator to bootstrap aws-exec-identity with topology compute=ecs, redis=false (aws-ecs has no Redis), custom_domain={(requested.CustomDomain ? "true" : "false")}, waf=false, gp_batch=false."], []);
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or

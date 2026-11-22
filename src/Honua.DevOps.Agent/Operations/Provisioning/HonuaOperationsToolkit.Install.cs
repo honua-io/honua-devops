@@ -132,7 +132,7 @@ internal sealed partial class HonuaOperationsToolkit
         {
             Findings = [.. plan.Findings,
                 $"Install region: {JsonDocumentRegion(session.VariablesJson)}.",
-                "Cost drivers: ECS Fargate task CPU/memory and replica count, RDS instance/storage/backups, ALB, NAT/network egress, optional Redis and logs. No price quote is implied; review the exact resource changes above.",
+                "Cost drivers: ECS Fargate task CPU/memory and replica count, RDS instance/storage/backups, ALB, NAT/network egress and optional logs. No price quote is implied; review the exact resource changes above.",
                 "Use short-lived SSO/OIDC/assumed-role credentials only. This workflow never creates IAM users or long-lived access keys."]
         }, "approval", "Present account/execution identity, topology, exact deploy identity action list, region, resources, cost drivers and planMetadataDigest to the user. Obtain the separate approver's signed receipt for this exact plan, then call install_honua with installationId, confirmed=true, the plan's confirmation challenge and approvalReceiptJson.");
 

@@ -72,7 +72,7 @@ scripts/run-aws-terraform-integration.sh \
   --stack both \
   --aot \
   --ecs-image ghcr.io/honua-io/honua-server:latest-aot \
-  --serverless-image 585192672263.dkr.ecr.us-west-2.amazonaws.com/honua-server:latest-lambda-aot
+  --serverless-image <account-id>.dkr.ecr.us-west-2.amazonaws.com/honua-server:latest-lambda-aot
 ```
 
 ### Azure apply/smoke/destroy

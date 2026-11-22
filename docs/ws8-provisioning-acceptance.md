@@ -83,8 +83,9 @@ metadata> --approved-digest <reviewed metadata digest>`, with
 init/plan/apply and the independent backend/state/credential refusal matrix.
 The public tool, not the release harness, owns this execution path.
 
-ECS-small can express Redis off and a customer hostname using managed
-Route53/ACM or an existing certificate. Its topology tuple and exact action list
+ECS-small keeps shared state in PostgreSQL only (no Redis since honua-iac
+#512) and can use a customer hostname with managed Route53/ACM or an existing
+certificate. Its topology tuple and exact action list
 come from the administrator's topology-aware `deploy_identity_contract` in
 honua-iac #349. The operator requires that role's assumed session, binds the
 contract hash into the saved-plan input digest, and retains the exact contract
@@ -100,8 +101,8 @@ Lineage and cleanup are implemented, including restart and failure paths:
   fixtures for partial failure, cancellation, live-child custody, unknown state,
   and fresh separately approved destroy recovery. Cleanup inspection never turns
   an indeterminate mutation into a successful deletion or reuses a spent plan.
-- `TerraformProvisioningTests.EcsReleaseScope` joins Redis-off/custom-domain
-  planning to exact saved-plan apply, the approved digest, retained contract and
+- `TerraformProvisioningTests.EcsReleaseScope` joins custom-domain planning
+  to exact saved-plan apply, the approved digest, retained contract and
   approval bytes, restart without a second mutation, and BreakGlass destroy.
 - Existing receipt-binding, approval issuer, contract-schema and handoff tests
   cover substitution, expiry, replay, partial verification and secretless output.

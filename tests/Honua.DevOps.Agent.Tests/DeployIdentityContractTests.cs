@@ -17,14 +17,14 @@ public sealed class DeployIdentityContractTests
         OperationResponse plan = await toolkit.ProvisionInfrastructureAsync("aws-ecs", "small", "plan", "{}", false, "");
         Assert.Equal("terraform-plan-ready", plan.Status);
         var contract = DeployIdentityContract.Load(runtime.DeployIdentityContractPath);
-        Assert.Equal(new ProvisioningTopology("ecs", true, false, false, false), plan.Topology);
+        Assert.Equal(new ProvisioningTopology("ecs", false, false, false, false), plan.Topology);
         Assert.Contains(plan.Findings, finding => finding.Contains("ecs:CreateService") && finding.Contains("ecs:DescribeServices"));
         Assert.Contains(plan.Findings, finding => finding.Contains(plan.ApprovalRequest!.PlanMetadataDigest));
         var call = Assert.Single(runner.Calls, call => call.Operation == "terraform-exact-plan.sh");
         using var inputs = JsonDocument.Parse(File.ReadAllText(call.Option("--var-file")!));
         Assert.Equal(contract.Digest, inputs.RootElement.GetProperty("tags").GetProperty(DeployIdentityContract.DigestTag).GetString());
         Assert.Equal("", inputs.RootElement.GetProperty("waf_web_acl_arn").GetString());
-        Assert.Equal("", inputs.RootElement.GetProperty("redis_connection_string").GetString());
+        Assert.False(inputs.RootElement.TryGetProperty("redis_connection_string", out _));
         Assert.Equal(contract.Json, File.ReadAllText(Path.Combine(Path.GetDirectoryName(call.Option("--plan-out"))!, "deploy-identity-contract.json")));
     }
 
@@ -71,7 +71,7 @@ public sealed class DeployIdentityContractTests
         if (failure == "missing") File.Delete(path);
         else
         {
-            if (failure == "topology") contract["topology"]!["redis"] = false;
+            if (failure == "topology") contract["topology"]!["redis"] = true;
             if (failure == "user") contract["role_arn"] = "arn:aws:iam::123456789012:user/admin";
             if (failure == "access-key") contract["actions_by_service"]!["iam"] = new JsonArray("iam:CreateAccessKey");
             File.WriteAllText(path, contract.ToJsonString());
@@ -114,5 +114,18 @@ public sealed class DeployIdentityContractTests
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(recommendation));
         Assert.Equal(5, json.RootElement.GetProperty("topology").EnumerateObject().Count());
         Assert.True(json.RootElement.GetProperty("topology").GetProperty("custom_domain").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData("aws-ecs", false)]
+    [InlineData("aws-lambda", true)]
+    public async Task Recommendation_DefaultsRedisOnlyForTheLambdaRuntime(string runtimeKind, bool expectedRedis)
+    {
+        using TerraformTestRoot root = new();
+        using BackendGateway gateway = ProvisioningSubstrateFixtures.CreateGateway();
+        var runtime = ProvisioningSubstrateFixtures.CreateRuntime(root.Path, ExecutionMode.Plan, ExecutionTier.Plan) with { RuntimeKind = runtimeKind };
+        HonuaOperationsToolkit toolkit = new(runtime, gateway);
+        var recommendation = await toolkit.RecommendDeploymentTopologyAsync("dev", false, false, true, "small", "low");
+        Assert.Equal(expectedRedis, recommendation.Topology!.Redis);
     }
 }

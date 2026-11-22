@@ -47,7 +47,8 @@ and no shared framework) running as a non-root user. Nothing below needs
 
 > Use honua-devops `v2026.1.3` for the AWS operator path. It includes
 > `install_honua`, Redis-off and TLS inputs, and the topology-bound deploy
-> identity. Pair it with an immutable honua-iac `v0.6.1` checkout: this is
+> identity. Later releases drop the ECS Redis input: aws-ecs keeps shared
+> state in PostgreSQL only. Pair it with an immutable honua-iac `v0.6.1` checkout: this is
 > the first release with exact deploy-identity actions and operator-contract v2.
 > The deploy-identity loader refuses wildcard actions.
 
@@ -565,10 +566,12 @@ relabels old evidence or silently falls back to the v1 schema. This version
 change does not authorize an infrastructure apply; normal approval controls
 remain in force.
 
-### ECS-small domain and Redis inputs
+### ECS-small domain inputs
 
-The `aws-ecs` / `small` preset accepts `redis_enabled=false`; the default stays
-true. It forwards `domain_name`, `route53_zone_id`, `alb_certificate_arn`,
+The `aws-ecs` / `small` preset keeps shared state in PostgreSQL only; the
+honua-iac `examples/aws` root has no Redis variables, so `redis_enabled` is
+refused as outside the allowlist and the derived topology always has
+`redis=false`. It forwards `domain_name`, `route53_zone_id`, `alb_certificate_arn`,
 `domain_alias_record_enabled`, `alb_enable_http_redirect`, and
 `subject_alternative_names` to the honua-iac `examples/aws` root and `aws-ecs`
 module using those exact variable names. For managed TLS and DNS, supply a DNS
@@ -577,7 +580,7 @@ supply the hostname plus an existing ACM certificate ARN in the ALB region.
 Certificate private keys and other secrets must stay outside tool arguments.
 
 These inputs are validated before any process starts and included in the saved
-plan's variable binding. Changing the domain, certificate, or Redis selection
+plan's variable binding. Changing the domain or certificate
 requires a fresh plan and approval. The preset still requires one instance,
 private database access, no canary, and all existing approval and identity gates.
 
@@ -593,8 +596,8 @@ never creates identities or keys, and refuses root, IAM users and other roles.
 Do not supply the contract or credentials as model tool arguments.
 
 Intake and recommendation return the typed `topology` tuple. Their optional
-`enableRedis`, `customDomain` and `enableGpBatch` inputs describe advisory intent;
-`enableWaf` remains the recommendation's WAF input. Provisioning derives the
+`enableRedis` (default `true` only on the Lambda runtime), `customDomain` and
+`enableGpBatch` inputs describe advisory intent; `enableWaf` remains the recommendation's WAF input. Provisioning derives the
 actual ECS tuple from validated variables, with WAF and GP Batch disabled in this
 preset, and requires an exact match with the administrator's contract. The
 launcher must also configure the root's workload permissions boundary from the
