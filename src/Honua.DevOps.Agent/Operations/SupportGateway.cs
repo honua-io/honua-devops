@@ -419,6 +419,90 @@ internal sealed class SupportGateway : IDisposable
             cancellationToken);
     }
 
+    internal async Task<BackendCallResult> PostPatchStatusAsync(
+        string ticketId,
+        PatchStatusUpdate update,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        update.Validate();
+        if (configuration.SupportApiBaseUri is null)
+        {
+            return DisabledSupportResult();
+        }
+
+        string relativePath = BuildTicketPath(ticketId, "patch-status");
+        return await SendAsync(HttpMethod.Post, relativePath, update, cancellationToken);
+    }
+
+    internal async Task<BackendCallResult> CollectAwsObservabilityAsync(
+        string ticketId,
+        AwsObservabilityCollectRequest? request = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (configuration.SupportApiBaseUri is null)
+        {
+            return DisabledSupportResult();
+        }
+
+        string relativePath = BuildTicketPath(ticketId, "aws-collect");
+        return await SendAsync(
+            HttpMethod.Post,
+            relativePath,
+            request ?? new AwsObservabilityCollectRequest(),
+            cancellationToken);
+    }
+
+    internal async Task<BackendCallResult> ProposeOpsFixAsync(
+        string ticketId,
+        OpsLoopFixProposalRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (configuration.SupportApiBaseUri is null)
+        {
+            return DisabledSupportResult();
+        }
+
+        string relativePath = BuildTicketPath(ticketId, "propose-ops-fix");
+        return await SendAsync(HttpMethod.Post, relativePath, request, cancellationToken);
+    }
+
+    internal async Task<BackendCallResult> PostTicketMessageAsync(
+        string ticketId,
+        SupportTicketMessageRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (configuration.SupportApiBaseUri is null)
+        {
+            return DisabledSupportResult();
+        }
+
+        string relativePath = BuildTicketPath(ticketId, "messages");
+        return await SendAsync(HttpMethod.Post, relativePath, request, cancellationToken);
+    }
+
+    internal async Task<BackendCallResult> PublishSecurityAdvisoryAsync(
+        SecurityAdvisoryPublishRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (configuration.SupportApiBaseUri is null)
+        {
+            return DisabledSupportResult();
+        }
+
+        return await SendAsync(HttpMethod.Post, "/api/v1/security/advisories", request, cancellationToken);
+    }
+
+    private static BackendCallResult DisabledSupportResult() =>
+        new(
+            IsSuccess: false,
+            Endpoint: "none",
+            Detail: "support-api-disabled",
+            PayloadPreview: "SupportApiBaseUri is not configured. Set HONUA_DEVOPS_SUPPORT_API_BASE_URL to enable.");
+
     internal async Task<CustomerFixProposalResult> ProposeCustomerFixAsync(
         CvePatchProposal proposal,
         IAuditSink auditSink,

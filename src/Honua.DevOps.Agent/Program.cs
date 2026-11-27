@@ -205,7 +205,10 @@ try
         // is not configured the connector reports graceful-disabled and the reporter
         // stays report-only (sanitized issue prepared, not filed).
         using GitHubIssueConnector issueTracker = new(bugReportConfiguration, sharedHttpClient);
-        BugReportReporter bugReportReporter = new(issueTracker, bugReportConfiguration.Labels);
+        BugReportReporter bugReportReporter = new(issueTracker, bugReportConfiguration.Labels)
+        {
+            SupportGateway = supportGateway
+        };
         IEventIdempotencyStore eventIdempotencyStore = EventIdempotencyStoreFactory.Create(
             bugReportConfiguration,
             Console.Error);
