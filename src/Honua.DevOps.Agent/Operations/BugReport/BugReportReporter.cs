@@ -28,6 +28,8 @@ internal sealed class BugReportReporter
     private readonly TextWriter _stdout;
     private readonly TextWriter _stderr;
 
+    internal SupportGateway? SupportGateway { get; init; }
+
     internal BugReportReporter(
         IIssueTracker tracker,
         IReadOnlyList<string> labels,
@@ -63,6 +65,7 @@ internal sealed class BugReportReporter
             {
                 _stdout.WriteLine(
                     $"[bug-report] open issue already tracks `{report.DedupeKey}` in {repo.FullName} ({search.ExistingIssueUrl ?? "url-unknown"}) — not filing a duplicate.");
+                await ReportQueuedPatchStatusAsync(report, "Tracked by existing engineering issue.", cancellationToken);
                 return BugReportFilingOutcome.DuplicateSkipped;
             }
 
@@ -81,6 +84,7 @@ internal sealed class BugReportReporter
             {
                 _stdout.WriteLine(
                     $"[bug-report] filed sanitized issue in {repo.FullName}: {filing.IssueUrl ?? "url-unknown"}.");
+                await ReportQueuedPatchStatusAsync(report, "Engineering issue filed; queued for test-first patch workflow.", cancellationToken);
                 return BugReportFilingOutcome.Filed;
             }
 
@@ -119,5 +123,43 @@ internal sealed class BugReportReporter
         builder.Append("Issue title: ").AppendLine(issue.Title);
         builder.AppendLine(EndDivider);
         _stdout.Write(builder.ToString());
+    }
+
+    private async Task ReportQueuedPatchStatusAsync(
+        BugReport report,
+        string summary,
+        CancellationToken cancellationToken)
+    {
+        if (SupportGateway?.Configuration.SupportApiBaseUri is null)
+        {
+            return;
+        }
+
+        try
+        {
+            PatchStatusUpdate update = new()
+            {
+                Stage = "queued",
+                Fingerprint = report.DedupeKey,
+                Component = report.Component,
+                Summary = summary,
+                PropagateToFingerprintMatches = true
+            };
+            BackendCallResult result = await SupportGateway.PostPatchStatusAsync(report.TicketId, update, cancellationToken);
+            if (!result.IsSuccess)
+            {
+                _stderr.WriteLine(
+                    $"warn: patch-status callback failed for ticket {report.TicketId} ({report.Component}): {result.Detail}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _stderr.WriteLine(
+                $"warn: patch-status callback errored for ticket {report.TicketId}: {exception.GetType().Name} {exception.Message}");
+        }
     }
 }
